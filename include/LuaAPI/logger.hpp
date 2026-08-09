@@ -26,7 +26,7 @@ public:
 private:
     Logger() {
         try {
-            logger_ = spdlog::basic_file_logger_mt("luaapi", "D:\\Games\\Red Alert 2\\LuaAPI.log");
+            logger_ = spdlog::basic_logger_mt("luaapi", "D:\\Games\\Red Alert 2\\LuaAPI.log");
             logger_->set_pattern("[%T.%e] [%l] %v");
             logger_->set_level(spdlog::level::trace);
             logger_->flush_on(spdlog::level::info);
