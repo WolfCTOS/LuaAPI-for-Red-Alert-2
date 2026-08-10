@@ -1,0 +1,12 @@
+[submodule "third_party/YRpp"]
+	path = third_party/YRpp
+	url = https://github.com/Phobos-developers/YRpp.git
+[submodule "third_party/lua"]
+	path = third_party/lua
+	url = https://github.com/lua/lua.git
+[submodule "third_party/sol2"]
+	path = third_party/sol2
+	url = https://github.com/ThePhD/sol2.git
+[submodule "third_party/spdlog"]
+	path = third_party/spdlog
+	url = https://github.com/gabime/spdlog.git
