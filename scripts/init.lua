@@ -11,12 +11,23 @@ if Engine.PrintMessage then
     Engine.PrintMessage("LuaAPI Connected! Welcome Commander.")
 end
 
-local tickCount = 0
+print("[LuaAPI] Testing House API...")
+
+local welcomed = false
 
 function OnTick(frame)
-    tickCount = tickCount + 1
-    -- Print a message every 300 frames (~10-15 seconds)
-    if tickCount % 300 == 0 then
-        print("[LuaAPI] Game frame: " .. tostring(frame or tickCount))
+    if not welcomed then
+        local player = House.GetPlayer()
+        if player then
+            local name = player:GetName()
+            local money = player:GetCredits()
+            local pOut = player:GetPowerOutput()
+            local pDrain = player:GetPowerDrain()
+
+            local msg = string.format("Player: %s | Money: %d$ | Power: %d/%d", name, money, pOut, pDrain)
+            Engine.PrintMessage(msg)
+            print("[LuaAPI] " .. msg)
+            welcomed = true
+        end
     end
 end
