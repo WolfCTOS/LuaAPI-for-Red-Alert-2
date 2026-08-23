@@ -9,6 +9,7 @@
 # Project files & folders
 !/.gitignore
 !/.gitmodules
+!/README.md
 !/CMakeLists.txt
 !/injector.cpp
 !/PROJECT/
