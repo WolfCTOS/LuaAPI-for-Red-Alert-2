@@ -2,6 +2,24 @@
 
 All notable changes to LuaPI for Red Alert 2.
 
+## [0.6.0] - 2026-08-24
+
+### Added
+- Tesla Overload interactive gameplay module (`scripts/tesla_overload.lua`):
+  pulsing EMP lock + electrical damage against enemy buildings, with a
+  `DEBUG_MAP_WIDE` flag for instant map-wide testing and an 8-cell radius mode
+  driven by player-unit proximity.
+- Dynamic `package.path` resolution: the engine prepends `<DLL dir>/scripts/?.lua`
+  so `require()` works regardless of the game's working directory.
+
+### Fixed
+- `ProcessDisabledObjects` dangling pointer validation: disabled-object entries
+  are now verified by address against all active engine arrays
+  (Building/Unit/Infantry/Aircraft) before any dereference; destroyed objects
+  are dropped silently instead of crashing at timer expiry (post-victory crash).
+- `TakeDamage` zero-health clamping: damage on already-dead objects is ignored,
+  preventing further interaction with dying structures.
+
 ## [0.5.0] — Gate 5.1
 
 ### Added

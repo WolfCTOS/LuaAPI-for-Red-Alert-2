@@ -237,21 +237,45 @@ int World_GetUnits(lua_State* L) {
 
 } // anonymous namespace
 
+// Checks whether the pointer is still present in the engine's active object
+// arrays. Only compares addresses - never dereferences ptr.
+bool StillExists(TechnoClass* ptr) {
+    if (!ptr)
+        return false;
+
+    for (int i = 0; i < BuildingClass::Array.Count; ++i)
+        if (BuildingClass::Array.GetItem(i) == ptr) return true;
+    for (int i = 0; i < UnitClass::Array.Count; ++i)
+        if (UnitClass::Array.GetItem(i) == ptr) return true;
+    for (int i = 0; i < InfantryClass::Array.Count; ++i)
+        if (InfantryClass::Array.GetItem(i) == ptr) return true;
+    for (int i = 0; i < AircraftClass::Array.Count; ++i)
+        if (AircraftClass::Array.GetItem(i) == ptr) return true;
+
+    return false;
+}
+
 void ProcessDisabledObjects(unsigned int currentFrame) {
     for (auto it = g_disabledEntries.begin(); it != g_disabledEntries.end();) {
-        if (currentFrame >= it->expiryFrame || !IsValid(it->ptr)) {
-            if (IsValid(it->ptr)) {
-                if (it->isBuilding) {
-                    auto* pBuilding = static_cast<BuildingClass*>(it->ptr);
-                    pBuilding->EnableStuff();
-                    pBuilding->HasPower = it->hadPower; // restore pre-blackout state
-                    if (pBuilding->Deactivated)
-                        pBuilding->Deactivated = false;
-                } else if (it->ptr->Deactivated) {
-                    it->ptr->Deactivated = false; // ParalysisTimer expires on its own
-                }
-                LUA_LOG_INFO("[Combat] EMP Lock removed from {}", it->ptr->GetType()->get_ID());
+        // Validate BEFORE any dereference: objects destroyed by damage/victory
+        // are freed by the engine and must never be touched again.
+        bool alive = StillExists(it->ptr) && it->ptr->Health > 0;
+        if (!alive) {
+            it = g_disabledEntries.erase(it); // dangling or dead: drop silently
+            continue;
+        }
+
+        if (currentFrame >= it->expiryFrame) {
+            if (it->isBuilding) {
+                auto* pBuilding = static_cast<BuildingClass*>(it->ptr);
+                pBuilding->EnableStuff();
+                pBuilding->HasPower = it->hadPower; // restore pre-blackout state
+                if (pBuilding->Deactivated)
+                    pBuilding->Deactivated = false;
+            } else if (it->ptr->Deactivated) {
+                it->ptr->Deactivated = false; // ParalysisTimer expires on its own
             }
+            LUA_LOG_INFO("[Combat] EMP Lock removed from {}", it->ptr->GetType()->get_ID());
             it = g_disabledEntries.erase(it);
         } else {
             ++it;

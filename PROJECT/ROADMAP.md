@@ -19,16 +19,17 @@ Each gate must be verified in-game before the next is started.
 | 2.2 | Game-loop hook via MinHook on `Unsorted::MainLoop` @ `0x55D360`; `OnTick(frame)` dispatched with scenario guard | ✅ Done |
 | 2.3 | `Engine.PrintMessage(text)` HUD API via `MessageListClass` | ✅ Done |
 
-## Milestone 3 — Game Data Bindings 🚧
+## Milestone 3 — Game Data Bindings & Tesla Overload ✅
 
 | Gate | Description | Status |
 |------|-------------|--------|
 | 3.1 | Safe `HouseClass` bindings: credits, power grid, owner info | ✅ Done |
 | 4.1 | World scanning: `World.GetBuildings()` / `World.GetUnits()`, unified `LuaAPI.Techno` handle (type, health, owner, position) | ✅ Done |
-| 5.1 | Combat & manipulation: `TakeDamage`, timed `Disable` (with auto re-enable), `GetDistanceTo`, `IsAlliedWith` | ✅ Done |
-| 4.2 | Object manipulation: spawn/move objects from Lua | ⬜ Planned |
-| 5.2 | Event callbacks (object destroyed, house defeated, trigger fired) | ⬜ Planned |
-| 5.3 | INI/rules reading and writing from Lua | ⬜ Planned |
+| 5.1 | Combat & manipulation: `TakeDamage`, real EMP `Disable` (HasPower/DisableStuff/ParalysisTimer with auto re-enable), `GetDistanceTo`, `IsAlliedWith` | ✅ Done |
+| 5.2 | **Tesla Overload gameplay module** (`scripts/tesla_overload.lua`): pulsing EMP + damage, map-wide debug mode, crash-safe victory handling | ✅ Done |
+| 6.1 | Object manipulation: spawn/move objects from Lua | ⬜ Planned |
+| 6.2 | Event callbacks (object destroyed, house defeated, trigger fired) | ⬜ Planned |
+| 6.3 | INI/rules reading and writing from Lua | ⬜ Planned |
 
 ## Architecture Notes
 

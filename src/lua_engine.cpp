@@ -121,6 +121,16 @@ lua_State* CreateEngine() {
 void RunInitScript(lua_State* L) {
     std::wstring scriptPath = g_moduleDir + L"\\scripts\\init.lua";
 
+    // Make require() find modules next to init.lua (forward slashes for Lua).
+    std::wstring scriptsDir = g_moduleDir + L"\\scripts";
+    std::string pkgExpr = "package.path = '" + Narrow(scriptsDir) + "/?.lua;' .. package.path";
+    for (auto& c : pkgExpr)
+        if (c == '\\') c = '/';
+    if (luaL_dostring(L, pkgExpr.c_str()) != LUA_OK) {
+        LUA_LOG_ERROR("Failed to extend package.path");
+        lua_pop(L, 1);
+    }
+
     DWORD attrs = GetFileAttributesW(scriptPath.c_str());
     if (attrs == INVALID_FILE_ATTRIBUTES || (attrs & FILE_ATTRIBUTE_DIRECTORY)) {
         LUA_LOG_WARN("Script not found: {}", Narrow(scriptPath));
