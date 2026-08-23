@@ -1,6 +1,7 @@
 #include <LuaAPI/lua_engine.hpp>
 #include <LuaAPI/logger.hpp>
 #include <LuaAPI/bindings_house.hpp>
+#include <LuaAPI/bindings_techno.hpp>
 
 #include <MinHook.h>
 
@@ -112,6 +113,7 @@ lua_State* CreateEngine() {
     lua_setglobal(L, "Engine");
 
     RegisterHouseBindings(L);
+    RegisterTechnoBindings(L);
 
     return L;
 }

@@ -36,7 +36,16 @@ HouseClass** NewHouse(lua_State* L, HouseClass* pHouse) {
     return ud;
 }
 
-// --- constructors ----------------------------------------------------------
+} // anonymous namespace
+
+int PushHouse(lua_State* L, HouseClass* pHouse) {
+    if (!pHouse)
+        return 0;
+    NewHouse(L, pHouse);
+    return 1;
+}
+
+namespace {
 
 // House.GetPlayer() -> house | nil
 int House_GetPlayer(lua_State* L) {
