@@ -117,3 +117,15 @@ Expected Win32 build environment:
 ```powershell
 
 "C:\\Program Files\\Microsoft Visual Studio\\18\\Community\\VC\\Auxiliary\\Build\\vcvarsall.bat" x86
+
+## 6. Architecture Decisions & Upstream Context
+
+- **Engine Model:** Red Alert 2 (Yuri's Revenge 1.001) has no native scripting runtime; legacy modding relies strictly on INI expansion (Ares/Phobos).
+- **Community Validation (Kerbiter / Phobos Lead):** Confirmed that retrofitting legacy CnCNet `-SPAWN` handling is non-standard for external scripting. The platform therefore adopts a standalone MinHook-injected runtime with a modular `scripts/mods/<mod_name>/main.lua` system.
+- **Modding Paradigm:** C++ `LuaAPI.dll` acts as a frozen host platform. All gameplay mechanics are authored as pure Lua modules inside `scripts/mods/`, loaded by the Universal ModLoader (`scripts/init.lua`) with per-mod error isolation (`pcall`).
+
+### Hook & injection summary (validated)
+
+- Hook target: `Unsorted::MainLoop` @ `0x55D360` via MinHook trampoline (YRpp-documented address). Syringe `.inj`/`.syhks00` hooking was evaluated and rolled back; Syringe remains only an optional dependency for CnCNet spawner hooks (cncnet5.dll) and is never required for the LuaAPI engine itself.
+- Injection: `injector.exe` — attach mode (game already running) or 1-click spawn mode (`CREATE_SUSPENDED` → inject → resume).
+- Lua state lives on the main game thread (lazy init inside first hook tick); logger is the only cross-thread component.

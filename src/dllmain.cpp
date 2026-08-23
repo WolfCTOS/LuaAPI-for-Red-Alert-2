@@ -12,8 +12,7 @@ DWORD WINAPI Bootstrap(LPVOID param) {
     std::wstring dir = LuaAPI::GetModuleDirectory(hModule);
     LuaAPI::Logger::instance().Init(dir + L"\\LuaAPI.log");
 
-    LUA_LOG_INFO("LuaAPI bootstrap thread started");
-    LuaAPI::InstallGameHook();
+    LUA_LOG_INFO("LuaAPI bootstrap thread started (hooking handled by Syringe)");
     return 0;
 }
 

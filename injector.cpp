@@ -6,6 +6,10 @@
 
 namespace {
 
+// ---------------------------------------------------------------------------
+// Shared helpers
+// ---------------------------------------------------------------------------
+
 DWORD FindProcessId(const wchar_t* processName)
 {
     HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
@@ -68,39 +72,160 @@ std::wstring GetExeDirectory()
     return slash == std::wstring::npos ? L"." : path.substr(0, slash);
 }
 
-std::wstring ResolveDllPath(int argc, wchar_t* argv[])
+// Classic remote-thread LoadLibraryA injection.
+bool InjectDll(HANDLE hProcess, const std::wstring& dllPath)
 {
-    // Explicit argument: resolve relative paths against the current directory.
-    if (argc > 1 && argv[1][0] != L'\0')
+    if (!FileExists(dllPath))
     {
-        std::wstring arg = argv[1];
-        if (FileExists(arg))
-        {
-            std::wstring full(MAX_PATH, L'\0');
-            DWORD len = GetFullPathNameW(arg.c_str(), static_cast<DWORD>(full.size()), full.data(), nullptr);
-            if (len > 0 && len < full.size())
-                return full.substr(0, len);
-        }
-        return arg;
+        std::wcerr << L"[injector] DLL not found, skipping: " << dllPath << L"\n";
+        return false;
     }
 
-    // Default: LuaAPI.dll next to injector.exe...
-    std::wstring exeDir = GetExeDirectory();
-    std::wstring candidate = exeDir + L"\\LuaAPI.dll";
-    if (FileExists(candidate))
-        return candidate;
+    std::string narrowPath = WideToNarrow(dllPath);
 
-    // ...then build\RelWithDebInfo\LuaAPI.dll (in-tree build layout).
-    candidate = exeDir + L"\\build\\RelWithDebInfo\\LuaAPI.dll";
-    if (FileExists(candidate))
-        return candidate;
+    void* remoteMemory = VirtualAllocEx(hProcess, nullptr, narrowPath.size() + 1,
+                                        MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    if (remoteMemory == nullptr)
+    {
+        std::wcerr << L"[injector] VirtualAllocEx failed (error " << GetLastError() << L")\n";
+        return false;
+    }
 
-    return exeDir + L"\\LuaAPI.dll"; // reported as not found by caller
+    if (!WriteProcessMemory(hProcess, remoteMemory, narrowPath.c_str(), narrowPath.size() + 1, nullptr))
+    {
+        std::wcerr << L"[injector] WriteProcessMemory failed (error " << GetLastError() << L")\n";
+        VirtualFreeEx(hProcess, remoteMemory, 0, MEM_RELEASE);
+        return false;
+    }
+
+    auto loadLibraryA = reinterpret_cast<LPTHREAD_START_ROUTINE>(
+        GetProcAddress(GetModuleHandleW(L"kernel32.dll"), "LoadLibraryA"));
+    if (loadLibraryA == nullptr)
+    {
+        std::wcerr << L"[injector] GetProcAddress(LoadLibraryA) failed\n";
+        VirtualFreeEx(hProcess, remoteMemory, 0, MEM_RELEASE);
+        return false;
+    }
+
+    HANDLE remoteThread = CreateRemoteThread(hProcess, nullptr, 0, loadLibraryA, remoteMemory, 0, nullptr);
+    if (remoteThread == nullptr)
+    {
+        std::wcerr << L"[injector] CreateRemoteThread failed (error " << GetLastError() << L")\n";
+        VirtualFreeEx(hProcess, remoteMemory, 0, MEM_RELEASE);
+        return false;
+    }
+
+    WaitForSingleObject(remoteThread, INFINITE);
+
+    DWORD exitCode = 0;
+    GetExitCodeThread(remoteThread, &exitCode);
+
+    CloseHandle(remoteThread);
+    VirtualFreeEx(hProcess, remoteMemory, 0, MEM_RELEASE);
+
+    if (exitCode == 0)
+    {
+        std::wcerr << L"[injector] LoadLibraryA failed inside target for: " << dllPath << L"\n";
+        return false;
+    }
+
+    std::wcout << L"[injector] Injected: " << dllPath << L"\n";
+    return true;
 }
 
-} // namespace
+// ---------------------------------------------------------------------------
+// Mode A: Spawn mode - launched with arguments (e.g. by the CnCNet client):
+//   injector.exe "gamemd.exe" -SPAWN -LOG -CD
+// Creates the game process suspended, injects DLLs, then resumes it and
+// waits for exit, forwarding the exit code.
+// ---------------------------------------------------------------------------
 
-int wmain(int argc, wchar_t* argv[])
+int SpawnMode(int argc, wchar_t* argv[])
+{
+    // Reconstruct the target command line: everything except argv[0].
+    std::wstring cmdline;
+    for (int i = 1; i < argc; ++i)
+    {
+        if (!cmdline.empty())
+            cmdline += L' ';
+
+        std::wstring part = argv[i];
+        if (part.find(L' ') != std::wstring::npos && part.front() != L'"')
+            cmdline += L'"' + part + L'"';
+        else
+            cmdline += part;
+    }
+
+    // Target executable is the first argument.
+    std::wstring targetName = argv[1];
+    // Strip quotes and any path, keep file name for error messages.
+    size_t slash = targetName.find_last_of(L"\\/");
+    std::wstring targetFile = slash == std::wstring::npos ? targetName : targetName.substr(slash + 1);
+    if (!targetFile.empty() && targetFile.front() == L'"') targetFile = targetFile.substr(1);
+    if (!targetFile.empty() && targetFile.back() == L'"') targetFile.pop_back();
+
+    // Resolve the executable path: current dir first, then injector dir.
+    std::wstring exeDir = GetExeDirectory();
+    std::wstring targetPath = targetFile;
+    if (!FileExists(targetPath))
+    {
+        std::wstring candidate = exeDir + L"\\" + targetFile;
+        if (FileExists(candidate))
+            targetPath = candidate;
+    }
+
+    STARTUPINFOW si{};
+    si.cb = sizeof(si);
+    PROCESS_INFORMATION pi{};
+
+    std::wcout << L"[injector] Spawning: " << cmdline << L"\n";
+
+    // CreateProcessW may modify the command line buffer.
+    std::vector<wchar_t> mutableCmd(cmdline.begin(), cmdline.end());
+    mutableCmd.push_back(L'\0');
+
+    BOOL ok = CreateProcessW(
+        targetPath.c_str(),
+        mutableCmd.data(),
+        nullptr, nullptr, FALSE,
+        CREATE_SUSPENDED,
+        nullptr, nullptr,
+        &si, &pi);
+
+    if (!ok)
+    {
+        std::wcerr << L"[injector] CreateProcessW failed (error " << GetLastError() << L")\n";
+        return 1;
+    }
+
+    std::wcout << L"[injector] Created PID " << pi.dwProcessId << L" (suspended)\n";
+
+    // Inject engine DLLs while the process is suspended.
+    InjectDll(pi.hProcess, exeDir + L"\\cncnet5.dll");   // optional: spawner/hooks
+    InjectDll(pi.hProcess, exeDir + L"\\LuaAPI.dll");    // required: LuaAPI engine
+
+    ResumeThread(pi.hThread);
+    std::wcout << L"[injector] Main thread resumed, waiting for exit...\n";
+
+    WaitForSingleObject(pi.hProcess, INFINITE);
+
+    DWORD exitCode = 1;
+    GetExitCodeProcess(pi.hProcess, &exitCode);
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
+
+    std::wcout << L"[injector] Game exited with code " << exitCode << L"\n";
+    return static_cast<int>(exitCode);
+}
+
+// ---------------------------------------------------------------------------
+// Mode B: Attach mode - no arguments. Finds an already running gamemd.exe and
+// injects LuaAPI.dll into it.
+// ---------------------------------------------------------------------------
+
+std::wstring ResolveDllPath(int argc, wchar_t* argv[]);
+
+int AttachMode(int argc, wchar_t* argv[])
 {
     const wchar_t* processName = L"gamemd.exe";
 
@@ -115,10 +240,40 @@ int wmain(int argc, wchar_t* argv[])
     std::wcout << L"Using DLL: " << dllPath << L"\n";
 
     DWORD pid = FindProcessId(processName);
+
+    // 1-Click Launch: game not running -> spawn it suspended, inject, resume.
     if (pid == 0)
     {
-        std::cerr << "Failed to find process: " << WideToNarrow(processName) << " (error " << GetLastError() << ")\n";
-        return 1;
+        std::wstring exeDir = GetExeDirectory();
+        std::wstring gamePath = exeDir + L"\\" + processName;
+        if (!FileExists(gamePath))
+        {
+            std::wcerr << L"[injector] gamemd.exe not found next to injector.exe (" << gamePath << L")\n";
+            return 1;
+        }
+
+        STARTUPINFOW si{};
+        si.cb = sizeof(si);
+        PROCESS_INFORMATION pi{};
+
+        std::wcout << L"[injector] Game not running - launching " << gamePath << L"\n";
+
+        if (!CreateProcessW(gamePath.c_str(), nullptr, nullptr, nullptr, FALSE,
+                            CREATE_SUSPENDED, nullptr, exeDir.c_str(), &si, &pi))
+        {
+            std::wcerr << L"[injector] CreateProcessW failed (error " << GetLastError() << L")\n";
+            return 1;
+        }
+
+        std::wcout << L"[injector] Created PID " << pi.dwProcessId << L" (suspended)\n";
+        InjectDll(pi.hProcess, dllPath);
+
+        ResumeThread(pi.hThread);
+        CloseHandle(pi.hThread);
+        CloseHandle(pi.hProcess);
+
+        std::wcout << L"[injector] Game launched and engine injected. Exiting.\n";
+        return 0; // exit immediately - no lingering console
     }
 
     std::cout << "Found process " << WideToNarrow(processName) << " (PID " << pid << ")\n";
@@ -130,76 +285,51 @@ int wmain(int argc, wchar_t* argv[])
         return 1;
     }
 
-    std::string dllPathNarrow = WideToNarrow(dllPath);
-    size_t pathSize = (dllPathNarrow.size() + 1) * sizeof(char);
-
-    void* remoteMemory = VirtualAllocEx(process, nullptr, pathSize, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
-    if (remoteMemory == nullptr)
+    if (!InjectDll(process, dllPath))
     {
-        std::cerr << "VirtualAllocEx failed (error " << GetLastError() << ")\n";
         CloseHandle(process);
         return 1;
     }
 
-    BOOL written = WriteProcessMemory(process, remoteMemory, dllPathNarrow.c_str(), pathSize, nullptr);
-    if (!written)
-    {
-        std::cerr << "WriteProcessMemory failed (error " << GetLastError() << ")\n";
-        VirtualFreeEx(process, remoteMemory, 0, MEM_RELEASE);
-        CloseHandle(process);
-        return 1;
-    }
-
-    HMODULE kernel32 = GetModuleHandleW(L"kernel32.dll");
-    if (kernel32 == nullptr)
-    {
-        std::cerr << "GetModuleHandleW failed (error " << GetLastError() << ")\n";
-        VirtualFreeEx(process, remoteMemory, 0, MEM_RELEASE);
-        CloseHandle(process);
-        return 1;
-    }
-
-    FARPROC loadLibraryA = GetProcAddress(kernel32, "LoadLibraryA");
-    if (loadLibraryA == nullptr)
-    {
-        std::cerr << "GetProcAddress(LoadLibraryA) failed (error " << GetLastError() << ")\n";
-        VirtualFreeEx(process, remoteMemory, 0, MEM_RELEASE);
-        CloseHandle(process);
-        return 1;
-    }
-
-    HANDLE remoteThread = CreateRemoteThread(process, nullptr, 0, reinterpret_cast<LPTHREAD_START_ROUTINE>(loadLibraryA), remoteMemory, 0, nullptr);
-    if (remoteThread == nullptr)
-    {
-        std::cerr << "CreateRemoteThread failed (error " << GetLastError() << ")\n";
-        VirtualFreeEx(process, remoteMemory, 0, MEM_RELEASE);
-        CloseHandle(process);
-        return 1;
-    }
-
-    DWORD waitResult = WaitForSingleObject(remoteThread, INFINITE);
-    if (waitResult != WAIT_OBJECT_0)
-    {
-        std::cerr << "WaitForSingleObject failed (result " << waitResult << ", error " << GetLastError() << ")\n";
-        CloseHandle(remoteThread);
-        VirtualFreeEx(process, remoteMemory, 0, MEM_RELEASE);
-        CloseHandle(process);
-        return 1;
-    }
-
-    DWORD exitCode = 0;
-    GetExitCodeThread(remoteThread, &exitCode);
-
-    VirtualFreeEx(process, remoteMemory, 0, MEM_RELEASE);
-    CloseHandle(remoteThread);
     CloseHandle(process);
+    std::cout << "Successfully injected " << WideToNarrow(dllPath) << " into " << WideToNarrow(processName) << "\n";
+    return 0;
+}
 
-    if (exitCode == 0)
+// Default DLL resolution used by attach mode:
+// explicit arg -> next to injector.exe -> build\RelWithDebInfo\LuaAPI.dll.
+std::wstring ResolveDllPath(int argc, wchar_t* argv[])
+{
+    if (argc > 1 && argv[1][0] != L'\0')
     {
-        std::cerr << "DLL load failed in remote process (LoadLibraryA returned NULL)\n";
-        return 1;
+        std::wstring arg = argv[1];
+        if (FileExists(arg))
+        {
+            std::wstring full(MAX_PATH, L'\0');
+            DWORD len = GetFullPathNameW(arg.c_str(), static_cast<DWORD>(full.size()), full.data(), nullptr);
+            if (len > 0 && len < full.size())
+                return full.substr(0, len);
+        }
+        return arg;
     }
 
-    std::cout << "Successfully injected " << dllPathNarrow << " into " << WideToNarrow(processName) << " (PID " << pid << ")\n";
-    return 0;
+    std::wstring exeDir = GetExeDirectory();
+    std::wstring candidate = exeDir + L"\\LuaAPI.dll";
+    if (FileExists(candidate))
+        return candidate;
+
+    candidate = exeDir + L"\\build\\RelWithDebInfo\\LuaAPI.dll";
+    if (FileExists(candidate))
+        return candidate;
+
+    return exeDir + L"\\LuaAPI.dll";
+}
+
+} // namespace
+
+int wmain(int argc, wchar_t* argv[])
+{
+    if (argc > 1)
+        return SpawnMode(argc, argv);
+    return AttachMode(argc, argv);
 }

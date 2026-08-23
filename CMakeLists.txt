@@ -21,7 +21,7 @@ list(REMOVE_ITEM LUA_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lua/onelua.
 add_library(lua STATIC ${LUA_SOURCES})
 target_include_directories(lua PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lua)
 
-# MinHook (x86 trampoline hooking)
+# MinHook (x86 trampoline hooking) - no longer linked, retained for reference
 file(GLOB MINHOOK_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/minhook/src/*.c
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/minhook/src/hde/*.c

@@ -22,7 +22,6 @@ namespace LuaAPI {
 namespace {
 
 // YRpp documents this as the game's main loop (Unsorted::MainLoop, gamemd.exe 1.001).
-// Fires every frame in both menus and battles; safer than guessing member addresses.
 constexpr uintptr_t kMainLoopAddr = 0x0055D360;
 
 using MainLoop_t = void(__fastcall*)();
