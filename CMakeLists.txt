@@ -13,6 +13,10 @@ set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 # FMT_CONSTEVAL= works around C7595 (bundled fmt v9 vs MSVC 19.4x+ consteval strictness).
 add_compile_definitions(NOMINMAX FMT_CONSTEVAL=)
 
+if (MSVC)
+    add_compile_options(/utf-8)
+endif()
+
 # Lua static library (exclude standalone interpreters)
 file(GLOB LUA_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lua/*.c)
 list(REMOVE_ITEM LUA_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lua/lua.c)
@@ -49,9 +53,10 @@ add_custom_command(TARGET LuaAPI POST_BUILD
     COMMENT "Copying Lua scripts to output directory"
 )
 
-# Injector executable
-add_executable(injector ${CMAKE_CURRENT_SOURCE_DIR}/injector.cpp)
-target_link_libraries(injector PRIVATE user32)
+# Injector executable (native Win32 GUI, no console window)
+add_executable(injector WIN32 src/injector_gui.cpp)
+target_compile_definitions(injector PRIVATE UNICODE _UNICODE)
+target_link_libraries(injector PRIVATE user32 gdi32 shell32)
 
 # Auto-deploy binaries to the game directory (repo root) after a successful build
 foreach(_target LuaAPI injector)
