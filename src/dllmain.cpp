@@ -7,11 +7,13 @@ namespace {
 DWORD WINAPI Bootstrap(LPVOID param) {
     auto hModule = static_cast<HMODULE>(param);
 
+    LuaAPI::InitPaths(hModule);
+
     std::wstring dir = LuaAPI::GetModuleDirectory(hModule);
     LuaAPI::Logger::instance().Init(dir + L"\\LuaAPI.log");
 
     LUA_LOG_INFO("LuaAPI bootstrap thread started");
-    LuaAPI::StartEngine(dir);
+    LuaAPI::InstallGameHook();
     return 0;
 }
 

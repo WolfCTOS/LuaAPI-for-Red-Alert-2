@@ -43,24 +43,85 @@ std::string WideToNarrow(const std::wstring& wide)
     return narrow;
 }
 
+bool FileExists(const std::wstring& path)
+{
+    DWORD attrs = GetFileAttributesW(path.c_str());
+    return attrs != INVALID_FILE_ATTRIBUTES && !(attrs & FILE_ATTRIBUTE_DIRECTORY);
+}
+
+std::wstring GetExeDirectory()
+{
+    std::wstring path(MAX_PATH, L'\0');
+    DWORD len = 0;
+    while (true)
+    {
+        len = GetModuleFileNameW(nullptr, path.data(), static_cast<DWORD>(path.size()));
+        if (len == 0)
+            return L".";
+        if (len < path.size() - 1 && GetLastError() != ERROR_INSUFFICIENT_BUFFER)
+            break;
+        path.resize(path.size() * 2);
+    }
+    path.resize(len);
+
+    size_t slash = path.find_last_of(L"\\/");
+    return slash == std::wstring::npos ? L"." : path.substr(0, slash);
+}
+
+std::wstring ResolveDllPath(int argc, wchar_t* argv[])
+{
+    // Explicit argument: resolve relative paths against the current directory.
+    if (argc > 1 && argv[1][0] != L'\0')
+    {
+        std::wstring arg = argv[1];
+        if (FileExists(arg))
+        {
+            std::wstring full(MAX_PATH, L'\0');
+            DWORD len = GetFullPathNameW(arg.c_str(), static_cast<DWORD>(full.size()), full.data(), nullptr);
+            if (len > 0 && len < full.size())
+                return full.substr(0, len);
+        }
+        return arg;
+    }
+
+    // Default: LuaAPI.dll next to injector.exe...
+    std::wstring exeDir = GetExeDirectory();
+    std::wstring candidate = exeDir + L"\\LuaAPI.dll";
+    if (FileExists(candidate))
+        return candidate;
+
+    // ...then build\RelWithDebInfo\LuaAPI.dll (in-tree build layout).
+    candidate = exeDir + L"\\build\\RelWithDebInfo\\LuaAPI.dll";
+    if (FileExists(candidate))
+        return candidate;
+
+    return exeDir + L"\\LuaAPI.dll"; // reported as not found by caller
+}
+
 } // namespace
 
 int wmain(int argc, wchar_t* argv[])
 {
     const wchar_t* processName = L"gamemd.exe";
-    std::wstring dllPath = L"D:\\Games\\Red Alert 2\\LuaAPI.dll";
 
-    if (argc > 1)
-        dllPath = argv[1];
+    std::wstring dllPath = ResolveDllPath(argc, argv);
+    if (!FileExists(dllPath))
+    {
+        std::wcerr << L"DLL not found: " << dllPath << L"\n"
+                   << L"Place LuaAPI.dll next to injector.exe or pass an explicit path.\n";
+        return 1;
+    }
+
+    std::wcout << L"Using DLL: " << dllPath << L"\n";
 
     DWORD pid = FindProcessId(processName);
     if (pid == 0)
     {
-        std::cerr << "Failed to find process: " << processName << " (error " << GetLastError() << ")\n";
+        std::cerr << "Failed to find process: " << WideToNarrow(processName) << " (error " << GetLastError() << ")\n";
         return 1;
     }
 
-    std::cout << "Found process " << processName << " (PID " << pid << ")\n";
+    std::cout << "Found process " << WideToNarrow(processName) << " (PID " << pid << ")\n";
 
     HANDLE process = OpenProcess(PROCESS_CREATE_THREAD | PROCESS_QUERY_INFORMATION | PROCESS_VM_OPERATION | PROCESS_VM_WRITE | PROCESS_VM_READ, FALSE, pid);
     if (process == nullptr)
@@ -139,6 +200,6 @@ int wmain(int argc, wchar_t* argv[])
         return 1;
     }
 
-    std::cout << "Successfully injected " << dllPathNarrow << " into " << processName << " (PID " << pid << ")\n";
+    std::cout << "Successfully injected " << dllPathNarrow << " into " << WideToNarrow(processName) << " (PID " << pid << ")\n";
     return 0;
 }
