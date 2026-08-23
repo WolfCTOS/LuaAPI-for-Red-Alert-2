@@ -23,3 +23,15 @@ target_include_directories(LuaAPI PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/YRpp
 )
 target_link_libraries(LuaAPI PRIVATE lua)
+
+# Copy scripts next to the DLL so the runtime can find scripts/init.lua
+add_custom_command(TARGET LuaAPI POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        ${CMAKE_CURRENT_SOURCE_DIR}/scripts
+        $<TARGET_FILE_DIR:LuaAPI>/scripts
+    COMMENT "Copying Lua scripts to output directory"
+)
+
+# Injector executable
+add_executable(injector ${CMAKE_CURRENT_SOURCE_DIR}/injector.cpp)
+target_link_libraries(injector PRIVATE user32)

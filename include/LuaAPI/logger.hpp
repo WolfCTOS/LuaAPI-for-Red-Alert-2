@@ -1,6 +1,8 @@
 #pragma once
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
 #include <spdlog/spdlog.h>
-#include <spdlog/sinks/basic_file_sink.h>
+#include <spdlog/sinks/rotating_file_sink.h>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -14,19 +16,17 @@ public:
         return inst;
     }
 
-    template <typename... Args>
-    void log(spdlog::level::level_enum lvl, const char* file, int line, spdlog::string_view_t fmt, Args&&... args) {
-        if (!logger_) return;
-        std::string msg = spdlog::fmt_lib::format(fmt, std::forward<Args>(args)...);
-        logger_->log(lvl, "{} ({}:{})", msg, file, line);
-    }
-
-    void flush() { if (logger_) logger_->flush(); }
-
-private:
-    Logger() {
+    // Must be called once from a worker thread (never inside DllMain).
+    // Idempotent; silently disables logging if the file cannot be opened.
+    void Init(const std::wstring& logPath) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (logger_) return;
         try {
-            logger_ = spdlog::basic_logger_mt("luaapi", "D:\\Games\\Red Alert 2\\LuaAPI.log");
+            int size = WideCharToMultiByte(CP_UTF8, 0, logPath.c_str(), -1, nullptr, 0, nullptr, nullptr);
+            std::string narrowPath(static_cast<size_t>(size), '\0');
+            WideCharToMultiByte(CP_UTF8, 0, logPath.c_str(), -1, &narrowPath[0], size, nullptr, nullptr);
+            narrowPath.resize(size - 1);
+            logger_ = spdlog::rotating_logger_mt("luaapi", narrowPath, 5 * 1024 * 1024, 3);
             logger_->set_pattern("[%T.%e] [%l] %v");
             logger_->set_level(spdlog::level::trace);
             logger_->flush_on(spdlog::level::info);
@@ -35,7 +35,24 @@ private:
         }
     }
 
+    bool ready() const { return logger_ != nullptr; }
+
+    template <typename... Args>
+    void log(spdlog::level::level_enum lvl, const char* file, int line, spdlog::string_view_t fmt, Args&&... args) {
+        if (!logger_) return;
+        try {
+            std::string msg = spdlog::fmt_lib::format(fmt, std::forward<Args>(args)...);
+            std::lock_guard<std::mutex> lock(mutex_);
+            logger_->log(lvl, "{} ({}:{})", msg, file, line);
+        } catch (...) {
+        }
+    }
+
+private:
+    Logger() = default;
+
     std::shared_ptr<spdlog::logger> logger_;
+    std::mutex mutex_;
 };
 
 } // namespace LuaAPI

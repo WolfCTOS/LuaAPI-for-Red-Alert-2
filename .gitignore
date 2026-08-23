@@ -1,9 +1,60 @@
+# ============================================================
+# This repository lives INSIDE the Red Alert 2 game directory.
+# Default-deny everything at the root, then whitelist project
+# entries only - this guarantees no game assets (*.mix, *.exe,
+# *.dll, *.bik, ...) can ever be tracked, regardless of name.
+# ============================================================
+
+/*
+# Project files & folders
+!/.gitignore
+!/.gitmodules
+!/CMakeLists.txt
+!/injector.cpp
+!/PROJECT/
+!/src/
+!/include/
+!/scripts/
+!/third_party/
+
+# Build outputs
 build/
+bin/
+out/
 *.obj
 *.pdb
 *.ilk
-*.dll
-*.exe
+*.idb
 *.log
 .vs/
 .vscode/
+
+# Game binaries & dependencies (defense in depth)
+*.mix
+*.MIX
+*.mmx
+*.MMX
+*.yro
+*.YRO
+*.bik
+*.BIK
+*.exe
+*.EXE
+*.dll
+*.DLL
+*.csf
+*.CSF
+*.map
+*.mpr
+*.yrm
+*.pkt
+*.vqp
+*.tmp
+*.ini
+*.INI
+*.dat
+*.shp
+*.fnt
+*.tlb
+*.lcf
+*.sys
