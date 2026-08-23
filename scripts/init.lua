@@ -12,9 +12,11 @@ if Engine.PrintMessage then
 end
 
 print("[LuaAPI] Testing House API...")
+print("[LuaAPI] Testing Gate 5.1 Action API...")
 
 local welcomed = false
 local scanned = false
+local actionTested = false
 
 function OnTick(frame)
     if not welcomed then
@@ -69,5 +71,40 @@ function OnTick(frame)
         Engine.PrintMessage("World scan complete!")
         print("[LuaAPI] World scan complete.")
         scanned = true
+    end
+
+    -- Gate 5.1: EMP-lock + damage ALL enemy buildings
+    if welcomed and not actionTested and frame > 60 then
+        local player = House.GetPlayer()
+        local buildings = World.GetBuildings()
+
+        if player and #buildings > 0 then
+            local hitCount = 0
+
+            for _, bld in ipairs(buildings) do
+                local owner = bld:GetOwner()
+                if owner and not player:IsAlliedWith(owner) and bld:IsAlive() then
+                    local typeName = bld:GetTypeName()
+                    local hpBefore = bld:GetHealth()
+
+                    local remainingHp = bld:TakeDamage(50)
+                    bld:Disable(300) -- EMP lock for ~10-15 seconds
+                    hitCount = hitCount + 1
+
+                    local msg = string.format("[Combat Test] EMP %s: %d -> %d HP", typeName, hpBefore, remainingHp)
+                    Engine.PrintMessage(msg)
+                    print("[LuaAPI] " .. msg)
+                end
+            end
+
+            if hitCount > 0 then
+                print(string.format("[LuaAPI] EMP locked %d enemy building(s) for 300 frames.", hitCount))
+                Engine.PrintMessage(string.format("EMP Lock: %d buildings offline!", hitCount))
+            else
+                print("[LuaAPI] No enemy buildings found; combat test skipped.")
+            end
+
+            actionTested = true
+        end
     end
 end

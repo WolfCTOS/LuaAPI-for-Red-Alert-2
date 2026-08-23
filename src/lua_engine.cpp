@@ -183,6 +183,8 @@ void OnGameFrame() {
     if (!ScenarioClass::Instance)
         return;
 
+    LuaAPI::ProcessDisabledObjects(Unsorted::CurrentFrame);
+
     // Lazily bring up the Lua engine ONCE, on the main game thread.
     std::call_once(g_engineOnce, []() {
         if (!g_moduleDir.empty()) {

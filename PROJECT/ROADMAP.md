@@ -24,10 +24,11 @@ Each gate must be verified in-game before the next is started.
 | Gate | Description | Status |
 |------|-------------|--------|
 | 3.1 | Safe `HouseClass` bindings: credits, power grid, owner info | ✅ Done |
-| 4.1 | World scanning: `World.GetBuildings()` / `World.GetUnits()`, unified `LuaAPI.Techno` handle (type, health, owner, position) | 🚧 In Progress |
-| 4.2 | Object manipulation: spawn/move/damage objects from Lua | ⬜ Planned |
-| 5.1 | Event callbacks (object destroyed, house defeated, trigger fired) | ⬜ Planned |
-| 5.2 | INI/rules reading and writing from Lua | ⬜ Planned |
+| 4.1 | World scanning: `World.GetBuildings()` / `World.GetUnits()`, unified `LuaAPI.Techno` handle (type, health, owner, position) | ✅ Done |
+| 5.1 | Combat & manipulation: `TakeDamage`, timed `Disable` (with auto re-enable), `GetDistanceTo`, `IsAlliedWith` | ✅ Done |
+| 4.2 | Object manipulation: spawn/move objects from Lua | ⬜ Planned |
+| 5.2 | Event callbacks (object destroyed, house defeated, trigger fired) | ⬜ Planned |
+| 5.3 | INI/rules reading and writing from Lua | ⬜ Planned |
 
 ## Architecture Notes
 

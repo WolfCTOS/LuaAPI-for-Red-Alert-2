@@ -13,4 +13,7 @@ void RegisterTechnoBindings(lua_State* L);
 // UnitClass, ...) onto the stack. Always pushes one value.
 void PushTechno(lua_State* L, void* pTechno);
 
+// Expires timed disables; call once per game frame from the main thread.
+void ProcessDisabledObjects(unsigned int currentFrame);
+
 } // namespace LuaAPI

@@ -142,6 +142,24 @@ int House_IsHuman(lua_State* L) {
     return 1;
 }
 
+// house:IsAlliedWith(other_house) -> bool
+int House_IsAlliedWith(lua_State* L) {
+    HouseClass* pSelf = CheckHouse(L, 1);
+
+    void* ud = luaL_testudata(L, 2, kMetaName);
+    if (!ud)
+        return luaL_argerror(L, 2, "expected a house object");
+
+    auto* pOther = *static_cast<HouseClass**>(ud);
+    if (!pSelf || !pOther) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+
+    lua_pushboolean(L, pSelf->IsAlliedWith(pOther) ? 1 : 0);
+    return 1;
+}
+
 const luaL_Reg kHouseMethods[] = {
     { "GetCredits",     House_GetCredits     },
     { "SetCredits",     House_SetCredits     },
@@ -150,6 +168,7 @@ const luaL_Reg kHouseMethods[] = {
     { "GetPowerDrain",  House_GetPowerDrain  },
     { "GetName",        House_GetName        },
     { "IsHuman",        House_IsHuman        },
+    { "IsAlliedWith",   House_IsAlliedWith   },
     { nullptr, nullptr }
 };
 

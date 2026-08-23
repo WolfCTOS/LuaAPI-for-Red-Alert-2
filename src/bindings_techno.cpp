@@ -13,6 +13,9 @@ using byte = unsigned char;
 // YRpp game classes
 #include <YRPP.h>
 
+#include <cmath>
+#include <vector>
+
 namespace LuaAPI {
 
 // Defined below; pushes a "LuaAPI.Techno" userdata wrapping pTechno.
@@ -21,6 +24,15 @@ void PushTechno(lua_State* L, void* pTechno);
 namespace {
 
 constexpr const char* kMetaName = "LuaAPI.Techno";
+
+// Timed-disable registry, processed every frame from OnGameFrame.
+struct DisableEntry {
+    TechnoClass* ptr;
+    bool isBuilding;
+    bool hadPower;        // BuildingClass::HasPower prior to the blackout
+    unsigned int expiryFrame;
+};
+std::vector<DisableEntry> g_disabledEntries;
 
 bool IsValid(TechnoClass* pTechno) {
     return pTechno != nullptr && pTechno->Health > 0;
@@ -96,13 +108,104 @@ int Techno_IsAlive(lua_State* L) {
     return 1;
 }
 
+// obj:GetDistanceTo(other_obj) -> number (in map cells)
+int Techno_GetDistanceTo(lua_State* L) {
+    auto* pSelf = CheckTechno(L, 1);
+
+    void* ud = luaL_testudata(L, 2, kMetaName);
+    if (!ud)
+        return luaL_argerror(L, 2, "expected a techno object");
+
+    auto* pOther = *static_cast<TechnoClass**>(ud);
+    if (!IsValid(pSelf) || !IsValid(pOther)) {
+        lua_pushnil(L);
+        return 1;
+    }
+
+    CoordStruct a = pSelf->GetCoords();
+    CoordStruct b = pOther->GetCoords();
+
+    double dx = static_cast<double>(a.X - b.X) / 256.0;
+    double dy = static_cast<double>(a.Y - b.Y) / 256.0;
+    lua_pushnumber(L, std::sqrt(dx * dx + dy * dy));
+    return 1;
+}
+
+// obj:TakeDamage(damage_amount) -> int remaining health
+int Techno_TakeDamage(lua_State* L) {
+    auto* pTechno = CheckTechno(L, 1);
+    if (!IsValid(pTechno)) {
+        lua_pushinteger(L, 0);
+        return 1;
+    }
+
+    lua_Integer damage = luaL_checkinteger(L, 2);
+    if (damage <= 0) {
+        lua_pushinteger(L, pTechno->Health);
+        return 1;
+    }
+
+    int remaining = pTechno->Health - static_cast<int>(damage);
+    if (remaining < 0)
+        remaining = 0;
+    pTechno->Health = remaining;
+
+    LUA_LOG_INFO("[Combat] {} took {} damage, HP remaining: {}", pTechno->GetType()->get_ID(), damage, remaining);
+    lua_pushinteger(L, remaining);
+    return 1;
+}
+
+// obj:Disable(duration_frames)
+//
+// Real EMP-style lock:
+// - buildings: cut HasPower (drives IsPowerOnline(), so weapons stop firing)
+//   AND call DisableStuff() (switched-off state);
+// - feet: start the game's own ParalysisTimer (giant-squid mechanism)
+//   AND set Deactivated.
+// All state is restored automatically when the timer expires.
+int Techno_Disable(lua_State* L) {
+    auto* pTechno = CheckTechno(L, 1);
+    if (!IsValid(pTechno))
+        return 0;
+
+    lua_Integer frames = luaL_checkinteger(L, 2);
+    if (frames <= 0)
+        return 0;
+
+    DisableEntry entry{};
+    entry.ptr = pTechno;
+    entry.expiryFrame = Unsorted::CurrentFrame + static_cast<unsigned int>(frames);
+
+    if (pTechno->WhatAmI() == AbstractType::Building) {
+        auto* pBuilding = static_cast<BuildingClass*>(pTechno);
+        entry.isBuilding = true;
+        entry.hadPower = pBuilding->HasPower;
+        pBuilding->HasPower = false;      // IsPowerOnline() -> false: no firing
+        pBuilding->DisableStuff();        // official switched-off state
+        pTechno->Deactivated = true;
+    } else {
+        entry.isBuilding = false;
+        entry.hadPower = true;
+        // Units/infantry are always FootClass-derived.
+        static_cast<FootClass*>(pTechno)->ParalysisTimer.Start(static_cast<int>(frames)); // native paralysis
+        pTechno->Deactivated = true;
+    }
+
+    g_disabledEntries.push_back(entry);
+    LUA_LOG_INFO("[Combat] EMP Lock applied to {} for {} frames", pTechno->GetType()->get_ID(), frames);
+    return 0;
+}
+
 const luaL_Reg kTechnoMethods[] = {
-    { "GetTypeName",  Techno_GetTypeName  },
-    { "GetHealth",    Techno_GetHealth    },
-    { "GetMaxHealth", Techno_GetMaxHealth },
-    { "GetOwner",     Techno_GetOwner     },
-    { "GetPosition",  Techno_GetPosition  },
-    { "IsAlive",      Techno_IsAlive      },
+    { "GetTypeName",   Techno_GetTypeName   },
+    { "GetHealth",     Techno_GetHealth     },
+    { "GetMaxHealth",  Techno_GetMaxHealth  },
+    { "GetOwner",      Techno_GetOwner      },
+    { "GetPosition",   Techno_GetPosition   },
+    { "IsAlive",       Techno_IsAlive       },
+    { "GetDistanceTo", Techno_GetDistanceTo },
+    { "TakeDamage",    Techno_TakeDamage    },
+    { "Disable",       Techno_Disable       },
     { nullptr, nullptr }
 };
 
@@ -133,6 +236,28 @@ int World_GetUnits(lua_State* L) {
 }
 
 } // anonymous namespace
+
+void ProcessDisabledObjects(unsigned int currentFrame) {
+    for (auto it = g_disabledEntries.begin(); it != g_disabledEntries.end();) {
+        if (currentFrame >= it->expiryFrame || !IsValid(it->ptr)) {
+            if (IsValid(it->ptr)) {
+                if (it->isBuilding) {
+                    auto* pBuilding = static_cast<BuildingClass*>(it->ptr);
+                    pBuilding->EnableStuff();
+                    pBuilding->HasPower = it->hadPower; // restore pre-blackout state
+                    if (pBuilding->Deactivated)
+                        pBuilding->Deactivated = false;
+                } else if (it->ptr->Deactivated) {
+                    it->ptr->Deactivated = false; // ParalysisTimer expires on its own
+                }
+                LUA_LOG_INFO("[Combat] EMP Lock removed from {}", it->ptr->GetType()->get_ID());
+            }
+            it = g_disabledEntries.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
 
 void PushTechno(lua_State* L, void* pTechno) {
     auto* ud = static_cast<void**>(lua_newuserdatauv(L, sizeof(void*), 0));

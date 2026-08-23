@@ -2,7 +2,18 @@
 
 All notable changes to LuaPI for Red Alert 2.
 
-## [0.4.0] — Gate 4.1 (in progress)
+## [0.5.0] — Gate 5.1
+
+### Added
+- `house:IsAlliedWith(other_house)` via `HouseClass::IsAlliedWith`
+- `obj:GetDistanceTo(other_obj)` — Euclidean distance in map cells
+- `obj:TakeDamage(n)` — direct HP reduction (clamped at 0), logged as `[Combat]`
+- `obj:Disable(frames)` — timed disable:
+  - buildings via `BuildingClass::DisableStuff()` / `EnableStuff()`
+  - units/infantry via `TechnoClass::Deactivated` flag
+  - auto re-enable tracked per-frame from the game loop; dead objects are skipped
+
+## [0.4.0] — Gate 4.1
 
 ### Added
 - `src/bindings_techno.cpp`: unified `LuaAPI.Techno` userdata handle
