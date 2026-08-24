@@ -3,7 +3,8 @@ print("[LuaAPI] Universal ModLoader Online!")
 -- Active mods list (toggle on/off here)
 local ACTIVE_MODS = {
     -- "tesla_overload",      -- Temporarily disabled for clean testing
-    "delayed_explosion"
+    "delayed_explosion",
+    "smart_ai"
 }
 
 local loadedMods = {}

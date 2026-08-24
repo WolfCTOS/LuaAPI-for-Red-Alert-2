@@ -253,6 +253,108 @@ int Techno_Disable(lua_State* L) {
     return 0;
 }
 
+// --- navigation (FootClass only: units / infantry / aircraft) ---------------
+
+// Returns FootClass* if the techno is a mobile unit, else nullptr.
+FootClass* AsFoot(TechnoClass* pTechno) {
+    switch (pTechno->WhatAmI()) {
+    case AbstractType::Unit:
+    case AbstractType::Infantry:
+    case AbstractType::Aircraft:
+        return static_cast<FootClass*>(pTechno);
+    default:
+        return nullptr;
+    }
+}
+
+// obj:Scatter([opt_x, opt_y]) - flee from current position (or towards a cell).
+int Techno_Scatter(lua_State* L) {
+    auto* pTechno = CheckTechno(L, 1);
+    if (!IsValid(pTechno))
+        return 0;
+
+    FootClass* pFoot = AsFoot(pTechno);
+    if (!pFoot)
+        return 0;
+
+    CoordStruct crd = pTechno->GetCoords();
+    if (lua_gettop(L) >= 3 && lua_isnumber(L, 2) && lua_isnumber(L, 3)) {
+        int cx = static_cast<int>(lua_tointeger(L, 2));
+        int cy = static_cast<int>(lua_tointeger(L, 3));
+        crd.X = cx * 256 + 128;
+        crd.Y = cy * 256 + 128;
+    }
+
+    pFoot->Scatter(crd, true, false);
+    return 0;
+}
+
+// obj:MoveTo(cellX, cellY) -> bool success
+int Techno_MoveTo(lua_State* L) {
+    auto* pTechno = CheckTechno(L, 1);
+    if (!IsValid(pTechno)) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+
+    FootClass* pFoot = AsFoot(pTechno);
+    if (!pFoot) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+
+    int cellX = static_cast<int>(luaL_checkinteger(L, 2));
+    int cellY = static_cast<int>(luaL_checkinteger(L, 3));
+    CellStruct cell{ static_cast<short>(cellX), static_cast<short>(cellY) };
+
+    CellClass* pCell = MapClass::Instance.TryGetCellAt(cell);
+    if (!pCell) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+
+    // Engine-team pattern: point the nav destination at the cell, then queue Move.
+    pFoot->Destination = pCell;
+    pFoot->QueueMission(Mission::Move, true);
+
+    LUA_LOG_INFO("[Nav] {} moving to ({},{})", pTechno->GetType()->get_ID(), cellX, cellY);
+    lua_pushboolean(L, 1);
+    return 1;
+}
+
+// obj:Hunt() - enter aggressive auto-target mode.
+int Techno_Hunt(lua_State* L) {
+    auto* pTechno = CheckTechno(L, 1);
+    if (!IsValid(pTechno))
+        return 0;
+
+    FootClass* pFoot = AsFoot(pTechno);
+    if (!pFoot)
+        return 0;
+
+    pFoot->QueueMission(Mission::Hunt, true);
+    return 0;
+}
+
+// obj:IsIdle() -> bool (Guard / Stop / Sleep missions)
+int Techno_IsIdle(lua_State* L) {
+    auto* pTechno = CheckTechno(L, 1);
+    if (!IsValid(pTechno)) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+
+    FootClass* pFoot = AsFoot(pTechno);
+    if (!pFoot) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+
+    Mission m = pFoot->CurrentMission;
+    lua_pushboolean(L, (m == Mission::Guard || m == Mission::Stop || m == Mission::Sleep) ? 1 : 0);
+    return 1;
+}
+
 const luaL_Reg kTechnoMethods[] = {
     { "GetTypeName",   Techno_GetTypeName   },
     { "GetHealth",     Techno_GetHealth     },
@@ -263,6 +365,10 @@ const luaL_Reg kTechnoMethods[] = {
     { "GetDistanceTo", Techno_GetDistanceTo },
     { "GetId",         Techno_GetId         },
     { "GetKind",       Techno_GetKind       },
+    { "Scatter",       Techno_Scatter       },
+    { "MoveTo",        Techno_MoveTo        },
+    { "Hunt",          Techno_Hunt          },
+    { "IsIdle",        Techno_IsIdle        },
     { "TakeDamage",    Techno_TakeDamage    },
     { "Disable",       Techno_Disable       },
     { nullptr, nullptr }
