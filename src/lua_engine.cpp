@@ -21,12 +21,17 @@ namespace LuaAPI {
 
 namespace {
 
-// YRpp documents this as the game's main loop (Unsorted::MainLoop, gamemd.exe 1.001).
-constexpr uintptr_t kMainLoopAddr = 0x0055D360;
+// ScenarioClass::Update is __thiscall on ScenarioClass* (0x00685650 in gamemd.exe 1.001).
+// It is ONLY called while an active scenario/battle is running, leaving the
+// main menu 100% native (no interference with mouse/message dispatch).
+constexpr uintptr_t kScenarioUpdateAddr = 0x00685650;
 
-using MainLoop_t = void(__fastcall*)();
+// StringTable::LoadString (YRpp-documented @ 0x734E60): every CSF label lookup
+// in the UI passes through here, including the main-menu "GUI:Version" label.
+constexpr uintptr_t kLoadStringAddr = 0x00734E60;
 
-MainLoop_t g_originalMainLoop = nullptr;
+typedef void(__thiscall* ScenarioUpdate_t)(void* pScenario);
+ScenarioUpdate_t g_originalScenarioUpdate = nullptr;
 bool g_loggedFirstFire = false;
 
 std::wstring g_moduleDir;
@@ -44,19 +49,45 @@ std::string Narrow(const std::wstring& wide) {
     return narrow;
 }
 
-void __fastcall MainLoop_Detour()
+// StringTable watermark: intercept "GUI:Version" and append our version tag,
+// replicating the Ares/Phobos main-menu version injection.
+typedef const wchar_t* (__stdcall* LoadString_t)(const char* pLabel, char* pOutExtraData, const char* pSourceFile, int nLine);
+LoadString_t g_originalLoadString = nullptr;
+
+std::wstring g_versionBuffer;
+
+const wchar_t* __stdcall Hooked_LoadString(const char* pLabel, char* pOutExtraData, const char* pSourceFile, int nLine)
 {
-    if (!g_loggedFirstFire) {
-        g_loggedFirstFire = true;
-        LUA_LOG_INFO("MainLoop hook fired! (first execution)");
+    if (pLabel && _stricmp(pLabel, "GUI:Version") == 0) {
+        const wchar_t* original = g_originalLoadString
+            ? g_originalLoadString(pLabel, pOutExtraData, pSourceFile, nLine)
+            : L"";
+        g_versionBuffer = std::wstring(original ? original : L"") + L" | LuaAPI v1.0.0";
+        return g_versionBuffer.c_str();
+    }
+    return g_originalLoadString ? g_originalLoadString(pLabel, pOutExtraData, pSourceFile, nLine) : L"";
+}
+
+// __fastcall with dummy EDX to handle __thiscall safely in the detour.
+void __fastcall Hooked_ScenarioUpdate(void* pScenario, void* edx_unused)
+{
+    // 1. Call original game scenario update.
+    if (g_originalScenarioUpdate) {
+        g_originalScenarioUpdate(pScenario);
     }
 
-    g_originalMainLoop();
+    if (!g_loggedFirstFire) {
+        g_loggedFirstFire = true;
+        LUA_LOG_INFO("ScenarioClass::Update hook fired! (first execution)");
+    }
 
+    // 2. Dispatch Lua frame tick only during a real battle.
     try {
-        OnGameFrame();
+        if (pScenario && ScenarioClass::Instance) {
+            OnGameFrame();
+        }
     } catch (...) {
-        // Never let an exception escape into the game.
+        // Catch all exceptions to protect the game engine.
     }
 }
 
@@ -174,22 +205,54 @@ void InstallGameHook() {
     }
 
     MH_STATUS status = MH_CreateHook(
-        reinterpret_cast<LPVOID>(kMainLoopAddr),
-        reinterpret_cast<LPVOID>(&MainLoop_Detour),
-        reinterpret_cast<LPVOID*>(&g_originalMainLoop));
+        reinterpret_cast<LPVOID>(kScenarioUpdateAddr),
+        reinterpret_cast<LPVOID>(&Hooked_ScenarioUpdate),
+        reinterpret_cast<LPVOID*>(&g_originalScenarioUpdate));
 
-    LUA_LOG_INFO("MH_CreateHook(MainLoop @ {:#x}) -> {} ({})", kMainLoopAddr, MH_StatusToString(status), static_cast<int>(status));
+    LUA_LOG_INFO("MH_CreateHook(ScenarioClass::Update @ {:#x}) -> {} ({})", kScenarioUpdateAddr, MH_StatusToString(status), static_cast<int>(status));
     if (status != MH_OK) {
         return;
     }
 
-    status = MH_EnableHook(reinterpret_cast<LPVOID>(kMainLoopAddr));
-    LUA_LOG_INFO("MH_EnableHook -> {} ({})", MH_StatusToString(status), static_cast<int>(status));
+    status = MH_EnableHook(reinterpret_cast<LPVOID>(kScenarioUpdateAddr));
+    LUA_LOG_INFO("MH_EnableHook(ScenarioClass::Update) -> {} ({})", MH_StatusToString(status), static_cast<int>(status));
+
+    // Main-menu version watermark (StringTable::LoadString).
+    status = MH_CreateHook(
+        reinterpret_cast<LPVOID>(kLoadStringAddr),
+        reinterpret_cast<LPVOID>(&Hooked_LoadString),
+        reinterpret_cast<LPVOID*>(&g_originalLoadString));
+    LUA_LOG_INFO("MH_CreateHook(StringTable::LoadString @ {:#x}) -> {} ({})", kLoadStringAddr, MH_StatusToString(status), static_cast<int>(status));
+    if (status != MH_OK) {
+        return;
+    }
+
+    status = MH_EnableHook(reinterpret_cast<LPVOID>(kLoadStringAddr));
+    LUA_LOG_INFO("MH_EnableHook(StringTable::LoadString) -> {} ({})", MH_StatusToString(status), static_cast<int>(status));
+}
+
+// True only while an actual match is running. Prevents OnTick, HUD messages
+// and world queries from executing in the main menu / session setup screens,
+// which would otherwise freeze menu input.
+bool IsInGameMatch() {
+    // Must have an active Scenario instance.
+    if (!ScenarioClass::Instance)
+        return false;
+
+    // Must have an active local player house assigned.
+    if (!HouseClass::CurrentPlayer)
+        return false;
+
+    // The scenario must have actually started ticking.
+    if (Unsorted::CurrentFrame <= 0)
+        return false;
+
+    return true;
 }
 
 void OnGameFrame() {
-    // Only run while a scenario is active.
-    if (!ScenarioClass::Instance)
+    // Do nothing outside an active battle - keeps the main menu responsive.
+    if (!IsInGameMatch())
         return;
 
     LuaAPI::ProcessDisabledObjects(Unsorted::CurrentFrame);
