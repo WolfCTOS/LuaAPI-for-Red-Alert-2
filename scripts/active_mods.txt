@@ -1,0 +1,3 @@
+# LuaAPI active mods - one mod ID per line
+delayed_explosion
+smart_ai

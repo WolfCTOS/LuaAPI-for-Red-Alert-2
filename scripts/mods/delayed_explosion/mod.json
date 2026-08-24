@@ -1,0 +1,8 @@
+{
+  "id": "delayed_explosion",
+  "name": "Instant Tank Cook-Off",
+  "version": "1.0.0",
+  "author": "WolfCTOS",
+  "description": "Instant catastrophic tank ammo detonation with fire AoE",
+  "conflicts": []
+}
