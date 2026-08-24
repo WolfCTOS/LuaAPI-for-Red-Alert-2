@@ -188,6 +188,8 @@ All methods validate that the underlying object is still alive.
 
 ## Documentation
 
+- [`docs/TUTORIAL.md`](docs/TUTORIAL.md) — beginner-friendly modding tutorial: write a complete gameplay mod in ~30 lines of Lua
+- [`docs/ENGINEERING_LESSONS.md`](docs/ENGINEERING_LESSONS.md) — deep technical retrospective: YR engine internals, warhead mechanics, safe handle validation, MinHook nuances
 - [`PROJECT/ROADMAP.md`](PROJECT/ROADMAP.md) — milestones and gate tracking
 - [`PROJECT/CHANGELOG.md`](PROJECT/CHANGELOG.md) — version history
 - [`PROJECT/AI_CONTEXT.md`](PROJECT/AI_CONTEXT.md) — architecture decisions & upstream context

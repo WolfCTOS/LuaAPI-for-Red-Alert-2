@@ -154,7 +154,12 @@ int Techno_GetDistanceTo(lua_State* L) {
     return 1;
 }
 
-// obj:TakeDamage(damage_amount) -> int remaining health
+// obj:TakeDamage(damage_amount, [warheadName]) -> int remaining health
+//
+// With a warhead name (default "Fire", fallback Rules->C4Warhead) the damage
+// goes through the NATIVE TechnoClass::ReceiveDamage pipeline - triggering
+// proper fire/splash anims, InfDeath animations, screams, sounds and kill
+// credit instead of a raw Health write.
 int Techno_TakeDamage(lua_State* L) {
     auto* pTechno = CheckTechno(L, 1);
     if (!IsValid(pTechno)) {
@@ -168,12 +173,41 @@ int Techno_TakeDamage(lua_State* L) {
         return 1;
     }
 
+    const char* warheadName = luaL_optstring(L, 3, nullptr);
+
+    WarheadTypeClass* pWH = nullptr;
+    if (warheadName && *warheadName)
+        pWH = WarheadTypeClass::Find(warheadName);
+
+    // Fallback chain: named -> TerrorBombWH (Oil Derrick / Terrorist blast,
+    // AffectsAllies=yes + InfDeath=4) -> DemobombWH -> C4Warhead from rules.
+    // Standard "Fire" is useless here: AffectsAllies=no and 0% vs heavy armor.
+    if (!pWH)
+        pWH = WarheadTypeClass::Find("TerrorBombWH");
+    if (!pWH)
+        pWH = WarheadTypeClass::Find("DemobombWH");
+    if (!pWH && RulesClass::Instance)
+        pWH = RulesClass::Instance->C4Warhead;
+
+    const char* typeName = pTechno->GetType()->get_ID();
+
+    if (pWH && RulesClass::Instance && RulesClass::Instance->C4Warhead) {
+        int dmg = static_cast<int>(damage);
+        // IgnoreDefenses=true, PreventSelfDefend=true: guaranteed AoE application.
+        DamageState state = pTechno->ReceiveDamage(&dmg, 0, pWH, nullptr, true, true, nullptr);
+        LUA_LOG_INFO("[Combat] {} took {} damage via warhead '{}', HP remaining: {}",
+                     typeName, dmg, pWH->get_ID(), pTechno->Health);
+        lua_pushinteger(L, pTechno->Health);
+        return 1;
+    }
+
+    // Last-resort raw path (rules/warheads unavailable).
     int remaining = pTechno->Health - static_cast<int>(damage);
     if (remaining < 0)
         remaining = 0;
     pTechno->Health = remaining;
 
-    LUA_LOG_INFO("[Combat] {} took {} damage, HP remaining: {}", pTechno->GetType()->get_ID(), damage, remaining);
+    LUA_LOG_INFO("[Combat] {} took {} raw damage (no warhead), HP remaining: {}", typeName, damage, remaining);
     lua_pushinteger(L, remaining);
     return 1;
 }
