@@ -1,7 +1,8 @@
 print("[LuaAPI] Universal ModLoader Online!")
 
 local ACTIVE_MODS = {
-    "tesla_overload"
+    "tesla_overload",
+    "delayed_explosion"
 }
 
 local loadedMods = {}

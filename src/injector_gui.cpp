@@ -32,11 +32,9 @@ constexpr int IDC_BTN_INJECT = 1002;
 constexpr int IDC_BTN_LAUNCH = 1003;
 constexpr int IDC_STATUS = 1004;
 
-constexpr const wchar_t* kGameProcesses[] = {
-    L"gamemd.exe",
-    L"ra2md.exe",
-    L"game.exe",
-};
+// Strict targeting: only the real game executable. RA2MD.exe / game.exe are
+// launcher stubs - injecting into them hits unmapped memory (error 487).
+constexpr const wchar_t* kGameProcess = L"gamemd.exe";
 
 HWND g_hwnd = nullptr;
 HWND g_status = nullptr;
@@ -49,8 +47,9 @@ void SetStatus(const std::wstring& text) {
         SetWindowTextW(g_status, text.c_str());
 }
 
-// Returns PID and (optionally) the process name that matched.
-DWORD FindGameProcess(std::wstring* outName = nullptr) {
+// Returns PID of gamemd.exe only. Verifies via module enumeration that the
+// process's base module really is gamemd.exe (guards against stub launchers).
+DWORD FindTargetProcess() {
     HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
     if (snapshot == INVALID_HANDLE_VALUE)
         return 0;
@@ -61,15 +60,22 @@ DWORD FindGameProcess(std::wstring* outName = nullptr) {
     DWORD pid = 0;
     if (Process32FirstW(snapshot, &entry)) {
         do {
-            for (const wchar_t* name : kGameProcesses) {
-                if (_wcsicmp(entry.szExeFile, name) == 0) {
-                    pid = entry.th32ProcessID;
-                    if (outName)
-                        *outName = name;
-                    break;
+            if (_wcsicmp(entry.szExeFile, kGameProcess) == 0) {
+                // Double-check the base module name inside the process.
+                HANDLE moduleSnap = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE, entry.th32ProcessID);
+                if (moduleSnap != INVALID_HANDLE_VALUE) {
+                    MODULEENTRY32W mod{};
+                    mod.dwSize = sizeof(mod);
+                    if (Module32FirstW(moduleSnap, &mod) &&
+                        _wcsicmp(mod.szModule, kGameProcess) == 0) {
+                        pid = entry.th32ProcessID;
+                    }
+                    CloseHandle(moduleSnap);
                 }
+                if (pid)
+                    break;
             }
-        } while (pid == 0 && Process32NextW(snapshot, &entry));
+        } while (Process32NextW(snapshot, &entry));
     }
 
     CloseHandle(snapshot);
@@ -151,7 +157,8 @@ bool InjectDll(HANDLE hProcess, const std::wstring& dllPath, std::wstring* error
 }
 
 void DoFindGame() {
-    g_gamePid = FindGameProcess(&g_gameName);
+    g_gamePid = FindTargetProcess();
+    g_gameName = g_gamePid ? kGameProcess : L"";
     if (g_gamePid == 0) {
         SetStatus(L"\u0418\u0433\u0440\u0430 \u043D\u0435 \u043D\u0430\u0439\u0434\u0435\u043D\u0430");
         MessageBoxW(g_hwnd,
@@ -159,8 +166,7 @@ void DoFindGame() {
                     L"\u0421\u043D\u0430\u0447\u0430\u043B\u0430 \u0437\u0430\u043F\u0443\u0441\u0442\u0438\u0442\u0435 Yuri's Revenge (gamemd.exe).",
                     L"\u041F\u043E\u0438\u0441\u043A \u043F\u0440\u043E\u0446\u0435\u0441\u0441\u0430", MB_ICONWARNING | MB_OK);
     } else {
-        SetStatus(L"\u041D\u0430\u0439\u0434\u0435\u043D\u0430 \u0438\u0433\u0440\u0430: " + g_gameName +
-                  L" (PID: " + std::to_wstring(g_gamePid) + L")");
+        SetStatus(std::wstring(L"Target: gamemd.exe (PID: ") + std::to_wstring(g_gamePid) + L")");
     }
 }
 
@@ -205,15 +211,59 @@ void DoInject() {
 }
 
 void DoLaunchGame() {
-    HINSTANCE result = ShellExecuteW(g_hwnd, L"open", L"gamemd.exe", nullptr, nullptr, SW_SHOWNORMAL);
-    if (reinterpret_cast<INT_PTR>(result) <= 32) {
-        SetStatus(L"\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u0437\u0430\u043F\u0443\u0441\u0442\u0438\u0442\u044C gamemd.exe");
+    // Early injection: create the game suspended, inject LuaAPI.dll BEFORE the
+    // first frame renders, then resume. This way the StringTable watermark hook
+    // is active before the main menu fetches GUI:Version.
+    std::wstring exeDir = GetExeDirectory();
+    std::wstring gamePath = exeDir + L"\\gamemd.exe";
+    if (!FileExists(gamePath)) {
+        SetStatus(L"gamemd.exe \u043D\u0435 \u043D\u0430\u0439\u0434\u0435\u043D");
         MessageBoxW(g_hwnd,
                     L"gamemd.exe \u043D\u0435 \u043D\u0430\u0439\u0434\u0435\u043D \u0432 \u043F\u0430\u043F\u043A\u0435 \u0438\u043D\u0436\u0435\u043A\u0442\u043E\u0440\u0430.",
                     L"\u041E\u0448\u0438\u0431\u043A\u0430", MB_ICONERROR | MB_OK);
         return;
     }
-    SetStatus(L"gamemd.exe \u0437\u0430\u043F\u0443\u0441\u043A\u0430\u0435\u0442\u0441\u044F...");
+
+    std::wstring dllPath = exeDir + L"\\LuaAPI.dll";
+    if (!FileExists(dllPath)) {
+        SetStatus(L"LuaAPI.dll \u043D\u0435 \u043D\u0430\u0439\u0434\u0435\u043D");
+        MessageBoxW(g_hwnd, (L"\u0424\u0430\u0439\u043B \u043D\u0435 \u043D\u0430\u0439\u0434\u0435\u043D:\n" + dllPath).c_str(),
+                    L"\u041E\u0448\u0438\u0431\u043A\u0430", MB_ICONERROR | MB_OK);
+        return;
+    }
+
+    STARTUPINFOW si{};
+    si.cb = sizeof(si);
+    PROCESS_INFORMATION pi{};
+
+    SetStatus(L"\u0417\u0430\u043F\u0443\u0441\u043A gamemd.exe...");
+    if (!CreateProcessW(gamePath.c_str(), nullptr, nullptr, nullptr, FALSE,
+                        CREATE_SUSPENDED, nullptr, exeDir.c_str(), &si, &pi)) {
+        SetStatus(L"CreateProcess failed");
+        MessageBoxW(g_hwnd, (L"CreateProcessW failed (error " + std::to_wstring(GetLastError()) + L")").c_str(),
+                    L"\u041E\u0448\u0438\u0431\u043A\u0430", MB_ICONERROR | MB_OK);
+        return;
+    }
+
+    std::wstring error;
+    if (!InjectDll(pi.hProcess, dllPath, &error)) {
+        TerminateProcess(pi.hProcess, 1);
+        CloseHandle(pi.hThread);
+        CloseHandle(pi.hProcess);
+        SetStatus(L"\u0412\u043D\u0435\u0434\u0440\u0435\u043D\u0438\u0435 \u043D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C");
+        MessageBoxW(g_hwnd, (L"\u0412\u043D\u0435\u0434\u0440\u0435\u043D\u0438\u0435 \u043D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C:\n" + error).c_str(),
+                    L"\u041E\u0448\u0438\u0431\u043A\u0430", MB_ICONERROR | MB_OK);
+        return;
+    }
+
+    ResumeThread(pi.hThread);
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
+
+    g_gamePid = pi.dwProcessId;
+    g_gameName = L"gamemd.exe";
+
+    SetStatus(L"\u0418\u0433\u0440\u0430 \u0437\u0430\u043F\u0443\u0449\u0435\u043D\u0430 \u0438 LuaAPI \u0432\u043D\u0435\u0434\u0440\u0435\u043D!");
 }
 
 LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {

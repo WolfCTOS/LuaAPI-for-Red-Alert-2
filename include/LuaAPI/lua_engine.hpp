@@ -12,6 +12,10 @@ std::wstring GetModuleDirectory(HMODULE hModule);
 // Stores the DLL's own directory (for locating scripts). Call once from bootstrap.
 void InitPaths(HMODULE hModule);
 
+// Installs the MinHook hooks (ScenarioClass::Update + StringTable::LoadString)
+// via the bootstrap worker thread. Never call from DllMain directly.
+void InstallGameHook();
+
 // Called every game frame from the Syringe MainLoop hook (main thread).
 // Lazily initializes the Lua state, then dispatches OnTick(frame).
 void OnGameFrame();

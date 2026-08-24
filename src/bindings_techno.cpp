@@ -108,6 +108,29 @@ int Techno_IsAlive(lua_State* L) {
     return 1;
 }
 
+// obj:GetId() -> unsigned int (engine-wide unique object ID)
+int Techno_GetId(lua_State* L) {
+    auto* pTechno = CheckTechno(L, 1);
+    lua_pushinteger(L, static_cast<lua_Integer>(pTechno->UniqueID));
+    return 1;
+}
+
+// obj:GetKind() -> string ("building" | "unit" | "infantry" | "aircraft" | "other")
+int Techno_GetKind(lua_State* L) {
+    auto* pTechno = CheckTechno(L, 1);
+    if (!IsValid(pTechno))
+        return 0;
+
+    switch (pTechno->WhatAmI()) {
+    case AbstractType::Building:  lua_pushliteral(L, "building");  break;
+    case AbstractType::Unit:      lua_pushliteral(L, "unit");      break;
+    case AbstractType::Infantry:  lua_pushliteral(L, "infantry");  break;
+    case AbstractType::Aircraft:  lua_pushliteral(L, "aircraft");  break;
+    default:                      lua_pushliteral(L, "other");     break;
+    }
+    return 1;
+}
+
 // obj:GetDistanceTo(other_obj) -> number (in map cells)
 int Techno_GetDistanceTo(lua_State* L) {
     auto* pSelf = CheckTechno(L, 1);
@@ -204,6 +227,8 @@ const luaL_Reg kTechnoMethods[] = {
     { "GetPosition",   Techno_GetPosition   },
     { "IsAlive",       Techno_IsAlive       },
     { "GetDistanceTo", Techno_GetDistanceTo },
+    { "GetId",         Techno_GetId         },
+    { "GetKind",       Techno_GetKind       },
     { "TakeDamage",    Techno_TakeDamage    },
     { "Disable",       Techno_Disable       },
     { nullptr, nullptr }
@@ -230,9 +255,19 @@ int World_GetBuildings(lua_State* L) {
     return CollectArray(L, BuildingClass::Array);
 }
 
-// World.GetUnits() -> table of techno objects
+// World.GetUnits() -> table of all mobile technos (vehicles + infantry +
+// aircraft), i.e. every entry of TechnoClass::Array that is not a building.
 int World_GetUnits(lua_State* L) {
-    return CollectArray(L, UnitClass::Array);
+    lua_createtable(L, static_cast<int>(TechnoClass::Array.Count), 0);
+    int n = 0;
+    for (int i = 0; i < TechnoClass::Array.Count; ++i) {
+        auto* pItem = TechnoClass::Array.GetItem(i);
+        if (!pItem || pItem->WhatAmI() == AbstractType::Building)
+            continue;
+        PushTechno(L, pItem);
+        lua_seti(L, -2, ++n);
+    }
+    return 1;
 }
 
 } // anonymous namespace
