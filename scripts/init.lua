@@ -1,7 +1,8 @@
 print("[LuaAPI] Universal ModLoader Online!")
 
+-- Active mods list (toggle on/off here)
 local ACTIVE_MODS = {
-    "tesla_overload",
+    -- "tesla_overload",      -- Temporarily disabled for clean testing
     "delayed_explosion"
 }
 
@@ -22,7 +23,7 @@ function OnTick(frame)
     if not welcomed then
         local player = House.GetPlayer()
         if player then
-            Engine.PrintMessage(string.format("Commander: %s | LuaAPI Platform: %d Mod(s) Active",
+            Engine.PrintMessage(string.format("Commander: %s | Testing: Delayed Explosion Mod (%d active)",
                 player:GetName(), #loadedMods))
             welcomed = true
         end
