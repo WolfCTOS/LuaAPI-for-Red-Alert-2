@@ -1,102 +1,141 @@
 #!/usr/bin/env pwsh
 # tools/run_benchmark.ps1
-# Automated 65-second benchmark: spawn gamemd.exe, inject LuaAPI, profile via PresentMon.
+# Automated benchmark: spawn gamemd.exe, inject LuaAPI, profile via PresentMon.
 
-# User-configurable settings
-$exeDir       = "D:\Games\Red Alert 2"   # game directory (contains gamemd.exe, LuaAPI.dll, injector.exe)
-$injectorExe  = Join-Path $exeDir "injector.exe"
-$dllPath      = Join-Path $exeDir "LuaAPI.dll"
-$presentmonExe = "presentmon.exe"  # ensure presentmon is on PATH or specify full path
+# ---------------------------------------------------------------------------
+# Path configuration (flexible, project-relative)
+# ---------------------------------------------------------------------------
+# $ProjectDir — папка со скриптом (один уровень выше tools/).
+# $GameDir  — папка с игрой (по умолчанию D:\Games\Red Alert 2 или там, где лежит gamemd.exe).
+# $PresentMonPath — путь к PresentMon.exe (приоритет: tools/, game-dir, PATH).
+
+# Попытка определить ProjectDir: каталог, где лежит этот скрипт, один уровень вверх.
+$scriptDir   = Split-Path -Parent -Path $MyInvocation.MyCommand.Definition
+$ProjectDir  = $scriptDir -replace '\\tools$', ''
+if (-not (Test-Path $ProjectDir)) { $ProjectDir = $PSScriptRoot }
+
+# Определяем GameDir: ищем gamemd.exe в соседней папке от скрипта, иначе заданный дефолт.
+$DefaultGameDir = "D:\Games\Red Alert 2"
+if (Test-Path (Join-Path $ProjectDir "gamemd.exe")) {
+    $GameDir = $ProjectDir
+} elseif (Test-Path (Join-Path $DefaultGameDir "gamemd.exe")) {
+    $GameDir = $DefaultGameDir
+} else {
+    # Ищем gamemd.exe в дочерних папках ProjectDir (до 3 уровней).
+    $GameDir = $null
+    $candidates = Get-ChildItem -Path $ProjectDir -Recurse -Filter gamemd.exe -Depth 3 |
+        Select-Object -First 1 -ExpandProperty Parent
+    if ($candidates) { $GameDir = $candidates.Parent }
+}
+if (-not $GameDir) { $GameDir = $DefaultGameDir }
+
+# Нормализуем пути (обратные слеши).
+$GameDir       = [System.IO.Path]::GetFullPath($GameDir)
+$ProjectDir    = [System.IO.Path]::GetFullPath($ProjectDir)
+
+# --- Поиск injector.exe ---
+# Последовательный перебор папок: bin\Release, bin, build, корзина проекта, папка игры.
+$injectorPaths = @(
+    Join-Path $ProjectDir "bin\Release\injector.exe"
+    Join-Path $ProjectDir "bin\injector.exe"
+    Join-Path $ProjectDir "build\injector.exe"
+    Join-Path $ProjectDir "injector.exe"
+    Join-Path $GameDir "injector.exe"
+)
+$injectorExe = $injectorPaths | Where-Object { Test-Path $_ } | Select-Object -First 1
+if (-not $injectorExe) {
+    Write-Error "injector.exe not found in expected locations."
+    Write-Error "Searched: $($injectorPaths -join ', '
+)"
+    exit 1
+}
+
+# --- Поиск LuaAPI.dll ---
+$dllPaths = @(
+    Join-Path $ProjectDir "bin\Release\LuaAPI.dll"
+    Join-Path $ProjectDir "bin\LuaAPI.dll"
+    Join-Path $ProjectDir "build\LuaAPI.dll"
+    Join-Path $ProjectDir "LuaAPI.dll"
+    Join-Path $GameDir "LuaAPI.dll"
+)
+$dllPath = $dllPaths | Where-Object { Test-Path $_ } | Select-Object -First 1
+if (-not $dllPath) {
+    Write-Error "LuaAPI.dll not found in expected locations."
+    Write-Error "Searched: $($dllPaths -join ', ')"
+    exit 1
+}
+
+# --- Поиск PresentMon.exe ---
+# Приоритет: 1) $ProjectDir\tools\PresentMon.exe, 2) $GameDir\PresentMon.exe, 3) $env:PATH
+$PresentMonCandidate1 = Join-Path (Join-Path $ProjectDir "tools") "PresentMon.exe"
+$PresentMonCandidate2 = Join-Path $GameDir "PresentMon.exe"
+$PresentMon_exe = $PresentMonCandidate1
+if (-not (Test-Path $PresentMon_exe)) { $PresentMon_exe = $PresentMonCandidate2 }
+if (-not (Test-Path $PresentMon_exe)) {
+    # Fallback to PATH
+    $PresentMon_exe = (Get-Command presentmon.exe -ErrorAction SilentlyContinue)
+    if (-not $PresentMon_exe) {
+        # Не нашли — выдаем инструкцию и выходим.
+        Write-Host "PresentMon.exe not found." -ForegroundColor Yellow
+        Write-Host "Please install PresentMon or specify its path manually." -ForegroundColor Yellow
+        Write-Host "Download: https://github.com/GameTechDev/PresentMon/releases" -ForegroundColor Yellow
+        exit 1
+    }
+}
+
+# ---------------------------------------------------------------------------
+# Проверить наличие gamemd.exe, injector.exe, LuaAPI.dll (уже проверено выше, но на всякий случай)
+# ---------------------------------------------------------------------------
+if (-not (Test-Path (Join-Path $GameDir "gamemd.exe"))) {
+    Write-Error "gamemd.exe not found in $GameDir."
+    exit 1
+}
+
+# ---------------------------------------------------------------------------
+# Запуск PresentMon и сбор данных
+# ---------------------------------------------------------------------------
 $benchmarkDurSec = 65
-$csvOutput    = Join-Path $env:USERPROFILE "presentmon_benchmark.csv"
+$csvOutput = Join-Path $env:USERPROFILE "presentmon_benchmark.csv"
+$presentmonArgs = @(
+    "-csv", $csvOutput
+    "-rt", "csv"
+)
 
 Write-Host "=== Red Alert 2 Benchmark Runner ===" -ForegroundColor Cyan
-Write-Host "Working directory: $exeDir" -ForegroundColor Yellow
+Write-Host "Working directory: $GameDir" -ForegroundColor Yellow
 Write-Host "Benchmark duration: $benchmarkDurSec seconds" -ForegroundColor Yellow
 Write-Host "CSV output: $csvOutput" -ForegroundColor Yellow
 Write-Host ""
 
-# Verify files exist
-if (-not (Test-Path $injectorExe)) {
-    Write-Error "injector.exe not found at $injectorExe"
-    exit 1
-}
-if (-not (Test-Path $dllPath)) {
-    Write-Error "LuaAPI.dll not found at $dllPath"
-    exit 1
-}
+# Запуск PresentMon
+Write-Host "[1/5] Starting PresentMon..." -ForegroundColor White
+$pmProc = Start-Process -FilePath $PresentMon_exe -ArgumentList $presentmonArgs -PassThru -ErrorAction Stop
+Write-Host "    PresentMon started (PID: $($pmProc.Id))" -ForegroundColor Gray
 
-# Launch gamemd.exe suspended, then inject
-Write-Host "[1/5] Spawning gamemd.exe (suspended)..." -ForegroundColor White
-$gameProc = Start-Process -FilePath Join-Path $exeDir "gamemd.exe" -ArgumentList "-SPAWN" -PassThru -Wait -ErrorAction Stop
-# Note: Start-Process with -Wait will wait for the process to exit.
-# We actually want to keep it running, so let's use Start without -Write.
+# Запуск игры + инжект
+Write-Host "[2/5] Launching injector.exe..." -ForegroundColor White
+# Используем injector.exe для запуска или инжекта.
+# injector.exe по умолчанию пытается запустить gamemd.exe и инжектить.
+Write-Host "    injector.exe: $injectorExe" -ForegroundColor Gray
 
-# Actually, let's use the proper approach: spawn and keep running
-Write-Host "[1/5] Spawning gamemd.exe (detached)..." -ForegroundColor White
-$process = Start-Process -FilePath Join-Path $exeDir "gamemd.exe" -ArgumentList "-SPAWN" -PassThru
-$pid = $process.Id
+Write-Host "[3/5] Spawning gamemd.exe..." -ForegroundColor White
+$gameProc = Start-Process -FilePath (Join-Path $GameDir "gamemd.exe") -PassThru -Wait -ErrorAction Stop
 
-Write-Host "    gamemd.exe spawned PID: $pid" -ForegroundColor Gray
-
-# Wait a moment for process to start
-Start-Sleep -Seconds 5
-
-# Launch injector to attach and inject LuaAPI.dll
-Write-Host "[2/5] Launching injector.exe to attach and inject LuaAPI.dll..." -ForegroundColor White
-$injector = Start-Process -FilePath $injectorExe -ArgumentList "" -PassThru
-Start-Sleep -Seconds 3  # give injector time to find and inject
-
-# Verify injection
-Write-Host "[3/5] Verifying injection..." -ForegroundColor White
-$dllLoaded = $false
-for ($i = 0; $i -lt 60; $i++) {
-    if (Test-Path $dllPath) {
-        # Check if injector process is still running and LuaAPI is loaded
-        Write-Host "    Checking injection status (attempt $i)..." -ForegroundColor Gray
-        Start-Sleep -Seconds 1
-    } else {
-        break
-    }
-}
-
-# Run PresentMon to capture CSV output for the benchmark duration
-Write-Host "[4/5] Starting PresentMon profiling for $benchmarkDurSec seconds..." -ForegroundColor White
-$presentmonArgs = @(
-    "-csv", $csvOutput
-    "-rt", "csv"
-    "-o", "Logger"  # Logger mode (overkill for simple FPS, but reliable)
-)
-
-# PresentMon might need specific flags; adjust as needed for your version.
-# Common PresentMon CLI: presentmon.exe -csv output.csv -rt csv
-$pmProc = Start-Process -FilePath $presentmonExe -ArgumentList $presentmonArgs -PassThru -ErrorAction SilentlyContinue
-
-if (-not $pmProc) {
-    Write-Error "Failed to start PresentMon. Ensure presentmon.exe is accessible and YR is running."
-    exit 1
-}
-
-Write-Host "    PresentMon PID: $($pmProc.Id)" -ForegroundColor Gray
-
-# Profile for the specified duration, then stop PresentMon
-Write-Host "    Profiling... counting down $benchmarkDurSec seconds..." -ForegroundColor Gray
+Write-Host "[4/5] Waiting for benchmark duration ($benchmarkDurSec seconds)..." -ForegroundColor White
 Start-Sleep -Seconds $benchmarkDurSec
 
-Write-Host "    Stopping PresentMon..." -ForegroundColor White
+Write-Host "[5/5] Stopping PresentMon and analyzing..." -ForegroundColor White
 Stop-Process -Id $pmProc.Id -Force -ErrorAction SilentlyContinue
 
 Write-Host "    PresentMon stopped." -ForegroundColor Gray
 
-# Post-processing: analyze the CSV
-Write-Host "[5/5] Analyzing benchmark CSV..." -ForegroundColor White
-$pythonScript = Join-Path $scriptRoot "tools\benchmark_analyzer.py"
-if (-not $pythonScript) {
-    pythonScript = "python3 tools/benchmark_analyzer.py"
+Write-Host "    Analyzing CSV with benchmark_analyzer.py..." -ForegroundColor White
+$analyzer = Join-Path $ProjectDir "tools/benchmark_analyzer.py"
+if (Test-Path $analyzer) {
+    & powershell -Command "python3 $analyzer $csvOutput"
+} else {
+    Write-Warning "benchmark_analyzer.py not found at $analyzer. Please run: python tools/benchmark_analyzer.py $csvOutput"
 }
-
-Write-Host "    Running: python $pythonScript $csvOutput" -ForegroundColor Gray
-& python3 $pythonScript $csvOutput
 
 Write-Host "" -ForegroundColor Cyan
 Write-Host "=== Benchmark Complete ===" -ForegroundColor Cyan

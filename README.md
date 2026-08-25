@@ -6,211 +6,202 @@ A native x86 runtime that injects a **Lua 5.4 scripting engine** into `gamemd.ex
 
 ---
 
-## Architecture
+## 🚀 Quick Start
 
-```
-injector.exe ──► gamemd.exe (suspended) ──► inject LuaAPI.dll ──► resume
-                                                    │
-                                    MinHook trampoline on Unsorted::MainLoop
-                                              @ 0x55D360 (per-frame)
-                                                    │
-                              Lazy Lua-state init on the main game thread
-                                                    │
-                                   scripts/init.lua (Universal ModLoader)
-                                                    │
-                          scripts/mods/<mod_name>/main.lua (pure Lua mods)
-```
+### Launch via GUI Injector
+- Double-click **`injector.exe`** — it spawns `gamemd.exe` suspended, injects `LuaAPI.dll`, resumes it, and exits.
+- If `gamemd.exe` is already running, `injector.exe` attaches and injects into it instead.
 
-**Key design decisions**
-
-| Aspect | Decision |
-|---|---|
-| Hook target | `Unsorted::MainLoop` @ `0x55D360` (documented in YRpp), via MinHook trampoline |
-| Threading | The entire Lua state lives on the main game thread; lazy-initialized on the first hook tick. Only the rotating logger is cross-thread (mutex-protected). |
-| Safety | All bindings validate pointer liveness against engine arrays; script errors are contained by `pcall` and logged — never crash the game. |
-| CRT | Statically linked (`/MT`) — no VC++ redistributable needed inside the game process. |
-| Modding | `LuaAPI.dll` is a frozen host platform; gameplay is authored as pure Lua modules in `scripts/mods/<name>/main.lua`. |
-
-Community context and upstream validation notes: see [`PROJECT/AI_CONTEXT.md`](PROJECT/AI_CONTEXT.md).
-
----
-
-## Quick Start
-
-1. **Build** (or use the deployed binaries):
-
-   ```cmd
-   cmake -B build -A Win32
-   cmake --build build --config RelWithDebInfo
-   ```
-
-   Binaries are auto-deployed next to `CMakeLists.txt` (your game directory) after every successful build.
-
-2. **Launch the game:**
-   - Double-click **`injector.exe`** — it spawns `gamemd.exe` suspended, injects `LuaAPI.dll`, resumes it, and exits.
-   - If `gamemd.exe` is already running, `injector.exe` attaches and injects into it instead.
-
-3. **Verify:** check `LuaAPI.log` next to the DLL:
-
-   ```
-   [..] MainLoop hook fired! (first execution)
-   [..] [script] [LuaAPI] Universal ModLoader Online!
-   [..] [script] [LuaAPI] [+] Mod active: 'tesla_overload'
-   ```
-
-### Manual attach (advanced)
-
+### Launch under CnCNet
 ```cmd
-injector.exe                 :: 1-click launch or attach
-injector.exe D:\path\LuaAPI.dll   :: explicit DLL path (attach mode)
-injector.exe "gamemd.exe" -SPAWN -LOG -CD   :: spawner mode (creates process, injects, waits)
+injector.exe --withcncnet
 ```
+Use this flag to run the game through the CnCNet spawner. Note: `os.time()` and `os.clock()` are **disabled** in the Lua runtime to prevent Out-of-Sync (OOS) desync between clients. See the **RNG Determinism** section below.
+
+### Manage Mods
+- **GUI Mod Manager**: open `injector.exe`, use the Mod Manager card list to enable/disable mods, view conflict warnings.
+- **Manual**: edit `scripts/active_mods.txt` — one mod ID per line, `#` for comments. The Universal ModLoader reads this file on startup.
 
 ---
 
-## Writing Mods
+## 📁 Mod Anatomy (Mod Structure)
 
 A mod is a folder inside `scripts/mods/<mod_name>/` containing:
 
-- **`mod.json`** — mod manifest with `id`, `name`, `version`, `author`, `description`, and `conflicts` arrays.
-- **`main.lua`** — module table with an optional `Update(frame)` function, called every game frame.
-
-### Mod manifest (`mod.json`)
-
+### `mod.json` — Mod Manifest
 ```json
 {
-  "id": "tesla_overload",
-  "name": "Tesla Overload",
+  "id": "shield_overload",
+  "name": "Shield Overload",
   "version": "1.0.0",
   "author": "WolfCTOS",
-  "description": "Base electrical overload & EMP blackout aura",
-  "conflicts": []
+  "description": "Absorbs incoming damage via pre-damage events",
+  "conflicts": ["mod_a"]
 }
 ```
 
-### Mod code (`main.lua`)
+**Fields:**
+- `id` — unique mod identifier (used in `active_mods.txt` and conflict detection).
+- `name` — display name.
+- `version` — mod version string.
+- `author` — author name or handle.
+- `description` — short description shown in the GUI.
+- `conflicts` — array of mod IDs that conflict with this mod. The injector's conflict detector will warn if two conflicting mods are enabled simultaneously.
+
+### `main.lua` — Entry Point
+A Lua module table returned at the end of the file. It may contain:
+- `Update(frame)` — called every game frame (polling).
+- `OnPreDamage(...)` — event callback (see below).
+- Any other functions your mod needs.
+
+### Example: `main.lua` for Shield Overload Mod
+```lua
+local ShieldOverload = {}
+
+--[[
+  Inbound Event: OnPreDamage
+  Called by the C++ hook before damage is applied.
+  Return a number to modify the damage, or nil to keep the original value.
+]]
+function ShieldOverload.OnPreDamage(attacker, target, damage, dmg_type, frame, subc)
+    -- Absorb 50% of energy and explosive damage
+    local absorbed_types = {"energy", "explosive", "emp"}
+    for _, dt in ipairs(absorbed_types) do
+        if dmg_type == dt then
+            return damage * 0.5
+        end
+    end
+    -- Return nil = no change (original damage applied)
+    return nil
+end
+
+-- Register the event with the C++ injector
+function ShieldOverload.OnRegister()
+    game_RegisterEvent("OnPreDamage", ShieldOverload.OnPreDamage)
+end
+
+-- Standard Update (optional — polling fallback)
+function ShieldOverload.Update(frame)
+    -- No per-frame logic needed for this mod
+end
+
+return ShieldOverload
+```
+
+---
+
+## 💻 Writing Code (`main.lua`)
+
+### 1. Update Polling (Traditional)
+Every game frame, the Universal ModLoader calls `mod.Update(frame)`. This is the safe, always-available method.
 
 ```lua
-local MyMod = {}
-
 function MyMod.Update(frame)
     local player = House.GetPlayer()
     if player then
         Engine.PrintMessage(string.format("Hello from MyMod at frame %d!", frame))
     end
 end
-
-return MyMod
 ```
 
-### Activation
+### 2. Inbound Events (Sub-Frame Pre-Damage Hooks)
+Mods can register callbacks for `OnPreDamage` events. These fire **before** damage is applied, allowing mods to absorb, redirect, or cancel damage. This is how absorbing shields and damage modifiers work.
 
-Add the mod ID to `scripts/active_mods.txt` (one per line, `'#'` for comments), or enable it via the **GUI Mod Manager** in `injector.exe`. The Universal ModLoader (`scripts/init.lua`) reads active mod IDs from `scripts/active_mods.txt` on startup.
+**Registration:**
+```lua
+function MyMod.OnRegister()
+    game_RegisterEvent("OnPreDamage", function(attacker, target, damage, dmg_type, frame, subc)
+        -- Modify damage here
+        return damage * 0.8  -- absorb 20%
+    end)
+end
+```
 
-- Mods load via `require` — the engine prepends `<DLL dir>/scripts/?.lua` to `package.path`.
-- Each mod's `Update` runs inside `pcall`: one broken mod logs an error and keeps running; it never crashes the game.
-- Conflicts declared in `mod.json`'s `conflicts` array are checked by the injector's conflict detector, but are not actively verified under real conflicting mods.
+**Event parameters:**
+- `attacker` — the techno/unit dealing damage
+- `target` — the techno/unit receiving damage
+- `damage` — current damage value (number; return a new number to change it)
+- `dmg_type` — string: `"energy"`, `"explosive"`, `"emp"`, etc.
+- `frame` — current game frame number
+- `subc` — sub-frame tick (0–255, granularity within the frame)
 
----
+**⚠️ RNG Determinism — Critical for CnCNet Multiplayer**
+- **Never use `os.time()` or `os.clock()`** in multiplayer gameplay logic. These functions produce different values on different clients, causing **Out-of-Sync (OOS)** desync.
+- Use the **deterministic seed** `12345` (set at program start).
+- If you need frame-unique randomness, use: `math.randomseed(frame + 12345)` inside `OnTick()` or `Update()`.
+- The C++ layer enforces this by sandbox-blocking `os.time` and `os.clock` in CnCNet mode.
 
-## API Reference
-
-### `Engine`
-
-| Function | Description |
-|---|---|
-| `Engine.PrintMessage(text)` | Shows `text` in the in-game HUD message list (UTF-8 input). |
-
-### `House`
-
-| Function | Description |
-|---|---|
-| `House.GetPlayer()` | Returns the local player's house handle, or `nil`. |
-| `House.GetCount()` | Number of houses in the scenario. |
-| `House.GetByIndex(idx)` | House handle at `idx` (bounds-checked), or `nil`. |
-
-**House handles** support:
-
-| Method | Returns |
-|---|---|
-| `house:GetCredits()` | Available money (via `Available_Money()`). |
-| `house:SetCredits(amount)` | Sets credits through the game's own money transaction. |
-| `house:AddCredits(delta)` | Adds/subtracts credits. |
-| `house:GetPowerOutput()` / `house:GetPowerDrain()` | Power grid values. |
-| `house:GetName()` | Internal house ID string (e.g. `"Americans"`). |
-| `house:IsHuman()` | Whether a human controls this house. |
-| `house:IsAlliedWith(other)` | Alliance test between two houses. |
-
-### `World`
-
-| Function | Description |
-|---|---|
-| `World.GetBuildings()` | Array of building handles (`BuildingClass::Array`). |
-| `World.GetUnits()` | Array of unit handles (`UnitClass::Array`). |
-
-### Techno handles (buildings & units)
-
-All methods validate that the underlying object is still alive.
-
-| Method | Returns |
-|---|---|
-| `obj:GetTypeName()` | Type ID string (e.g. `"GAPOWR"`). |
-| `obj:GetHealth()` / `obj:GetMaxHealth()` | Current / maximum health. |
-| `obj:GetOwner()` | Owning house handle. |
-| `obj:GetPosition()` | `{x = cellX, y = cellY, z = ...}` in map cells. |
-| `obj:IsAlive()` | Liveness (health > 0, not in limbo). |
-| `obj:GetDistanceTo(other)` | Euclidean distance in cells. |
-| `obj:TakeDamage(n)` | Applies damage (clamped at 0); returns remaining HP. |
-| `obj:Disable(frames)` | Timed EMP-style disable — buildings lose power (`HasPower` + `DisableStuff()`), units get paralyzed (`ParalysisTimer`). Auto-restores on expiry. |
-
-### Global helpers
-
-| Function | Description |
-|---|---|
-| `print(...)` | Redirected to `LuaAPI.log` (tagged `[script]`). |
-| `OnTick(frame)` | Define this in your mod; called every game frame with the current frame number. |
+### 3. Multiplayer & RNG Determinism
+- CnCNet mode (`--withcncnet`) enforces deterministic RNG.
+- All mod Lua code is sandboxed: `os.time()` and `os.clock` calls are no-ops that return `0`.
+- If your mod needs random values, initialize once at load:
+```lua
+math.randomseed(12345)  -- fixed seed for all clients
+-- or per-frame:
+math.randomseed(frame + 12345)
+```
+- Avoid `timer.os` or any wall-clock dependent timing in multiplayer.
 
 ---
 
-## Logging
+## 📊 Profiling & Benchmarking (Performance & Profiling)
 
-`LuaAPI.log` is written next to `LuaAPI.dll` using a rotating sink (**5 MB × 3 files**). Contents include engine lifecycle, hook status, `[script]` output, `[HUD]` messages, `[Combat]` events, and per-line source locations. It initializes off the loader lock and is safe across threads.
+### In-Module Timing (Built-In)
+The HookProfiler automatically measures per-frame hook cost. Every 5 seconds, the following is appended to `LuaAPI.log`:
+```
+[14:23:45] avg_ms=1.23 min_ms=0.50 max_ms=5.20 p95_ms=3.10 calls=1200
+```
+No code changes needed — it's always on.
+
+### Manual Benchmark with PresentMon
+1. Ensure `presentmon.exe` is available on PATH or place it alongside `injector.exe`.
+2. Run the benchmark script:
+```powershell
+powershell -ExecutionPolicy Bypass -File tools/run_benchmark.ps1
+```
+3. The script:
+   - Spawns `gamemd.exe` (or launches under CnCNet with `--withcncnet`).
+   - Starts PresentMon to capture `presentmon_benchmark.csv`.
+   - Waits 65 seconds of gameplay.
+   - Stops PresentMon.
+   - Invokes `tools/benchmark_analyzer.py` on the CSV.
+
+### Analyze Results
+```powershell
+python tools/benchmark_analyzer.py presentmon_benchmark.csv
+```
+**Output:**
+- **Avg FPS** — average frames per second over the analysis period (after 5s skip).
+- **1% Low FPS** — the FPS value that is higher than 99% of all frames (protects against momentary hitches).
+- **Frame Time stats** — average, min, max, median frame times in milliseconds.
 
 ---
 
-## Project Layout
+## 📂 Repository Structure
 
 ```
-├── CMakeLists.txt          Win32 build (MSVC, /MT, C++20)
-├── injector.cpp            Dual-mode launcher/injector (spawn + attach)
-├── include/LuaAPI/         Public headers (logger, lua_engine, bindings)
-├── src/                    dllmain, lua_engine, bindings_house, bindings_techno
+LuaAPI/                                     Project root
+├── CMakeLists.txt           Win32 build (MSVC, /MT, C++20)
+├── injector.cpp           Dual-mode launcher/injector (spawn + attach)
+├── include/LuaAPI/      Public headers (logger, lua_engine, bindings)
+├── src/                     dllmain, lua_engine, bindings_house, bindings_techno
+│   └── hook_profiler.h/cpp     QPC circular buffer profiler
 ├── scripts/
-│   ├── init.lua            Universal ModLoader
-│   └── mods/               Pure-Lua gameplay modules
-│       └── tesla_overload/main.lua
-├── PROJECT/                Roadmap, changelog, AI project context
-└── third_party/            YRpp, lua, sol2, spdlog, minhook (git submodules)
+│   ├── init.lua           Universal ModLoader (reads active_mods.txt,
+│                           registers events, seeds RNG)
+│   ├── mods/              Pure-Lua gameplay modules
+│   │   ├── tesla_overload/        tesla_overload/mod.json + main.lua
+│   │   ├── shield_overload/     shield_overload/mod.json + main.lua
+│   │   ├── mod_a/               mod_a/mod.json + main.lua  (conflict test)
+│   │   └── mod_b/               mod_b/mod.json + main.lua  (conflict test)
+│   └── active_mods.txt    One mod ID per line; '#' = comment
+├── PROJECT/
+│   ├── ROADMAP.md     Milestones and gate tracking
+│   ├── AI_CONTEXT.md  Architecture decisions & upstream context
+│   └── CHANGELOG.md   Version history
+├── tools/
+│   ├── benchmark_analyzer.py   PresentMon CSV analyzer
+│   └── run_benchmark.ps1      65s benchmark automation
+├── third_party/     YRpp, lua, sol2, spdlog, minhook (git submodules)
+└── README.md          This file
 ```
-
-## Build Requirements
-
-- Visual Studio 2026/2022 with **Desktop development with C++** (MSVC v145+, Win32 toolchain)
-- CMake 3.16+
-- Windows SDK 10.x
-- Git (submodules): `git submodule update --init --recursive`
-
-## Documentation
-
-- [`docs/TUTORIAL.md`](docs/TUTORIAL.md) — beginner-friendly modding tutorial: write a complete gameplay mod in ~30 lines of Lua
-- [`docs/ENGINEERING_LESSONS.md`](docs/ENGINEERING_LESSONS.md) — deep technical retrospective: YR engine internals, warhead mechanics, safe handle validation, MinHook nuances
-- [`PROJECT/ROADMAP.md`](PROJECT/ROADMAP.md) — milestones and gate tracking
-- [`PROJECT/CHANGELOG.md`](PROJECT/CHANGELOG.md) — version history
-- [`PROJECT/AI_CONTEXT.md`](PROJECT/AI_CONTEXT.md) — architecture decisions & upstream context
-
-## Credits
-
-- **[YRpp](https://github.com/Phobos-developers/YRpp)** — reverse-engineered game structures (Phobos developers & community)
-- **[MinHook](https://github.com/TsudaKageyu/minhook)** — x86 trampoline hooking (TsudaKageyu)
-- **[Lua 5.4](https://www.lua.org/)** / **[spdlog](https://github.com/gabime/spdlog)** / **[sol2](https://github.com/ThePhD/sol2)**
-- Community validation: Kerbiter (Phobos lead) regarding CnCNet `-SPAWN` retrofitting constraints
