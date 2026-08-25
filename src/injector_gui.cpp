@@ -43,7 +43,7 @@ constexpr COLORREF kOrange    = RGB(237, 137, 54);
 constexpr COLORREF kOk        = RGB(72, 187, 120);
 
 constexpr const wchar_t* kWindowClass = L"LuaAPIInjectorWnd";
-constexpr const wchar_t* kWindowTitle = L"RA2 Yuri's Revenge \u2014 LuaAPI Engine";
+constexpr const wchar_t* kWindowTitle = L"RA2 Yuri's Revenge - LuaAPI Engine";
 
 constexpr int kDefaultClientW = 580;
 constexpr int kDefaultClientH = 640;
@@ -61,31 +61,31 @@ const wchar_t* L10N(const wchar_t* ru, const wchar_t* en) {
 }
 
 const wchar_t* Str_Subtitle() {
-    return L10N(L"\u041F\u043B\u0430\u0442\u0444\u043E\u0440\u043C\u0430 \u043C\u043E\u0434\u043E\u0432 \u0434\u043B\u044F Yuri's Revenge v1.001",
+    return L10N(L"Yuri's Revenge v1.001 Modding Platform",
                 L"Yuri's Revenge v1.001 Modding Platform");
 }
 const wchar_t* Str_StatusReady() {
-    return L10N(L"\U0001F7E2 \u0413\u043E\u0442\u043E\u0432 \u043A \u0437\u0430\u043F\u0443\u0441\u043A\u0443",
-                L"\U0001F7E2 Ready to Launch");
+    return L10N(L"Готов к запуску",
+                L"Ready to Launch");
 }
 const wchar_t* Str_StatusInjected() { return L10N(
-    L"\U0001F7E2 \u0418\u0433\u0440\u0430 \u0437\u0430\u043F\u0443\u0449\u0435\u043D\u0430 \u0438 LuaAPI \u0432\u043D\u0435\u0434\u0440\u0435\u043D",
-    L"\U0001F7E2 Game Running & LuaAPI Injected"); }
+    L"Игра запущена & LuaAPI внедрена",
+    L"Game Running & LuaAPI Injected"); }
 const wchar_t* Str_Busy() { return L10N(
-    L"\u23F3 \u041E\u0431\u0440\u0430\u0431\u043E\u0442\u043A\u0430...",
-    L"\u23F3 Working..."); }
+    L"Работает...",
+    L"Working..."); }
 const wchar_t* Str_LaunchBtn() { return L10N(
-    L"\U0001F680 \u0417\u0430\u043F\u0443\u0441\u0442\u0438\u0442\u044C \u0438\u0433\u0440\u0443",
-    L"\U0001F680 Launch Game"); }
+    L"Запустить игру",
+    L"Launch Game"); }
 const wchar_t* Str_InjectBtn() { return L10N(
-    L"\u26A1 \u0412\u043D\u0435\u0434\u0440\u0438\u0442\u044C",
-    L"\u26A1 Inject"); }
+    L"Внедрить",
+    L"Inject"); }
 const wchar_t* Str_ModsHeader() { return L10N(
-    L"\u0423\u0421\u0422\u0410\u043D\u041E\u0412\u041B\u0415\u041D\u041D\u042B\u0415 \u041C\u041E\u0414\u042B",
+    L"МОДЫ",
     L"INSTALLED MODS"); }
 const wchar_t* Str_SaveBtn() { return L10N(
-    L"\U0001F4BE \u0421\u043E\u0445\u0440\u0430\u043D\u0438\u0442\u044C \u0438 \u043F\u0440\u0438\u043C\u0435\u043D\u0438\u0442\u044C",
-    L"\U0001F4BE Save & Apply"); }
+    L"Сохранить и применить",
+    L"Save & Apply"); }
 std::wstring Str_ActiveCount(int active, int total) {
     return g_isRussian
         ? L"\u0410\u043A\u0442\u0438\u0432\u043D\u043E: " + std::to_wstring(active) + L" \u0438\u0437 " + std::to_wstring(total)
@@ -146,8 +146,11 @@ bool g_trackingMouse = false;
 bool g_headless = false;
 
 // Layout metrics recomputed in RecalcLayout.
+// Maximum visible mod area before scrollbar appears
+const int kMaxModArea = 400;
+
 RECT ListRect() {
-    return RECT{ 0, 178, g_clientW, g_clientH - 70 };
+    return RECT{ kPad, kPad * 2, g_clientW - kPad, g_clientH - kPad * 3 - 80 };
 }
 
 // ---------------------------------------------------------------------------
@@ -694,12 +697,12 @@ void PaintAll(HDC dc) {
     int w = g_clientW;
 
     // ---- Header ----
-    DrawTextR(dc, L"\u26A1 RED ALERT 2 \u2014 LUA ENGINE",
+    DrawTextR(dc, L"RED ALERT 2 - LUA ENGINE",
               RECT{kPad, 14, w - 130, 42}, g_fontTitle, kText);
 
     // Language toggle (top right)
     FillRoundRect(dc, g_rcLang, g_hoverLang ? kHover : kSurface, 14);
-    DrawTextR(dc, L"\U0001F310 RU / EN", g_rcLang, g_fontSmall,
+    DrawTextR(dc, L"RU / EN", g_rcLang, g_fontSmall,
               g_hoverLang ? kText : kDim, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 
     DrawTextR(dc, Str_Subtitle(), RECT{kPad, 44, w - kPad, 64}, g_fontSmall, kDim);
@@ -740,9 +743,21 @@ void PaintAll(HDC dc) {
     GetCursorPos(&cursor);
     ScreenToClient(g_hwnd, &cursor);
 
-    int yPos = list.top + 4 - g_scroll;
+    // Compute usable mod area height, accounting for scroll
+    int listHeight = ListRect().bottom - ListRect().top;
+    int totalModHeight = static_cast<int>(g_mods.size()) * 70; // 62 + 8 padding
+    int maxScroll = std::max(0, totalModHeight - listHeight);
+    g_scroll = std::max(0, std::min(g_scroll, maxScroll));
+
+    int yPos = ListRect().top + 4 - g_scroll;
     for (auto& m : g_mods) {
-        RECT card{ kPad, yPos, w - kPad, yPos + 62 };
+        // Stop drawing if we've moved past the visible area
+        if (yPos > ListRect().bottom + 70) break;
+
+        RECT card{ kPad, yPos, ListRect().right - kPad, yPos + 62 };
+        // Clamp card to list rectangle
+        if (card.right > ListRect().right) card.right = ListRect().right;
+        if (card.bottom > ListRect().bottom) card.bottom = ListRect().bottom;
         bool hovered = PtInRect(&card, cursor);
 
         FillRoundRect(dc, card, hovered ? kHover : kSurface, 10,
@@ -754,12 +769,12 @@ void PaintAll(HDC dc) {
             HFONT old = static_cast<HFONT>(SelectObject(dc, g_fontReg));
             SetTextColor(dc, kText);
             SetBkMode(dc, TRANSPARENT);
-            DrawTextW(dc, L"\u2713", -1, &box, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+            DrawTextW(dc, L"[x]", -1, &box, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
             SelectObject(dc, old);
         }
 
         int tx = card.left + 42;
-        DrawTextR(dc, m.name, RECT{tx, card.top + 8, tx + 220, card.top + 30}, g_fontHeader, kText);
+        DrawTextR(dc, m.name, RECT{tx, card.top + 8, tx + 200, card.top + 30}, g_fontHeader, kText);
 
         std::wstring badge = L"[v" + m.version + L"]";
         HFONT measureFont = static_cast<HFONT>(SelectObject(dc, g_fontSmall));
@@ -776,27 +791,48 @@ void PaintAll(HDC dc) {
         DrawTextR(dc, m.description, RECT{tx, card.top + 34, card.right - 12, card.bottom - 6},
                   g_fontSmall, kDim, DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS);
 
-        yPos += 62 + 8;
+        yPos += 70;
     }
     RestoreDC(dc, -1);
 
-    // ---- Conflict banner ----
+// ---- Conflict banner ----
     auto conflicts = DetectConflicts();
     if (!conflicts.empty()) {
         std::wstring warning;
         for (size_t k = 0; k < conflicts.size(); ++k) {
-            warning += L"\u26A0 " + g_mods[conflicts[k].first].name +
-                       L" \u226E " + g_mods[conflicts[k].second].name;
+            warning += L"! " + g_mods[conflicts[k].first].name +
+                       L" vs " + g_mods[conflicts[k].second].name;
             if (k + 1 < conflicts.size())
                 warning += L";  ";
         }
-        DrawTextR(dc, warning, RECT{kPad, g_clientH - 92, w - kPad, g_clientH - 68}, g_fontSmall, kOrange);
+        // Place banner just above the footer, with minimum spacing
+        int bannerTop = g_clientH - 92;
+        int bannerBottom = g_clientH - 68;
+        // Ensure banner doesn't overlap mod list area
+        int listBottom = ListRect().bottom;
+        if (bannerTop > listBottom + 16) {
+            bannerTop = listBottom + 8;
+            bannerBottom = bannerTop + 24;
+        }
+        DrawTextR(dc, warning, RECT{kPad, bannerTop, w - kPad, bannerBottom}, g_fontSmall, kOrange);
     }
 
     // ---- Footer ----
+    // Active count above conflict banner
+    int footerTop = g_clientH - 136;
+    int footerBottom = g_clientH - 92;
     DrawTextR(dc, Str_ActiveCount(EnabledModCount(), static_cast<int>(g_mods.size())),
-              RECT{kPad, g_clientH - 48, 280, g_clientH - 24}, g_fontReg, kDim);
+              RECT{kPad, footerTop, 280, footerBottom}, g_fontReg, kDim);
 
+    // Save button below footer (with minimum spacing from bottom)
+    int saveTop = g_clientH - 55;
+    int saveBottom = g_clientH - 17;
+    // Ensure save button is below conflict banner / footer
+    int bannerBottom = g_clientH - 68;
+    if (saveTop < bannerBottom + 8) {
+        saveTop = bannerBottom + 8;
+        saveBottom = saveTop + 38;
+    }
     COLORREF saveFill = g_hoverSave ? kGreenHover : kGreen;
     FillRoundRect(dc, g_rcSave, saveFill, 10);
     DrawTextR(dc, Str_SaveBtn(), g_rcSave, g_fontHeader, kText,
@@ -829,14 +865,17 @@ void OnLeftDown(POINT pt) {
     RECT list = ListRect();
     int yPos = list.top + 4 - g_scroll;
     for (auto& m : g_mods) {
+        // Stop if past visible area
+        if (yPos > ListRect().bottom + 70) break;
+
         RECT box{ kPad + 12, yPos + 12, kPad + 30, yPos + 30 };
-        RECT card{ kPad, yPos, g_clientW - kPad, yPos + 62 };
+        RECT card{ kPad, yPos, ListRect().right - kPad, yPos + 62 };
         if (PointIn(box, pt) || PointIn(card, pt)) {
             m.enabled = !m.enabled;
             InvalidateRect(g_hwnd, nullptr, TRUE);
             return;
         }
-        yPos += 62 + 8;
+        yPos += 70;
     }
 }
 
@@ -899,8 +938,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         return 0;
     case WM_MOUSEWHEEL: {
         int delta = GET_WHEEL_DELTA_WPARAM(wParam);
-        int maxScroll = static_cast<int>(g_mods.size()) * 70 - (ListRect().bottom - ListRect().top);
-        if (maxScroll < 0) maxScroll = 0;
+        int listHeight = ListRect().bottom - ListRect().top;
+        int totalModHeight = static_cast<int>(g_mods.size()) * 70;
+        int maxScroll = std::max(0, totalModHeight - listHeight);
         g_scroll -= delta / WHEEL_DELTA * 40;
         g_scroll = std::max(0, std::min(g_scroll, maxScroll));
         InvalidateRect(hwnd, nullptr, TRUE);
@@ -992,6 +1032,22 @@ int RunNoInjectDiagnostic() {
 }
 
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
+    // High-DPI awareness: Per-Monitor DPI Aware V2 (fallback to system DPI aware)
+    HMODULE shcore = LoadLibraryW(L"shcore.dll");
+    if (shcore) {
+        typedef HRESULT (WINAPI *SetDPIAwarenessContext)(HANDLE);
+        SetDPIAwarenessContext setDPI = (SetDPIAwarenessContext)GetProcAddress(shcore, "SetProcessDpiAwarenessContext");
+        if (setDPI) {
+            setDPI(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+        } else {
+            // Fallback: SetProcessDPIAware
+            SetProcessDPIAware();
+        }
+        FreeLibrary(shcore);
+    } else {
+        SetProcessDPIAware();
+    }
+
     // Headless diagnostic / compatibility modes
     {
         int argc = 0;
