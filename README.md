@@ -70,16 +70,25 @@ injector.exe "gamemd.exe" -SPAWN -LOG -CD   :: spawner mode (creates process, in
 
 ## Writing Mods
 
-Create a folder under `scripts/mods/<mod_name>/` containing `main.lua`, then add the mod name to `ACTIVE_MODS` in `scripts/init.lua`:
+A mod is a folder inside `scripts/mods/<mod_name>/` containing:
 
-```lua
-local ACTIVE_MODS = {
-    "tesla_overload",
-    -- "my_second_mod",
+- **`mod.json`** — mod manifest with `id`, `name`, `version`, `author`, `description`, and `conflicts` arrays.
+- **`main.lua`** — module table with an optional `Update(frame)` function, called every game frame.
+
+### Mod manifest (`mod.json`)
+
+```json
+{
+  "id": "tesla_overload",
+  "name": "Tesla Overload",
+  "version": "1.0.0",
+  "author": "WolfCTOS",
+  "description": "Base electrical overload & EMP blackout aura",
+  "conflicts": []
 }
 ```
 
-A mod module returns a table with an optional `Update(frame)` function, called every game frame:
+### Mod code (`main.lua`)
 
 ```lua
 local MyMod = {}
@@ -94,8 +103,13 @@ end
 return MyMod
 ```
 
+### Activation
+
+Add the mod ID to `scripts/active_mods.txt` (one per line, `'#'` for comments), or enable it via the **GUI Mod Manager** in `injector.exe`. The Universal ModLoader (`scripts/init.lua`) reads active mod IDs from `scripts/active_mods.txt` on startup.
+
 - Mods load via `require` — the engine prepends `<DLL dir>/scripts/?.lua` to `package.path`.
 - Each mod's `Update` runs inside `pcall`: one broken mod logs an error and keeps running; it never crashes the game.
+- Conflicts declared in `mod.json`'s `conflicts` array are checked by the injector's conflict detector, but are not actively verified under real conflicting mods.
 
 ---
 

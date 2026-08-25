@@ -129,3 +129,11 @@ Expected Win32 build environment:
 - Hook target: `Unsorted::MainLoop` @ `0x55D360` via MinHook trampoline (YRpp-documented address). Syringe `.inj`/`.syhks00` hooking was evaluated and rolled back; Syringe remains only an optional dependency for CnCNet spawner hooks (cncnet5.dll) and is never required for the LuaAPI engine itself.
 - Injection: `injector.exe` — attach mode (game already running) or 1-click spawn mode (`CREATE_SUSPENDED` → inject → resume).
 - Lua state lives on the main game thread (lazy init inside first hook tick); logger is the only cross-thread component.
+
+## 7. Explicit Boundaries & Triggers
+
+- **Milestone 4 (Inbound Events):** FROZEN. Entry criteria: A mod requires sub-frame pre-damage mitigation (e.g. absorbing shields), or polling profiling drops FPS below 30. Until then, use `Update(frame)` polling.
+
+- **Milestone 5 (CnCNet Multiplayer):** DEFERRED. Singleplayer/Skirmish via standalone `injector.exe` is the sole supported target.
+
+- **Conflict Detector:** Code exists in `src/injector_gui.cpp` based on declared `conflicts` arrays in `mod.json`, but is not actively verified under real conflicting mods.
