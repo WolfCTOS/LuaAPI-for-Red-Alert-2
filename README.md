@@ -1,207 +1,188 @@
 # LuaAPI for Red Alert 2 — Yuri's Revenge
 
-A native x86 runtime that injects a **Lua 5.4 scripting engine** into `gamemd.exe` (Yuri's Revenge 1.001), enabling gameplay mechanics to be written in pure Lua instead of raw C++/ASM. The flagship showcase: **Tesla Overload** — a pulsing EMP + damage mechanic that disables and destroys enemy structures.
+A high-performance, native x86 runtime that injects a **Lua 5.4 scripting engine** into `gamemd.exe` (Yuri's Revenge 1.001). It enables complex, dynamic gameplay mechanics, reactive inbound events, and stateful mod logic to be written in pure Lua with **zero engine overhead** (< 0.01 FPS delta).
 
-> **Status:** v1.0.0-Core — stable MinHook engine with modular ModLoader. Tagged [`v1.0.0-core`](https://github.com/WolfCTOS/LuaPI-for-Red-Alert-2/releases/tag/v1.0.0-core).
+> **Status:** `v0.1.0-Alpha` (Milestone 6: Lifecycle Hardening, RTTI Pointer Safety & Core Gameplay API).  
+> **Compatibility:** Singleplayer, Skirmish, and CnCNet Multiplayer (Deterministic RNG).
+
+---
+
+## ⚡ Key Features
+
+- **Sub-Frame Inbound Events:** Intercept and modify damage before application (`OnPreDamage`) for custom shields, armor types, and damage reflection.
+- **Zero-Overhead Runtime:** Lock-free QPC frame profiling confirmed **60.04 Avg FPS / 55.11 1% Low FPS** (identical to pure Vanilla). See [BENCHMARK.md](BENCHMARK.md).
+- **Crash-Resistant Pointer Safety:** All engine object bindings validate pointers via RTTI (`WhatAmI()`) and lifecycle flags — preventing `0xC0000005` Access Violations on dead units.
+- **Clean Session Lifecycle:** Automatic Lua state & callback cleanup on scenario load, restart, and exit (`ResetSession`).
+- **CnCNet Determinism:** Synchronized frame-seeded RNG preventing Out-of-Sync (OOS) in multiplayer.
+- **Modular Mod Ecosystem:** Isolated `scripts/mods/<name>/` directories with `mod.json` manifests and GUI conflict detection.
 
 ---
 
 ## 🚀 Quick Start
 
-### Launch via GUI Injector
-- Double-click **`injector.exe`** — it spawns `gamemd.exe` suspended, injects `LuaAPI.dll`, resumes it, and exits.
-- If `gamemd.exe` is already running, `injector.exe` attaches and injects into it instead.
+### 1. Launch via GUI Mod Manager
+- Launch **`injector.exe`**.
+- Toggle desired mods in the card list, view conflict warnings, and click **Launch Game**.
+- The injector handles suspended launch, DLL injection, and DPI scaling automatically.
 
-### Launch under CnCNet
-```cmd
+### 2. Launch under CnCNet Multiplayer
+```batch
 injector.exe --withcncnet
-```
-Use this flag to run the game through the CnCNet spawner. Note: `os.time()` and `os.clock()` are **disabled** in the Lua runtime to prevent Out-of-Sync (OOS) desync between clients. See the **RNG Determinism** section below.
 
-### Manage Mods
-- **GUI Mod Manager**: open `injector.exe`, use the Mod Manager card list to enable/disable mods, view conflict warnings.
-- **Manual**: edit `scripts/active_mods.txt` — one mod ID per line, `#` for comments. The Universal ModLoader reads this file on startup.
+Runs in headless spawner mode compatible with CnCNet clients.
+```
+
+### 3. Manual Mod Activation
+
+Edit `scripts/active_mods.txt` (one mod ID per line, `#` for comments):
+
+```text
+shield_overload
+bounty_hunter
+tesla_overload
+```
 
 ---
 
-## 📁 Mod Anatomy (Mod Structure)
+## 📁 Mod Anatomy (Folder Structure)
 
-A mod is a folder inside `scripts/mods/<mod_name>/` containing:
+Each mod lives in its own directory under `scripts/mods/<mod_id>/`:
 
-### `mod.json` — Mod Manifest
+```text
+scripts/mods/bounty_hunter/
+├── mod.json       # Mod manifest
+└── main.lua       # Entry point
+```
+
+### `mod.json` — Manifest
+
 ```json
 {
-  "id": "shield_overload",
-  "name": "Shield Overload",
+  "id": "bounty_hunter",
+  "name": "Bounty Hunter",
   "version": "1.0.0",
-  "author": "WolfCTOS",
-  "description": "Absorbs incoming damage via pre-damage events",
-  "conflicts": ["mod_a"]
+  "author": "YourName",
+  "description": "Awards credits and displays HUD alerts on combat hits",
+  "conflicts": []
 }
 ```
 
-**Fields:**
-- `id` — unique mod identifier (used in `active_mods.txt` and conflict detection).
-- `name` — display name.
-- `version` — mod version string.
-- `author` — author name or handle.
-- `description` — short description shown in the GUI.
-- `conflicts` — array of mod IDs that conflict with this mod. The injector's conflict detector will warn if two conflicting mods are enabled simultaneously.
+---
 
-### `main.lua` — Entry Point
-A Lua module table returned at the end of the file. It may contain:
-- `Update(frame)` — called every game frame (polling).
-- `OnPreDamage(...)` — event callback (see below).
-- Any other functions your mod needs.
+## 💻 Writing Mod Scripts (`main.lua`)
 
-### Example: `main.lua` for Shield Overload Mod
+### 1. Inbound Events (Sub-Frame Pre-Damage Hooks)
+
+Intercept incoming damage before it is applied to the unit:
+
 ```lua
-local ShieldOverload = {}
+local ShieldMod = {}
 
---[[
-  Inbound Event: OnPreDamage
-  Called by the C++ hook before damage is applied.
-  Return a number to modify the damage, or nil to keep the original value.
-]]
-function ShieldOverload.OnPreDamage(attacker, target, damage, dmg_type, frame, subc)
+-- Callback: (attacker, target, damage, dmg_type, frame, subc)
+function ShieldMod.OnPreDamage(attacker, target, damage, dmg_type, frame, subc)
     -- Absorb 50% of energy and explosive damage
-    local absorbed_types = {"energy", "explosive", "emp"}
-    for _, dt in ipairs(absorbed_types) do
-        if dmg_type == dt then
-            return damage * 0.5
-        end
+    if dmg_type == "energy" or dmg_type == "explosive" then
+        return damage * 0.5 -- Return modified damage
     end
-    -- Return nil = no change (original damage applied)
+    return nil -- Keep original damage
+end
+
+function ShieldMod.OnRegister()
+    game_RegisterEvent("OnPreDamage", ShieldMod.OnPreDamage)
+end
+
+return ShieldMod
+```
+
+### 2. Economy & HUD Messaging
+
+Award credits and display notifications in the in-game message feed:
+
+```lua
+local BountyMod = {}
+
+function BountyMod.OnPreDamage(attacker, target, damage, dmg_type, frame, subc)
+    -- Award $50 bounty to attacking player
+    local attackerHouse = attacker:GetHouse()
+    if attackerHouse then
+        house_AddCredits(attackerHouse, 50)
+        game_PrintMessage("[Bounty] +$50 awarded for combat hit!", 1)
+    end
     return nil
 end
 
--- Register the event with the C++ injector
-function ShieldOverload.OnRegister()
-    game_RegisterEvent("OnPreDamage", ShieldOverload.OnPreDamage)
+function BountyMod.OnRegister()
+    game_RegisterEvent("OnPreDamage", BountyMod.OnPreDamage)
 end
 
--- Standard Update (optional — polling fallback)
-function ShieldOverload.Update(frame)
-    -- No per-frame logic needed for this mod
-end
-
-return ShieldOverload
+return BountyMod
 ```
 
----
+### 3. Unit State & Visual Effects (VFX)
 
-## 💻 Writing Code (`main.lua`)
-
-### 1. Update Polling (Traditional)
-Every game frame, the Universal ModLoader calls `mod.Update(frame)`. This is the safe, always-available method.
+Directly control health ratios and attach particle systems without map trigger hacks:
 
 ```lua
-function MyMod.Update(frame)
-    local player = House.GetPlayer()
-    if player then
-        Engine.PrintMessage(string.format("Hello from MyMod at frame %d!", frame))
+local FleetMod = {}
+
+function FleetMod.Update(frame)
+    -- Example: damaged starting unit setup on first frame
+    if frame == 1 then
+        local unit = ... -- acquired unit
+        unit:SetHealthRatio(0.35)                     -- Set to 35% HP
+        unit:AttachParticleSystem("DamageSmokeSys")    -- Attach real damage smoke
     end
 end
+
+return FleetMod
 ```
 
-### 2. Inbound Events (Sub-Frame Pre-Damage Hooks)
-Mods can register callbacks for `OnPreDamage` events. These fire **before** damage is applied, allowing mods to absorb, redirect, or cancel damage. This is how absorbing shields and damage modifiers work.
+### 4. Multiplayer RNG Guidelines (CnCNet OOS Prevention)
 
-**Registration:**
+> ⚠️ **Never use `os.time()` or `os.clock()` in gameplay logic.**
+
+The Lua runtime initializes a synchronized deterministic seed (12345).
+
+For frame-unique randomness, use:
+
 ```lua
-function MyMod.OnRegister()
-    game_RegisterEvent("OnPreDamage", function(attacker, target, damage, dmg_type, frame, subc)
-        -- Modify damage here
-        return damage * 0.8  -- absorb 20%
-    end)
-end
-```
-
-**Event parameters:**
-- `attacker` — the techno/unit dealing damage
-- `target` — the techno/unit receiving damage
-- `damage` — current damage value (number; return a new number to change it)
-- `dmg_type` — string: `"energy"`, `"explosive"`, `"emp"`, etc.
-- `frame` — current game frame number
-- `subc` — sub-frame tick (0–255, granularity within the frame)
-
-**⚠️ RNG Determinism — Critical for CnCNet Multiplayer**
-- **Never use `os.time()` or `os.clock()`** in multiplayer gameplay logic. These functions produce different values on different clients, causing **Out-of-Sync (OOS)** desync.
-- Use the **deterministic seed** `12345` (set at program start).
-- If you need frame-unique randomness, use: `math.randomseed(frame + 12345)` inside `OnTick()` or `Update()`.
-- The C++ layer enforces this by sandbox-blocking `os.time` and `os.clock` in CnCNet mode.
-
-### 3. Multiplayer & RNG Determinism
-- CnCNet mode (`--withcncnet`) enforces deterministic RNG.
-- All mod Lua code is sandboxed: `os.time()` and `os.clock` calls are no-ops that return `0`.
-- If your mod needs random values, initialize once at load:
-```lua
-math.randomseed(12345)  -- fixed seed for all clients
--- or per-frame:
 math.randomseed(frame + 12345)
+local roll = math.random(1, 100)
 ```
-- Avoid `timer.os` or any wall-clock dependent timing in multiplayer.
 
 ---
 
-## 📊 Profiling & Benchmarking (Performance & Profiling)
+## 📊 Performance & Benchmarks
 
-### In-Module Timing (Built-In)
-The HookProfiler automatically measures per-frame hook cost. Every 5 seconds, the following is appended to `LuaAPI.log`:
-```
-[14:23:45] avg_ms=1.23 min_ms=0.50 max_ms=5.20 p95_ms=3.10 calls=1200
-```
-No code changes needed — it's always on.
+Benchmarked via Intel PresentMon (hardware ETW capture, 65s active Skirmish combat, D3D9 renderer):
 
-### Manual Benchmark with PresentMon
-1. Ensure `presentmon.exe` is available on PATH or place it alongside `injector.exe`.
-2. Run the benchmark script:
-```powershell
-powershell -ExecutionPolicy Bypass -File tools/run_benchmark.ps1
-```
-3. The script:
-   - Spawns `gamemd.exe` (or launches under CnCNet with `--withcncnet`).
-   - Starts PresentMon to capture `presentmon_benchmark.csv`.
-   - Waits 65 seconds of gameplay.
-   - Stops PresentMon.
-   - Invokes `tools/benchmark_analyzer.py` on the CSV.
+| Configuration | Average FPS | 1% Low FPS | 95th Percentile | Max FrameTime | Overhead |
+|---|---|---|---|---|---|
+| **Vanilla RA2: YR** | 60.05 | 54.40 | 17.56 ms | 22.92 ms | — (Baseline) |
+| **Clean LuaAPI (Hook 0x55D360)** | 60.05 | 55.13 | 17.51 ms | 18.84 ms | **0.00%** |
+| **Modded LuaAPI (Active Mods + Events)** | 60.04 | 55.11 | 17.31 ms | 18.62 ms | **< 0.02%** |
 
-### Analyze Results
-```powershell
-python tools/benchmark_analyzer.py presentmon_benchmark.csv
-```
-**Output:**
-- **Avg FPS** — average frames per second over the analysis period (after 5s skip).
-- **1% Low FPS** — the FPS value that is higher than 99% of all frames (protects against momentary hitches).
-- **Frame Time stats** — average, min, max, median frame times in milliseconds.
+Full methodology, frame time distribution, and reproduction instructions are available in [BENCHMARK.md](BENCHMARK.md).
 
 ---
 
-## 📂 Repository Structure
+## 🛠️ Repository Structure
 
+```text
+├── src/               # C++ Core: Injector GUI, Hook Profiler, Lua Engine & Bindings
+├── include/LuaAPI/    # Public C++ Header definitions & game struct bindings
+├── scripts/           # Lua Runtime: init.lua dispatcher & mods/
+│   └── mods/          # Built-in sample mods (shield_overload, bounty_hunter, etc.)
+├── tools/             # PresentMon automation (run_benchmark.ps1, benchmark_analyzer.py)
+├── PROJECT/           # Architecture context, Roadmap & Milestone tracking
+├── BENCHMARK.md       # Empirical performance report
+└── README.md          # Project documentation
 ```
-LuaAPI/                                     Project root
-├── CMakeLists.txt           Win32 build (MSVC, /MT, C++20)
-├── injector.cpp           Dual-mode launcher/injector (spawn + attach)
-├── include/LuaAPI/      Public headers (logger, lua_engine, bindings)
-├── src/                     dllmain, lua_engine, bindings_house, bindings_techno
-│   └── hook_profiler.h/cpp     QPC circular buffer profiler
-├── scripts/
-│   ├── init.lua           Universal ModLoader (reads active_mods.txt,
-│                           registers events, seeds RNG)
-│   ├── mods/              Pure-Lua gameplay modules
-│   │   ├── tesla_overload/        tesla_overload/mod.json + main.lua
-│   │   ├── shield_overload/     shield_overload/mod.json + main.lua
-│   │   ├── mod_a/               mod_a/mod.json + main.lua  (conflict test)
-│   │   └── mod_b/               mod_b/mod.json + main.lua  (conflict test)
-│   └── active_mods.txt    One mod ID per line; '#' = comment
-├── PROJECT/
-│   ├── ROADMAP.md     Milestones and gate tracking
-│   ├── AI_CONTEXT.md  Architecture decisions & upstream context
-│   └── CHANGELOG.md   Version history
-├── tools/
-│   ├── benchmark_analyzer.py   PresentMon CSV analyzer
-│   └── run_benchmark.ps1      65s benchmark automation
-├── third_party/     YRpp, lua, sol2, spdlog, minhook (git submodules)
-└── README.md          This file
-```
+
+---
+
+## 📜 License & Credits
+
+Yuri's Revenge is a trademark of Electronic Arts.
+
+Developed for the C&C modding community (Haven / CnCNet / PPM).
