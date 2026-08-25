@@ -13,6 +13,8 @@ extern "C" {
 #include <lualib.h>
 }
 
+#include <vector>
+
 // YRpp game classes
 #include <YRPP.h>
 
@@ -44,6 +46,10 @@ std::wstring g_moduleDir;
 std::once_flag g_engineOnce;
 bool g_scriptReady = false;
 lua_State* g_L = nullptr;
+
+ // Pre-damage callback references, cleared on session reset to prevent
+ // cross-session leaks when restarting maps or missions.
+ std::vector<int> g_preDamageCallbackRefs;
 
 std::string Narrow(const std::wstring& wide) {
     if (wide.empty()) return {};
@@ -280,6 +286,24 @@ void OnGameFrame() {
 
     LuaAPI::ProcessDisabledObjects(Unsorted::CurrentFrame);
 
+    // Fire pre-damage callbacks registered by mods (OnPreDamage).
+    if (g_L && g_scriptReady) {
+        int nrefs = static_cast<int>(g_preDamageCallbackRefs.size());
+        for (int i = 0; i < nrefs; ++i) {
+            int ref = g_preDamageCallbackRefs[i];
+            luaL_unref(LUA_REGISTRYINDEX, LUA_NOREF, ref); // pop old ref
+        }
+        g_preDamageCallbackRefs.clear();
+
+        // Push new callback references from the script
+        lua_getglobal(g_L, "OnPreDamage");
+        if (lua_isfunction(g_L, -1)) {
+            int ref = luaL_ref(LUA_REGISTRYINDEX, -1);
+            g_preDamageCallbackRefs.push_back(ref);
+        }
+        lua_pop(g_L, 1);
+    }
+
     // Lazily bring up the Lua engine ONCE, on the main game thread.
     std::call_once(g_engineOnce, []() {
         if (!g_moduleDir.empty()) {
@@ -305,6 +329,24 @@ void OnGameFrame() {
         LUA_LOG_ERROR("OnTick error: {}", err ? err : "unknown error");
         lua_pop(g_L, 1);
     }
+}
+
+void ResetSession() {
+    // 1. Clear all pre-damage callback references from the previous session.
+    for (int ref : g_preDamageCallbackRefs) {
+        luaL_unref(LUA_REGISTRYINDEX, LUA_NOREF, ref);
+    }
+    g_preDamageCallbackRefs.clear();
+
+    // 2. Reset the Lua VM state for a new match.
+    if (g_L) {
+        lua_close(g_L);
+        g_L = nullptr;
+    }
+    g_scriptReady = false;
+    g_preDamageCallbackRefs.clear();
+
+    LUA_LOG_INFO("Lua session reset: callbacks cleared, VM state reset");
 }
 
 } // namespace LuaAPI

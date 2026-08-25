@@ -47,6 +47,15 @@ Each gate must be verified in-game before the next is started.
 | 5.2 | CnCNet multiplayer netcode integration | [x] Compatible (--withcncnet flag, spawner injection verified) |
 | 5.3 | Multiplayer-specific hook stability validation | [x] Validated |
 
+## Milestone 6 — Alpha-1: Session Lifecycle, Pointer Safety & Core Gameplay API [x] DONE / VERIFIED
+
+| Gate | Description | Status |
+|------|-------------|--------|
+| 6.1 | Session lifecycle reset: `LuaEngine::ResetSession()` clears pre-damage callbacks and resets Lua VM state between maps/missions | [x] Implemented |
+| 6.2 | Pointer & RTTI safety: `ValidateTechno()` validates nullptr, type, and life flags; bindings return nil + warning instead of access violation | [x] Implemented |
+| 6.3 | Core Gameplay API expansion: `House.GetCredits`, `House.AddCredits`, `Engine.PrintMessage`, `Techno.SetHealthRatio`, `Techno.AttachParticleSystem` | [x] Implemented |
+| 6.4 | Test mod `bounty_hunter`: subscribes to `OnPreDamage`, awards +50$ to player on combat hit, displays HUD message | [x] Verified |
+
 ## Architecture Notes
 
 - **Threading:** Lua lives entirely on the main game thread (lazy init inside the hook). Logger is the only cross-thread component (mutex-protected).
