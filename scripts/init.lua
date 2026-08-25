@@ -26,10 +26,24 @@ end
 local ACTIVE_MODS = loadActiveModList()
 local loadedMods = {}
 
+-- Per-mod timing state: total_ms, max_ms, call_count indexed by mod name.
+local modTiming = {}
+local lastStatsReport = os.clock()
+
+-- [[ДЕТЕРМИНИСТИЧНОЕ СИДИРОВАНИЕ RNG]]
+-- Критически важно для CnCNet мультиплеера: использование os.clock() или os.time()
+-- вызывает Out-of-Sync (OOS) рассинхронизацию между клиентами.
+-- 
+-- Базовый сид фиксирован и синхронизирован на всех клиентах.
+-- Если модам требуется пересидирование во время игры, должно использоваться
+-- только следящее за текущим кадром: math.randomseed(current_frame + 12345)
+math.randomseed(12345)
+
 for _, modName in ipairs(ACTIVE_MODS) do
     local ok, mod = pcall(require, "mods." .. modName .. ".main")
     if ok and mod then
         table.insert(loadedMods, mod)
+        modTiming[modName] = modTiming[modName] or { total_ms = 0.0, max_ms = 0.0, calls = 0 }
         print(string.format("[LuaAPI] [+] Mod active: '%s'", modName))
     else
         print(string.format("[LuaAPI] [-] Failed to load mod: '%s' (%s)", modName, tostring(mod)))
@@ -48,9 +62,36 @@ function OnTick(frame)
         end
     end
 
-    for _, mod in ipairs(loadedMods) do
+    -- Report per-mod stats every 5 seconds
+    local now = os.clock()
+    if now - lastStatsReport >= 5.0 then
+        lastStatsReport = now
+        for name, t in pairs(modTiming) do
+            local avg_ms = t.calls > 0 and (t.total_ms / t.calls) or 0.0
+            print(string.format("[LuaAPI] Mod timing [%s]: Avg %.2f ms | Max %.2f ms | Calls %d",
+                name, avg_ms, t.max_ms, t.calls))
+        end
+        -- Reset counters after reporting
+        for name in pairs(modTiming) do
+            modTiming[name] = { total_ms = 0.0, max_ms = 0.0, calls = 0 }
+        end
+    end
+
+    -- Wrap each mod.Update in wall-clock timing
+    for idx, mod in ipairs(loadedMods) do
         if type(mod.Update) == "function" then
-            pcall(mod.Update, frame)
+            local modName = ACTIVE_MODS[idx]
+            local start = os.clock()
+            local ok, err = pcall(mod.Update, frame)
+            local elapsed_ms = (os.clock() - start) * 1000.0
+            -- Accumulate timing for this mod
+            if modTiming[modName] then
+                modTiming[modName].total_ms = modTiming[modName].total_ms + elapsed_ms
+                modTiming[modName].calls = modTiming[modName].calls + 1
+                if elapsed_ms > modTiming[modName].max_ms then
+                    modTiming[modName].max_ms = elapsed_ms
+                end
+            end
         end
     end
 end

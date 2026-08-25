@@ -1,6 +1,7 @@
 #include <windows.h>
 #include <LuaAPI/logger.hpp>
 #include <LuaAPI/lua_engine.hpp>
+#include <LuaAPI/hook_profiler.h>
 
 namespace {
 
@@ -13,6 +14,9 @@ DWORD WINAPI Bootstrap(LPVOID param) {
     LuaAPI::Logger::instance().Init(dir + L"\\LuaAPI.log");
 
     LUA_LOG_INFO("LuaAPI bootstrap thread started");
+
+    // Initialize hook profiler (QPC circular buffer, 5s rolling window).
+    HookProfilerModuleInit();
 
     // Install game simulation hooks via MinHook
     // (ScenarioClass::Update @ 0x685650 + StringTable::LoadString watermark).

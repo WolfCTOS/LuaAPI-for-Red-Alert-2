@@ -1,62 +1,58 @@
-# ============================================================
-# This repository lives INSIDE the Red Alert 2 game directory.
-# Default-deny everything at the root, then whitelist project
-# entries only - this guarantees no game assets (*.mix, *.exe,
-# *.dll, *.bik, ...) can ever be tracked, regardless of name.
-# ============================================================
-
-/*
-# Project files & folders
-!/.gitignore
-!/.gitmodules
-!/README.md
-!/CMakeLists.txt
-!/injector.cpp
-!/PROJECT/
-!/docs/
-!/src/
-!/include/
-!/scripts/
-!/third_party/
-
-# Build outputs
-build/
-bin/
-out/
-*.obj
-*.pdb
-*.ilk
-*.idb
-*.log
-.vs/
+# LuaAPI for Red Alert 2 Git Ignore
+# Ignore user profile and system directories
+.cache/
+.config/
+.copilot/
+.dotnet/
+.lmstudio-home-pointer/
+.lmstudio/
+.local/
+.nuget/
+.vscode-shared/
 .vscode/
+AppData/
+Contacts/
+Desktop/
+Documents/
+Downloads/
+Favorites/
+IntelGraphicsProfiles/
+Links/
+Music/
+NTUSER.DAT*
+NTUSER.DAT{*.regtrans-ms,*.TxR.*.regtrans-ms.cnpf}
+NTUSER.DAT{995bda28-9346-11f1-b524-803049e8b9ce}*
+NTUSER.DAT{995bda29-9346-11f1-b524-803049e8b9ce}*
+Pictures/
+Saved Games/
+Searches/
+Videos/
+ntuser.dat.LOG1
+ntuser.dat.LOG2
+ntuser.ini
 
-# Game binaries & dependencies (defense in depth)
-*.mix
-*.MIX
-*.mmx
-*.MMX
-*.yro
-*.YRO
-*.bik
-*.BIK
-*.exe
-*.EXE
-*.dll
-*.DLL
-*.csf
-*.CSF
-*.map
-*.mpr
-*.yrm
-*.pkt
-*.vqp
-*.tmp
-*.ini
-*.INI
-*.dat
-*.shp
-*.fnt
-*.tlb
-*.lcf
-*.sys
+# Build artifacts
+build/
+*.log
+benchmark.log
+
+# IDE and tools
+.vscode/
+.idea/
+*.tsx
+*.ts
+*.lock-window
+
+# Mod installation
+scripts/mods/*/mod.json
+scripts/mods/*/main.lua
+
+# Temporarily allow these project files
+!scripts/mods/
+!PROJECT/
+!src/
+!scripts/
+!tools/
+!README.md
+!PROJECT/ROADMAP.md
+!PROJECT/AI_CONTEXT.md

@@ -1,4 +1,4 @@
-// RA2 Yuri's Revenge вЂ” LuaAPI Injector (modern dark Win32 GUI, no console)
+﻿// RA2 Yuri's Revenge Р В Р вЂ Р В РІР‚С™Р Р†Р вЂљРЎСљ LuaAPI Injector (modern dark Win32 GUI, no console)
 #ifndef UNICODE
 #define UNICODE
 #endif
@@ -15,6 +15,7 @@
 #include <vector>
 #include <fstream>
 #include <sstream>
+#include <thread>
 #include <algorithm>
 
 #pragma comment(lib, "user32.lib")
@@ -103,6 +104,8 @@ HFONT g_fontReg = nullptr;     // 12pt
 HFONT g_fontSmall = nullptr;   // 10pt
 
 DWORD g_gamePid = 0;
+bool g_skipInjection = false;
+bool g_injectCnCNet = false;
 std::wstring g_gameName;
 AppState g_appState = AppState::Ready;
 
@@ -140,6 +143,7 @@ bool g_hoverInject = false;
 bool g_hoverSave = false;
 bool g_hoverLang = false;
 bool g_trackingMouse = false;
+bool g_headless = false;
 
 // Layout metrics recomputed in RecalcLayout.
 RECT ListRect() {
@@ -196,6 +200,8 @@ COLORREF CurrentStatusColor() {
     }
 }
 
+void SetStatus(const std::wstring& text) { SetStatusCustom(text); }
+
 void FillRoundRect(HDC dc, const RECT& r, COLORREF fill, int radius, COLORREF outline = 0, bool hasOutline = false) {
     HBRUSH brush = CreateSolidBrush(fill);
     HPEN pen = hasOutline ? CreatePen(PS_SOLID, 1, outline)
@@ -251,6 +257,14 @@ std::wstring GetExeDirectory() {
     return slash == std::wstring::npos ? L"." : path.substr(0, slash);
 }
 
+void LogLine(const std::wstring& text) {
+    std::wofstream log(GetExeDirectory() + L"\\injector_log.txt",
+                       std::ios::app);
+    SYSTEMTIME st;
+    GetLocalTime(&st);
+    log << L"[" << st.wHour << L":" << st.wMinute << L":" << st.wSecond << L"."
+        << st.wMilliseconds << L"] " << text << L"\n";
+}
 DWORD FindTargetProcess() {
     HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
     if (snapshot == INVALID_HANDLE_VALUE)
@@ -382,26 +396,11 @@ void DoInject() {
     }
 }
 void DoLaunchGame() {
-    // If the game is already running, just inject instead of double-spawning.
-    DWORD runningPid = FindTargetProcess();
-    if (runningPid != 0) {
-        g_gamePid = runningPid;
-        g_gameName = kGameProcess;
-        DoInject();
-        return;
-    }
-
     std::wstring exeDir = GetExeDirectory();
     std::wstring gamePath = exeDir + L"\\gamemd.exe";
     std::wstring dllPath = exeDir + L"\\LuaAPI.dll";
+    std::wstring stubPath = exeDir + L"\\RA2MD.EXE";
 
-    if (!FileExists(gamePath)) {
-        g_appState = AppState::StatusError;
-        SetStatusKey(StatusKey::GameNotFound);
-        MessageBoxW(g_hwnd, (L"\u0424\u0430\u0439\u043B \u043D\u0435 \u043D\u0430\u0439\u0434\u0435\u043D:\n" + gamePath).c_str(),
-                    L"\u041E\u0448\u0438\u0431\u043A\u0430", MB_ICONERROR | MB_OK);
-        return;
-    }
     if (!FileExists(dllPath)) {
         g_appState = AppState::StatusError;
         SetStatusKey(StatusKey::DllMissing);
@@ -410,40 +409,69 @@ void DoLaunchGame() {
         return;
     }
 
-    STARTUPINFOW si{};
-    si.cb = sizeof(si);
-    PROCESS_INFORMATION pi{};
+    // If the game is already running, just inject.
+    DWORD existing = FindTargetProcess();
+    if (existing != 0) {
+        g_gamePid = existing;
+        g_gameName = kGameProcess;
 
-    g_appState = AppState::Busy;
-    SetStatusKey(StatusKey::BusyLaunch);
-    if (!CreateProcessW(gamePath.c_str(), nullptr, nullptr, nullptr, FALSE,
-                        CREATE_SUSPENDED, nullptr, exeDir.c_str(), &si, &pi)) {
-        g_appState = AppState::StatusError;
-        SetStatusKey(StatusKey::Custom); g_statusColor = kRed; g_statusCustom = L"CreateProcessW failed";
-        MessageBoxW(g_hwnd, (L"CreateProcessW failed (error " + std::to_wstring(GetLastError()) + L")").c_str(),
-                    L"\u041E\u0448\u0438\u0431\u043A\u0430", MB_ICONERROR | MB_OK);
+        std::wstring error;
+        HANDLE process = OpenProcess(
+            PROCESS_CREATE_THREAD | PROCESS_QUERY_INFORMATION | PROCESS_VM_OPERATION | PROCESS_VM_WRITE | PROCESS_VM_READ,
+            FALSE, existing);
+        if (process == nullptr) {
+            SetStatus(L"OpenProcess failed");
+            return;
+        }
+        bool ok = InjectDllIntoProcess(existing, dllPath, &error);
+        CloseHandle(process);
+        if (ok) SetStatus(L"LuaAPI.dll \u0432\u043D\u0435\u0434\u0440\u0451\u043D \u0443\u0441\u043F\u0435\u0448\u043D\u043E!");
+        else SetStatus(L"\u041E\u0448\u0438\u0431\u043A\u0430 \u0432\u043D\u0435\u0434\u0440\u0435\u043D\u0438\u044F");
         return;
     }
 
-    std::wstring error;
-    if (!InjectDllIntoProcess(pi.dwProcessId, dllPath, &error)) {
-        TerminateProcess(pi.hProcess, 1);
-        CloseHandle(pi.hThread);
-        CloseHandle(pi.hProcess);
-        g_appState = AppState::StatusError;
-        SetStatusKey(StatusKey::InjectFail);
-        MessageBoxW(g_hwnd, (L"\u0412\u043D\u0435\u0434\u0440\u0435\u043D\u0438\u0435 \u043D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C:\n" + error).c_str(),
-                    L"\u041E\u0448\u0438\u0431\u043A\u0430", MB_ICONERROR | MB_OK);
-        return;
+    // Launch through the native stub loader - it prepares the environment
+    // (CD-check bypass etc.) that a direct gamemd.exe start lacks.
+    if (FileExists(stubPath)) {
+        LogLine(L"Launching via RA2MD.EXE stub...");
+        STARTUPINFOW si{};
+        si.cb = sizeof(si);
+        PROCESS_INFORMATION pi{};
+        if (CreateProcessW(stubPath.c_str(), nullptr, nullptr, nullptr, FALSE,
+                           0, nullptr, exeDir.c_str(), &si, &pi)) {
+            CloseHandle(pi.hThread);
+            CloseHandle(pi.hProcess);
+        } else {
+            LogLine(L"Stub launch failed, falling back to direct spawn");
+        }
     }
 
-    ResumeThread(pi.hThread);
-    CloseHandle(pi.hThread);
-    CloseHandle(pi.hProcess);
+    // Wait for the real game process to appear, then inject immediately.
+    SetStatus(L"\u0416\u0434\u0451\u043C \u0437\u0430\u043F\u0443\u0441\u043A\u0430 gamemd.exe...");
+    for (int i = 0; i < 600; ++i) { // up to 120 seconds
+        Sleep(200);
+        DWORD pid = FindTargetProcess();
+        if (pid == 0)
+            continue;
 
-    g_gamePid = pi.dwProcessId;
-    g_appState = AppState::Injected;
-    SetStatusKey(StatusKey::Injected);
+        std::wstring error;
+        HANDLE process = OpenProcess(
+            PROCESS_CREATE_THREAD | PROCESS_QUERY_INFORMATION | PROCESS_VM_OPERATION | PROCESS_VM_WRITE | PROCESS_VM_READ,
+            FALSE, pid);
+        if (!process)
+            continue;
+
+        bool ok = InjectDllIntoProcess(pid, dllPath, &error);
+        CloseHandle(process);
+
+        if (ok) {
+            g_gamePid = pid;
+            g_gameName = kGameProcess;
+            SetStatus(L"LuaAPI \u0432\u043D\u0435\u0434\u0440\u0451\u043D \u0432 \u0438\u0433\u0440\u0443!");
+            LogLine(L"Injected into freshly spawned gamemd.exe");
+        }
+        break;
+    }
 }
 
 void DoInjectAttach() {
@@ -924,7 +952,70 @@ namespace {
 
 } // namespace
 
+// Headless diagnostic launch: injector.exe --noinject
+// Spawns gamemd.exe (no LuaAPI.dll), waits for exit, logs to injector_log.txt.
+int RunNoInjectDiagnostic() {
+    LogLine(L"--- Diagnostic (--noinject): pure vanilla launch ---");
+    std::wstring exeDir = GetExeDirectory();
+    std::wstring gamePath = exeDir + L"\\gamemd.exe";
+    if (!FileExists(gamePath)) {
+        LogLine(L"Diagnostics: gamemd.exe not found");
+        MessageBoxW(nullptr, (L"\u0424\u0430\u0439\u043B \u043D\u0435 \u043D\u0430\u0439\u0434\u0435\u043D:\n" + gamePath).c_str(),
+                    L"\u041E\u0448\u0438\u0431\u043A\u0430", MB_ICONERROR | MB_OK);
+        return 1;
+    }
+
+    STARTUPINFOW si{};
+    si.cb = sizeof(si);
+    PROCESS_INFORMATION pi{};
+    if (!CreateProcessW(gamePath.c_str(), nullptr, nullptr, nullptr, FALSE,
+                        CREATE_SUSPENDED, nullptr, exeDir.c_str(), &si, &pi)) {
+        LogLine(L"Diagnostics: CreateProcessW FAILED");
+        return 1;
+    }
+    LogLine(L"Diagnostics: spawned suspended, resuming...");
+    ResumeThread(pi.hThread);
+
+    DWORD startTick = GetTickCount64();
+    WaitForSingleObject(pi.hProcess, 30000);
+
+    DWORD code = 0;
+    GetExitCodeProcess(pi.hProcess, &code);
+    DWORD elapsed = GetTickCount64() - startTick;
+    wchar_t b[16];
+    swprintf(b, 16, L"%08X", code);
+    LogLine(std::wstring(L"Diagnostics: exited code=0x") + b +
+            L" after " + std::to_wstring(elapsed) + L" ms");
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
+    return 0;
+}
+
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
+    // Headless diagnostic / compatibility modes
+    {
+        int argc = 0;
+        LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+        for (int i = 1; argv && i < argc; ++i) {
+            if (_wcsicmp(argv[i], L"--noinject") == 0) {
+                g_skipInjection = true;
+                g_headless = true;
+            }
+            if (_wcsicmp(argv[i], L"--withcncnet") == 0) {
+                g_injectCnCNet = true;
+                g_headless = true;
+            }
+        }
+        if (argv) LocalFree(argv);
+
+        if (g_headless) {
+            LogLine(L"--- Headless launch started ---");
+            DoLaunchGame();
+            Sleep(25000); // keep process alive while the watcher logs game exit
+            return 0;
+        }
+    }
+
     WNDCLASSW wc{};
     wc.lpfnWndProc = WndProc;
     wc.hInstance = hInstance;

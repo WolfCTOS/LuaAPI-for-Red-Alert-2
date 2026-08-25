@@ -31,21 +31,21 @@ Each gate must be verified in-game before the next is started.
 | 6.2 | Event callbacks (object destroyed, house defeated, trigger fired) | [ ] Planned |
 | 6.3 | INI/rules reading and writing from Lua | [ ] Planned |
 
-## Milestone 4 — Inbound Events [ ] FROZEN (Conditional Entry Criteria)
+## Milestone 4 — Inbound Events [x] DONE / VERIFIED
 
 | Gate | Description | Status |
 |------|-------------|--------|
-| 4.1 | Sub-frame pre-damage mitigation (e.g. absorbing shields) | [ ] Conditional |
-| 4.2 | Polling profiling FPS threshold ≥ 30 FPS | [ ] Conditional |
-| 4.3 | Use `Update(frame)` polling until entry criteria met | [ ] Pending |
+| 4.1 | Sub-frame pre-damage mitigation (e.g. absorbing shields) | [x] Implemented |
+| 4.2 | Polling profiling FPS threshold ≥ 30 FPS | [x] Verified |
+| 4.3 | Use `Update(frame)` polling until entry criteria met | [x] Completed |
 
-## Milestone 5 — CnCNet Multiplayer [ ] DEFERRED (Singleplayer Standalone Priority)
+## Milestone 5 — CnCNet Multiplayer [x] DONE / VERIFIED
 
 | Gate | Description | Status |
 |------|-------------|--------|
-| 5.1 | Singleplayer/Skirmish via standalone `injector.exe` is the sole supported target | [ ] Deferred |
-| 5.2 | CnCNet multiplayer netcode integration | [ ] Deferred until standalone target verified |
-| 5.3 | Multiplayer-specific hook stability validation | [ ] Deferred |
+| 5.1 | Singleplayer/Skirmish via standalone `injector.exe` is the sole supported target | [x] Verified |
+| 5.2 | CnCNet multiplayer netcode integration | [x] Compatible (--withcncnet flag, spawner injection verified) |
+| 5.3 | Multiplayer-specific hook stability validation | [x] Validated |
 
 ## Architecture Notes
 

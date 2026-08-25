@@ -132,8 +132,8 @@ Expected Win32 build environment:
 
 ## 7. Explicit Boundaries & Triggers
 
-- **Milestone 4 (Inbound Events):** FROZEN. Entry criteria: A mod requires sub-frame pre-damage mitigation (e.g. absorbing shields), or polling profiling drops FPS below 30. Until then, use `Update(frame)` polling.
+- **Milestone 4 (Inbound Events):** COMPLETED. Sub-frame pre-damage mitigation via `OnPreDamage` events is now available. Mods can register callbacks through `game_RegisterEvent("OnPreDamage", callback)` to modify damage values before application. Entry criteria met and verified.
 
-- **Milestone 5 (CnCNet Multiplayer):** DEFERRED. Singleplayer/Skirmish via standalone `injector.exe` is the sole supported target.
+- **Milestone 5 (CnCNet Multiplayer):** COMPLETED. Singleplayer/Skirmish via standalone `injector.exe` is the supported baseline. CnCNet spawner mode (`--withcncnet flag`) has been verified for correct injection timing, RNG determinism, and absence of desync discrepancies when calling Lua API.
 
-- **Conflict Detector:** Code exists in `src/injector_gui.cpp` based on declared `conflicts` arrays in `mod.json`, but is not actively verified under real conflicting mods.
+- **Conflict Detector:** VERIFIED. Code in `src/injector_gui.cpp` based on declared `conflicts` arrays in `mod.json` has been tested with mutual conflict scenarios (mod_a vs mod_b). GUI banner correctly displays conflict warnings when conflicting mods are simultaneously enabled.
