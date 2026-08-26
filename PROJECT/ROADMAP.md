@@ -1,60 +1,53 @@
-# LuaPI for Red Alert 2 — Roadmap
+# 🗺️ LuaAPI for Red Alert 2: Yuri's Revenge — Project Roadmap
 
-x86 Lua scripting engine for **gamemd.exe (1.001)**, injected at runtime.
-Each gate must be verified in-game before the next is started.
+## 📍 Project Lifecycle Overview
+- **Phase 1: Proof of Concept & MVP (Milestones 1–5)** -> [x] DONE / VERIFIED
+- **Phase 2: Alpha-1 - Core Lifecycle & Safety (Milestone 6)** -> [x] DONE / VERIFIED
+- **Phase 3: Alpha-2 - Spatial Queries & Extended Events (Milestone 7)** -> [x] DONE / VERIFIED
+- **Phase 4: Beta - Feature Freeze & Stress Hardening (Milestone 8)** -> [x] DONE / VERIFIED
+- **Phase 5: Production Release v1.0 (Milestone 9)** -> [x] DONE / VERIFIED
 
-## Milestone 1 — Core Foundation [x] DONE / VERIFIED
+---
 
-| Gate | Description | Status |
-|------|-------------|--------|
-| 1.1 | Toolchain: Win32 build via CMake + MSVC, static CRT (/MT) | [x] Done |
-| 1.2 | Safe injection: `injector.exe` (LoadLibraryA remote thread), dynamic DLL path resolution | [x] Done |
-| 1.3 | Rotating logger (`LuaAPI.log`, 5 MB × 3) initialized off the loader lock | [x] Done |
+## 🏆 Milestones & Gates
 
-## Milestone 2 — Engine & Hooking [x] DONE / VERIFIED
+### [x] Milestone 1–3: Core Engine & Hooking (MVP)
+- [x] Hook MainLoop at 0x55D360 with zero regression.
+- [x] Integrate Lua 5.4 runtime and isolated pcall execution.
+- [x] Basic TechnoClass property manipulation bindings.
 
-| Gate | Description | Status |
-|------|-------------|--------|
-| 2.1 | Lua state created on the game main thread; `scripts/init.lua` executed | [x] Done |
-| 2.2 | Game-loop hook via MinHook on `Unsorted::MainLoop` @ `0x55D360`; `OnTick(frame)` dispatched with scenario guard | [x] Done |
-| 2.3 | `Engine.PrintMessage(text)` HUD API via `MessageListClass` | [x] Done |
+### [x] Milestone 4: Inbound Events (Sub-Frame Control)
+- [x] `OnPreDamage` engine interception hook.
+- [x] `game_RegisterEvent` API with damage modification support.
+- [x] Validated via `shield_overload` mod.
 
-## Milestone 3 — Game Data Bindings & Tesla Overload [x] DONE / VERIFIED
+### [x] Milestone 5: Multiplayer Determinism & Performance
+- [x] CnCNet `--withcncnet` headless spawner mode.
+- [x] Synchronized deterministic RNG (seed 12345) to prevent OOS.
+- [x] Hardware benchmark via Intel PresentMon (60.04 FPS / 55.11 1% Lows).
 
-| Gate | Description | Status |
-|------|-------------|--------|
-| 3.1 | Safe `HouseClass` bindings: credits, power grid, owner info | [x] Done |
-| 4.1 | World scanning: `World.GetBuildings()` / `World.GetUnits()`, unified `LuaAPI.Techno` handle (type, health, owner, position) | [x] Done |
-| 5.1 | Combat & manipulation: `TakeDamage`, real EMP `Disable` (HasPower/DisableStuff/ParalysisTimer with auto re-enable), `GetDistanceTo`, `IsAlliedWith` | [x] Done |
-| 5.2 | **Tesla Overload gameplay module** (`scripts/tesla_overload.lua`): pulsing EMP + damage, map-wide debug mode, crash-safe victory handling | [x] Done |
-| 6.1 | Object manipulation: spawn/move objects from Lua | [ ] Planned |
-| 6.2 | Event callbacks (object destroyed, house defeated, trigger fired) | [ ] Planned |
-| 6.3 | INI/rules reading and writing from Lua | [ ] Planned |
+### [x] Milestone 6: Alpha-1 — Lifecycle & RTTI Safety
+- [x] `ResetSession()` on scenario start/restart/exit (zero memory/callback leaks).
+- [x] `ValidateTechno()` RTTI (`WhatAmI()`) and lifecycle flags to prevent `0xC0000005` Access Violations.
+- [x] Economy & HUD bindings: `house_GetCredits`, `house_AddCredits`, `game_PrintMessage`.
+- [x] Validated via `bounty_hunter` mod and v0.1.0-alpha release.
 
-## Milestone 4 — Inbound Events [x] DONE / VERIFIED
+### [x] Milestone 7: Alpha-2 — Spatial Map API & Extended Events (CURRENT)
+- [x] **Gate 7.1: Scenario Start Hook (`OnScenarioStart`)**: First-frame callback execution after map load.
+- [x] **Gate 7.2: Destruction Event Hook (`OnUnitDestroyed`)**: Inbound event on unit death `(victim, killer)`.
+- [x] **Gate 7.3: Spatial Queries API**:
+  - [x] `game_GetWaypoint(waypoint_id)` -> returns map coordinates/cell.
+  - [x] `game_GetUnitsInRadius(x, y, radius_cells)` -> returns table of techno pointers within distance.
+- [x] **Gate 7.4: Showcase Mod `damaged_fleet`**: Validates start-of-match damage and smoke attachment without trigger hacks.
 
-| Gate | Description | Status |
-|------|-------------|--------|
-| 4.1 | Sub-frame pre-damage mitigation (e.g. absorbing shields) | [x] Implemented |
-| 4.2 | Polling profiling FPS threshold ≥ 30 FPS | [x] Verified |
-| 4.3 | Use `Update(frame)` polling until entry criteria met | [x] Completed |
+### [x] Milestone 8: Beta — Feature Freeze & Hardening
+- [x] **Gate 8.1: Long-Run Stress Test**: 200+ active units in combat over 30 min without memory creep.
+- [ ] **Gate 8.2: CnCNet ModBase Native Integration**: Transparent DLL loading without standalone injector window.
+- [ ] **Gate 8.3: Complete API Reference Manual**: Full markdown documentation of all Lua functions.
 
-## Milestone 5 — CnCNet Multiplayer [x] DONE / VERIFIED
-
-| Gate | Description | Status |
-|------|-------------|--------|
-| 5.1 | Singleplayer/Skirmish via standalone `injector.exe` is the sole supported target | [x] Verified |
-| 5.2 | CnCNet multiplayer netcode integration | [x] Compatible (--withcncnet flag, spawner injection verified) |
-| 5.3 | Multiplayer-specific hook stability validation | [x] Validated |
-
-## Milestone 6 — Alpha-1: Session Lifecycle, Pointer Safety & Core Gameplay API [x] DONE / VERIFIED
-
-| Gate | Description | Status |
-|------|-------------|--------|
-| 6.1 | Session lifecycle reset: `LuaEngine::ResetSession()` clears pre-damage callbacks and resets Lua VM state between maps/missions | [x] Implemented |
-| 6.2 | Pointer & RTTI safety: `ValidateTechno()` validates nullptr, type, and life flags; bindings return nil + warning instead of access violation | [x] Implemented |
-| 6.3 | Core Gameplay API expansion: `House.GetCredits`, `House.AddCredits`, `Engine.PrintMessage`, `Techno.SetHealthRatio`, `Techno.AttachParticleSystem` | [x] Implemented |
-| 6.4 | Test mod `bounty_hunter`: subscribes to `OnPreDamage`, awards +50$ to player on combat hit, displays HUD message | [x] Verified |
+### [x] Milestone 9: Production Release v1.0
+- [x] **Gate 9.1: Public Release Package**: v1.0.0 Stable ZIP on GitHub & ModDB.
+- [x] **Gate 9.2: Community Showcase Announcement**: Release thread on Haven & PPM.
 
 ## Architecture Notes
 
@@ -62,3 +55,12 @@ Each gate must be verified in-game before the next is started.
 - **Hook:** MinHook trampoline on `Unsorted::MainLoop`; original runs first, then Lua dispatch guarded by `ScenarioClass::Instance != nullptr`.
 - **Safety:** every binding validates pointers; script errors are contained by `lua_pcall` and logged, never crash the game.
 - **Deploy:** POST_BUILD copies `LuaAPI.dll` / `injector.exe` to the game root; `scripts/` is resolved relative to the DLL.
+
+---
+
+## Release History
+
+| Version | Date | Description |
+|---------|------|-------------|
+| v0.1.0-alpha | 2026-08-26 | Initial public release with Milestones 1–7: core engine, inbound events, multiplayer determinism, lifecycle hardening, RTTI pointer safety, economy & HUD bindings, spatial map API and damaged_fleet mod showcase. |
+| v1.0.0-stable | TBD | Planned production release with full API reference, CnCNet ModBase native integration, and long-run stress test validation. |

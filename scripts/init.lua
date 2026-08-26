@@ -52,6 +52,21 @@ end
 
 local welcomed = false
 
+-- [[Событийные шины]]
+-- Моды могут подписаться на эти события в main.lua:
+--   function OnScenarioStart()  -- вызывается 1 раз при загрузке карты
+--   function OnUnitDestroyed(victim, killer) -- вызывается при уничтожении юнита
+-- глобальные функции автоматически дискpatchся из C++ движка.
+
+function OnScenarioStart()
+    -- Базовый пустой обработчик. Переопределите в main.lua своего мода.
+end
+
+function OnUnitDestroyed(victim, killer)
+    -- Базовый пустой обработчик. Переопределите в main.lua своего мода.
+    -- victim = TechnoClass pointer (или nil), killer = TechnoClass pointer (или nil)
+end
+
 function OnTick(frame)
     if not welcomed then
         local player = House.GetPlayer()

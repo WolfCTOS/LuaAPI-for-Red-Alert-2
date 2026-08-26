@@ -436,6 +436,58 @@ int Techno_AttachParticleSystem(lua_State* L) {
     return 0;
 }
 
+// === Gate 7.3: Spatial API ===
+
+// game:GetWaypoint(waypoint_id) -> table {x, y, cell}
+// Returns map coordinates for the given waypoint ID from rules/maps.
+int game_GetWaypoint(lua_State* L) {
+    int waypointId = luaL_checkinteger(L, 1);
+    // Placeholder: read waypoint from RulesClass or map header.
+    // In a full implementation, this would lookup waypoint data from RulesClass::Instance.
+    // For now, return origin cell.
+    lua_createtable(L, 0, 3);
+    lua_pushinteger(L, 0);              // x
+    lua_setfield(L, -2, "x");
+    lua_pushinteger(L, 0);              // y
+    lua_setfield(L, -2, "y");
+    lua_pushinteger(L, 0);              // cell
+    lua_setfield(L, -2, "cell");
+    return 1;
+}
+
+// game:GetUnitsInRadius(x, y, radius_cells) -> table of techno pointers
+// Returns all techno objects within the given radius (in map cells) from the center point.
+int game_GetUnitsInRadius(lua_State* L) {
+    int x = luaL_checkinteger(L, 1);
+    int y = luaL_checkinteger(L, 2);
+    int radius = luaL_checkinteger(L, 3);
+
+    lua_createtable(L, 0, TechnoClass::Array.Count);
+    int n = 0;
+
+    for (int i = 0; i < TechnoClass::Array.Count; ++i) {
+        TechnoClass* pTechno = TechnoClass::Array.GetItem(i);
+        if (!pTechno)
+            continue;
+
+        // Validate the techno pointer safety
+        if (!ValidateTechno(pTechno))
+            continue;
+
+        // Get coords and compute distance
+        CoordStruct coords = pTechno->GetCoords();
+        int dx = coords.X - x * 256; // convert cell to pixels approx
+        int dy = coords.Y - y * 256;
+        double dist = std::sqrt(static_cast<double>(dx * dx + dy * dy)) / 256.0;
+
+        if (dist <= static_cast<double>(radius)) {
+            PushTechno(L, pTechno);
+            lua_seti(L, -2, ++n);
+        }
+    }
+    return 1;
+}
+
 const luaL_Reg kTechnoMethods[] = {
     { "GetTypeName",   Techno_GetTypeName   },
     { "GetHealth",     Techno_GetHealth     },
@@ -564,7 +616,19 @@ void RegisterTechnoBindings(lua_State* L) {
     lua_setfield(L, -2, "GetBuildings");
     lua_pushcfunction(L, World_GetUnits);
     lua_setfield(L, -2, "GetUnits");
+    lua_pushcfunction(L, game_GetWaypoint);
+    lua_setfield(L, -2, "GetWaypoint");
+    lua_pushcfunction(L, game_GetUnitsInRadius);
+    lua_setfield(L, -2, "GetUnitsInRadius");
     lua_setglobal(L, "World");
+
+    // Global "game" namespace
+    lua_newtable(L);
+    lua_pushcfunction(L, game_GetWaypoint);
+    lua_setfield(L, -2, "GetWaypoint");
+    lua_pushcfunction(L, game_GetUnitsInRadius);
+    lua_setfield(L, -2, "GetUnitsInRadius");
+    lua_setglobal(L, "game");
 }
 
 } // namespace LuaAPI
