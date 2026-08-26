@@ -48,6 +48,10 @@ constexpr const wchar_t* kWindowTitle = L"RA2 Yuri's Revenge - LuaAPI Engine";
 constexpr int kDefaultClientW = 580;
 constexpr int kDefaultClientH = 640;
 constexpr int kPad = 20;
+constexpr int kCardH = 76;     // Высота карточки
+constexpr int kCardGap = 8;    // Зазор между карточками
+constexpr int kCardStep = 84;  // Полный шаг цикла (76 + 8)
+constexpr int kScrollW = 8;    // Ширина скроллбара
 
 constexpr const wchar_t* kGameProcess = L"gamemd.exe";
 
@@ -174,7 +178,7 @@ RECT ListRect() {
 inline void ClampScroll() {
     Layout l = ComputeLayout(g_clientW, g_clientH);
     int listHeight = l.list.bottom - l.list.top;
-    int totalModHeight = static_cast<int>(g_mods.size()) * 70;
+    int totalModHeight = static_cast<int>(g_mods.size()) * kCardStep;
     int maxScroll = std::max(0, totalModHeight - listHeight);
     g_scroll = std::max(0, std::min(g_scroll, maxScroll));
 }
@@ -793,23 +797,23 @@ void PaintAll(HDC dc) {
                   RECT{kPad, l.list.top + 20, g_clientW - kPad, l.list.top + 44}, g_fontSmall, kDim, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
     }
 
-    // Отрисовка карточек модов с учетом скролла
+    // Отрисовка карточек модов с учетом скролла (kCardH=76, kCardGap=8, шаг 84, отступ под скроллбар)
+    int listH = l.list.bottom - l.list.top;
+    int totalH = static_cast<int>(g_mods.size()) * kCardStep;
+    int cardW = (l.list.right - l.list.left) - (totalH > listH ? (kScrollW + 8) : 0);
     int yPos = l.list.top + 4 - g_scroll;
     for (size_t i = 0; i < g_mods.size(); ++i) {
         auto& m = g_mods[i];
         // Рисуем только если карточка попадает в видимую область списка
-        if (yPos + 70 >= l.list.top && yPos <= l.list.bottom) {
-            RECT card{ kPad, yPos, l.list.right - kPad, yPos + 62 };
-            // Clamp card to list rectangle (на случай частичной видимости)
-            if (card.right > l.list.right) card.right = l.list.right;
-            if (card.bottom > l.list.bottom) card.bottom = l.list.bottom;
-            if (card.top < l.list.top) card.top = l.list.top;
+        if (yPos + kCardH >= l.list.top && yPos <= l.list.bottom) {
+            RECT rcCard = { l.list.left, yPos, l.list.left + cardW, yPos + kCardH };
+            RECT card = rcCard; // для hover/клика
             bool hovered = PtInRect(&card, cursor);
 
             FillRoundRect(dc, card, hovered ? kHover : kSurface, 10,
                           m.enabled ? kGreen : kBadge, m.enabled);
 
-            RECT box{ card.left + 12, card.top + 12, card.left + 30, card.top + 30 };
+            RECT box{ rcCard.left + 12, yPos + 16, rcCard.left + 32, yPos + 36 };
             FillRoundRect(dc, box, m.enabled ? kGreen : kBg, 4, m.enabled ? kGreen : kBadge, true);
             if (m.enabled) {
                 HFONT old = static_cast<HFONT>(SelectObject(dc, g_fontReg));
@@ -819,25 +823,25 @@ void PaintAll(HDC dc) {
                 SelectObject(dc, old);
             }
 
-            int tx = card.left + 42;
-            DrawTextR(dc, m.name, RECT{tx, card.top + 8, tx + 200, card.top + 30}, g_fontHeader, kText);
+            int tx = rcCard.left + 42;
+            DrawTextR(dc, m.name, RECT{tx, yPos + 10, tx + 200, yPos + 30}, g_fontHeader, kText);
 
             std::wstring badge = L"[v" + m.version + L"]";
             HFONT measureFont = static_cast<HFONT>(SelectObject(dc, g_fontSmall));
             SIZE sz{};
             GetTextExtentPoint32W(dc, badge.c_str(), static_cast<int>(badge.size()), &sz);
             SelectObject(dc, measureFont);
-            RECT badgeRc{ tx + 200, card.top + 11, tx + 208 + sz.cx, card.top + 29 };
+            RECT badgeRc{ tx + 200, yPos + 10, tx + 208 + sz.cx, yPos + 30 };
             FillRoundRect(dc, badgeRc, kBadge, 6);
             DrawTextR(dc, badge, badgeRc, g_fontSmall, kText, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 
-            DrawTextR(dc, L"by " + m.author, RECT{badgeRc.right + 8, card.top + 11, card.right - 10, card.top + 29},
+            DrawTextR(dc, L"by " + m.author, RECT{badgeRc.right + 8, yPos + 10, rcCard.right - 10, yPos + 30},
                       g_fontSmall, kDim);
 
-            DrawTextR(dc, m.description, RECT{tx, card.top + 34, card.right - 12, card.bottom - 6},
+            DrawTextR(dc, m.description, RECT{rcCard.left + 40, yPos + 36, rcCard.right - 12, yPos + 68},
                       g_fontSmall, kDim, DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS);
         }
-        yPos += 70;
+        yPos += kCardStep;
     }
 
     // Восстанавливаем контекст (снимаем маску отсечения)
@@ -904,22 +908,22 @@ void PaintAll(HDC dc) {
     DrawTextR(dc, Str_SaveBtn(), g_rcSave, g_fontHeader, g_launching ? kDim : kText,
               DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 
-    // ---- Minimal scrollbar (6px, dark theme) ----
+    // ---- Minimal scrollbar (kScrollW=8, dark theme) - строго в диапазоне l.list.top..bottom
     {
         Layout l = ComputeLayout(g_clientW, g_clientH);
         int listHeight = l.list.bottom - l.list.top;
-        int totalModHeight = static_cast<int>(g_mods.size()) * 70;
+        int totalModHeight = static_cast<int>(g_mods.size()) * kCardStep;
         if (totalModHeight > listHeight) {
             int maxScroll = totalModHeight - listHeight;
             int trackH = listHeight - 8;
-            int trackX = l.list.right - 6;
+            int trackX = l.list.right - kScrollW;
             int trackY = l.list.top + 4;
-            // track
-            FillRoundRect(dc, RECT{trackX, trackY, trackX+6, trackY+trackH}, kBadge, 3);
+            // track (ширина kScrollW)
+            FillRoundRect(dc, RECT{trackX, trackY, trackX + kScrollW, trackY+trackH}, kBadge, 3);
             // thumb
             int thumbH = std::max(20, trackH * listHeight / totalModHeight);
             int thumbY = trackY + (maxScroll ? (g_scroll * (trackH - thumbH) / maxScroll) : 0);
-            FillRoundRect(dc, RECT{trackX, thumbY, trackX+6, thumbY+thumbH}, kDim, 3);
+            FillRoundRect(dc, RECT{trackX, thumbY, trackX + kScrollW, thumbY+thumbH}, kDim, 3);
         }
     }
 }
@@ -949,21 +953,24 @@ void OnLeftDown(POINT pt) {
     if (PointIn(g_rcInject, pt)) { DoInjectAttach(); return; }
     if (PointIn(g_rcSave, pt)) { SaveMods(); return; }
 
-    RECT list = ListRect();
-    int yPos = list.top + 4 - g_scroll;
-    for (auto& m : g_mods) {
-        // Stop if past visible area
-        if (yPos > ListRect().bottom + 70) break;
-
-        RECT box{ kPad + 12, yPos + 12, kPad + 30, yPos + 30 };
-        RECT card{ kPad, yPos, ListRect().right - kPad, yPos + 62 };
-        if (PointIn(box, pt) || PointIn(card, pt)) {
+    Layout l = ComputeLayout(g_clientW, g_clientH);
+    int listH = l.list.bottom - l.list.top;
+    int totalH = static_cast<int>(g_mods.size()) * kCardStep;
+    int cardW = (l.list.right - l.list.left) - (totalH > listH ? (kScrollW + 8) : 0);
+    int yPos = l.list.top + 4 - g_scroll;
+    for (size_t i = 0; i < g_mods.size(); ++i) {
+        auto& m = g_mods[i];
+        if (yPos > l.list.bottom + kCardH) break;
+        if (yPos + kCardH < l.list.top) { yPos += kCardStep; continue; }
+        RECT rcCard = { l.list.left, yPos, l.list.left + cardW, yPos + kCardH };
+        RECT box{ rcCard.left + 12, yPos + 16, rcCard.left + 32, yPos + 36 };
+        if (PointIn(box, pt) || PointIn(rcCard, pt)) {
             m.enabled = !m.enabled;
             g_dirty = true;
             InvalidateRect(g_hwnd, nullptr, TRUE);
             return;
         }
-        yPos += 70;
+        yPos += kCardStep;
     }
 }
 
@@ -1019,12 +1026,15 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             g_hoverLang = hG;
             InvalidateRect(hwnd, nullptr, TRUE);
         } else {
-            // check card hover without invalidating every move: only if scroll or card under cursor changed
+            // check card hover without invalidating every move: only if card under cursor changed
             static int lastHoverIdx = -1;
             int idx = -1;
-            RECT list = ListRect();
-            int yPos = list.top + 4 - g_scroll;
-            for (size_t i=0;i<g_mods.size();++i){ RECT card{ kPad, yPos, list.right - kPad, yPos + 62 }; if (PointIn(card, pt)) { idx=(int)i; break; } yPos+=70; }
+            Layout hl = ComputeLayout(g_clientW, g_clientH);
+            int hListH = hl.list.bottom - hl.list.top;
+            int hTotalH = (int)g_mods.size() * kCardStep;
+            int hCardW = (hl.list.right - hl.list.left) - (hTotalH > hListH ? (kScrollW + 8) : 0);
+            int yPos2 = hl.list.top + 4 - g_scroll;
+            for (size_t i=0;i<g_mods.size();++i){ RECT card{ hl.list.left, yPos2, hl.list.left + hCardW, yPos2 + kCardH }; if (PointIn(card, pt)) { idx=(int)i; break; } yPos2+=kCardStep; }
             if (idx != lastHoverIdx) { lastHoverIdx = idx; InvalidateRect(hwnd, nullptr, TRUE); }
         }
         if (!g_trackingMouse) {
