@@ -33,7 +33,7 @@ void HookProfiler::Initialize() {
     window_samples_ = 0;
 
     LUA_LOG_INFO("HookProfiler initialized: QPC freq={}, buffer={} samples, 5s rolling window", freq.QuadPart, kBufferSize);
-    g_profiler.freq_ = freq;
+    freq_ = freq;
 }
 
 // ---------------------------------------------------------------------------

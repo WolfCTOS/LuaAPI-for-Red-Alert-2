@@ -1,4 +1,4 @@
-﻿// RA2 Yuri's Revenge Р В Р вЂ Р В РІР‚С™Р Р†Р вЂљРЎСљ LuaAPI Injector (modern dark Win32 GUI, no console)
+﻿// RA2 Yuri's Revenge — LuaAPI Injector (modern dark Win32 GUI, no console)
 #ifndef UNICODE
 #define UNICODE
 #endif
@@ -749,6 +749,12 @@ void PaintAll(HDC dc) {
     int maxScroll = std::max(0, totalModHeight - listHeight);
     g_scroll = std::max(0, std::min(g_scroll, maxScroll));
 
+    // Empty state UX: show hint when no mods detected
+    if (g_mods.empty()) {
+        DrawTextR(dc, L10N(L"Моды не найдены — поместите папки в scripts/mods/", L"No mods found — place folders in scripts/mods/"),
+                  RECT{kPad, ListRect().top + 20, g_clientW - kPad, ListRect().top + 44}, g_fontSmall, kDim, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    }
+
     int yPos = ListRect().top + 4 - g_scroll;
     for (auto& m : g_mods) {
         // Stop drawing if we've moved past the visible area
@@ -805,13 +811,19 @@ void PaintAll(HDC dc) {
             if (k + 1 < conflicts.size())
                 warning += L";  ";
         }
-        // Place banner just above the footer, with minimum spacing
+        // Place banner just above the footer, with minimum spacing from mod list
         int bannerTop = g_clientH - 92;
         int bannerBottom = g_clientH - 68;
-        // Ensure banner doesn't overlap mod list area
         int listBottom = ListRect().bottom;
-        if (bannerTop > listBottom + 16) {
+        // Prevent banner from overlapping mod list - push above with minimum 8px gap
+        if (bannerTop > listBottom + 8) {
             bannerTop = listBottom + 8;
+            bannerBottom = bannerTop + 24;
+        }
+        // Ensure banner doesn't go above the mod section header area
+        int modSectionTop = g_rcLaunch.bottom + 16;
+        if (bannerTop < modSectionTop) {
+            bannerTop = modSectionTop;
             bannerBottom = bannerTop + 24;
         }
         DrawTextR(dc, warning, RECT{kPad, bannerTop, w - kPad, bannerBottom}, g_fontSmall, kOrange);
@@ -824,15 +836,20 @@ void PaintAll(HDC dc) {
     DrawTextR(dc, Str_ActiveCount(EnabledModCount(), static_cast<int>(g_mods.size())),
               RECT{kPad, footerTop, 280, footerBottom}, g_fontReg, kDim);
 
-    // Save button below footer (with minimum spacing from bottom)
+    // Save button - sync g_rcSave with clamped visual position so hover/hit-test matches paint
     int saveTop = g_clientH - 55;
     int saveBottom = g_clientH - 17;
-    // Ensure save button is below conflict banner / footer
     int bannerBottom = g_clientH - 68;
     if (saveTop < bannerBottom + 8) {
         saveTop = bannerBottom + 8;
         saveBottom = saveTop + 38;
     }
+    if (saveBottom > g_clientH - kPad) {
+        saveBottom = g_clientH - kPad;
+        saveTop = saveBottom - 38;
+    }
+    // Update global rect so hit-testing (OnLeftDown / WM_MOUSEMOVE) matches what we draw
+    g_rcSave = RECT{ g_clientW - kPad - 200, saveTop, g_clientW - kPad, saveBottom };
     COLORREF saveFill = g_hoverSave ? kGreenHover : kGreen;
     FillRoundRect(dc, g_rcSave, saveFill, 10);
     DrawTextR(dc, Str_SaveBtn(), g_rcSave, g_fontHeader, kText,
@@ -899,6 +916,12 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         BOOL dark = TRUE;
         DwmSetWindowAttribute(hwnd, 20, &dark, sizeof(dark));
         DwmSetWindowAttribute(hwnd, 19, &dark, sizeof(dark));
+        // Initialize layout before first paint - WM_SIZE may not fire before WM_PAINT on some DPIs
+        RECT rc; GetClientRect(hwnd, &rc);
+        g_clientW = rc.right - rc.left; g_clientH = rc.bottom - rc.top;
+        if (g_clientW == 0) g_clientW = kDefaultClientW;
+        if (g_clientH == 0) g_clientH = kDefaultClientH;
+        RecalcLayout();
         ScanMods();
         SetStatusKey(StatusKey::Ready);
         return 0;
@@ -1067,7 +1090,24 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
         if (g_headless) {
             LogLine(L"--- Headless launch started ---");
             DoLaunchGame();
-            Sleep(25000); // keep process alive while the watcher logs game exit
+            // Wait for the game process to exit, then cleanly exit the injector.
+            // Use SYNCHRONIZE so we can wait without needing PROCESS_TERMINATE rights.
+            if (g_gamePid != 0) {
+                HANDLE hProcess = OpenProcess(SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, FALSE, g_gamePid);
+                if (!hProcess) hProcess = OpenProcess(SYNCHRONIZE, FALSE, g_gamePid);
+                if (hProcess) {
+                    LogLine(L"Headless: waiting for gamemd.exe (PID " + std::to_wstring(g_gamePid) + L") to exit...");
+                    WaitForSingleObject(hProcess, INFINITE);
+                    CloseHandle(hProcess);
+                    LogLine(L"Headless: game exited, injector terminating");
+                } else {
+                    LogLine(L"Headless: OpenProcess failed, cannot wait for game exit");
+                }
+            } else {
+                LogLine(L"Headless: g_gamePid == 0, game never appeared");
+            }
+            // Give a small grace period after game exit for log flush
+            Sleep(500);
             return 0;
         }
     }

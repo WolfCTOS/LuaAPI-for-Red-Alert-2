@@ -16,7 +16,7 @@ DWORD WINAPI Bootstrap(LPVOID param) {
     LUA_LOG_INFO("LuaAPI bootstrap thread started");
 
     // Initialize hook profiler (QPC circular buffer, 5s rolling window).
-    HookProfilerModuleInit();
+    LuaAPI::HookProfilerModuleInit();
 
     // Install game simulation hooks via MinHook
     // (ScenarioClass::Update @ 0x685650 + StringTable::LoadString watermark).

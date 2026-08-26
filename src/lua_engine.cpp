@@ -297,7 +297,7 @@ void OnGameFrame() {
 
     // Fire pre-damage callbacks registered by mods (OnPreDamage).
     if (g_L && g_scriptReady) {
-int nrefs = static_cast<int>(g_preDamageCallbackRefs.size());
+        int nrefs = static_cast<int>(g_preDamageCallbackRefs.size());
         for (int i = 0; i < nrefs; ++i) {
             int ref = g_preDamageCallbackRefs[i];
             luaL_unref(g_L, LUA_REGISTRYINDEX, ref);
@@ -310,6 +310,7 @@ int nrefs = static_cast<int>(g_preDamageCallbackRefs.size());
             g_preDamageCallbackRefs.push_back(ref);
         }
         lua_pop(g_L, 1);
+    }
 
     // === Gate 7.1: Scenario Start Hook ===
     // Fire OnScenarioStart once on the first frame after a new map/mission loads.
