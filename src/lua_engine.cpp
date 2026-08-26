@@ -297,21 +297,19 @@ void OnGameFrame() {
 
     // Fire pre-damage callbacks registered by mods (OnPreDamage).
     if (g_L && g_scriptReady) {
-        int nrefs = static_cast<int>(g_preDamageCallbackRefs.size());
+int nrefs = static_cast<int>(g_preDamageCallbackRefs.size());
         for (int i = 0; i < nrefs; ++i) {
             int ref = g_preDamageCallbackRefs[i];
-            luaL_unref(LUA_REGISTRYINDEX, LUA_NOREF, ref); // pop old ref
+            luaL_unref(g_L, LUA_REGISTRYINDEX, ref);
         }
         g_preDamageCallbackRefs.clear();
 
-        // Push new callback references from the script
         lua_getglobal(g_L, "OnPreDamage");
         if (lua_isfunction(g_L, -1)) {
-            int ref = luaL_ref(LUA_REGISTRYINDEX, -1);
+            int ref = luaL_ref(g_L, LUA_REGISTRYINDEX);
             g_preDamageCallbackRefs.push_back(ref);
         }
         lua_pop(g_L, 1);
-    }
 
     // === Gate 7.1: Scenario Start Hook ===
     // Fire OnScenarioStart once on the first frame after a new map/mission loads.
@@ -319,14 +317,14 @@ void OnGameFrame() {
         int nrefs = static_cast<int>(g_scenarioStartCallbackRefs.size());
         for (int i = 0; i < nrefs; ++i) {
             int ref = g_scenarioStartCallbackRefs[i];
-            luaL_unref(LUA_REGISTRYINDEX, LUA_NOREF, ref); // pop old ref
+            luaL_unref(g_L, LUA_REGISTRYINDEX, ref); // pop old ref
         }
         g_scenarioStartCallbackRefs.clear();
 
         // Push new callback references from the script
         lua_getglobal(g_L, "OnScenarioStart");
         if (lua_isfunction(g_L, -1)) {
-            int ref = luaL_ref(LUA_REGISTRYINDEX, -1);
+            int ref = luaL_ref(g_L, LUA_REGISTRYINDEX);
             g_scenarioStartCallbackRefs.push_back(ref);
             // Call the function with frame number
             lua_pushinteger(g_L, 1);
@@ -351,14 +349,14 @@ void OnGameFrame() {
             if (nrefs > 0) {
                 for (int i = 0; i < nrefs; ++i) {
                     int ref = g_unitDestroyedCallbackRefs[i];
-                    luaL_unref(LUA_REGISTRYINDEX, LUA_NOREF, ref); // pop old ref
+luaL_unref(g_L, LUA_REGISTRYINDEX, ref); // pop old ref
                 }
                 g_unitDestroyedCallbackRefs.clear();
 
                 // Push new callback references from the script
                 lua_getglobal(g_L, "OnUnitDestroyed");
                 if (lua_isfunction(g_L, -1)) {
-                    int ref = luaL_ref(LUA_REGISTRYINDEX, -1);
+int ref = luaL_ref(g_L, LUA_REGISTRYINDEX);
                     g_unitDestroyedCallbackRefs.push_back(ref);
                     // Fire with victim=nil, killer=nil as placeholder
                     // Full implementation would pass actual TechnoClass pointers
@@ -404,7 +402,7 @@ void OnGameFrame() {
 void ResetSession() {
     // 1. Clear all pre-damage callback references from the previous session.
     for (int ref : g_preDamageCallbackRefs) {
-        luaL_unref(LUA_REGISTRYINDEX, LUA_NOREF, ref);
+        luaL_unref(g_L, LUA_REGISTRYINDEX, ref);
     }
     g_preDamageCallbackRefs.clear();
 

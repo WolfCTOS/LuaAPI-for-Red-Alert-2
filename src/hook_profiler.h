@@ -62,8 +62,14 @@ private:
     // Helper: compute p95 from the circular buffer (sorted approximation).
     double ComputeP95() const;
 
-    // Helper: convert ticks to ms.
-    static double TicksToMs(LARGE_INTEGER ticks, LARGE_INTEGER freq);
+    // Helper: convert ticks to ms (using LONGLONG for QPC QuadPart).
+    static double TicksToMs(LONGLONG ticks, LONGLONG freq);
 };
 
+// Global module initialization (call once at startup).
+void HookProfilerModuleInit();
+
+// Per-frame begin/end calls from the hook.
+void HookProfilerBeginFrame();
+void HookProfilerEndFrame();
 } // namespace LuaAPI

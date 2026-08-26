@@ -1,7 +1,7 @@
 #include <windows.h>
 #include <LuaAPI/logger.hpp>
 #include <LuaAPI/lua_engine.hpp>
-#include <LuaAPI/hook_profiler.h>
+#include "hook_profiler.h"
 
 namespace {
 

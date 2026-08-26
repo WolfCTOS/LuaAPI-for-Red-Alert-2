@@ -7,9 +7,8 @@ namespace LuaAPI {
 // ---------------------------------------------------------------------------
 // Helper: convert ticks to milliseconds
 // ---------------------------------------------------------------------------
-double HookProfiler::TicksToMs(LARGE_INTEGER ticks, LARGE_INTEGER freq) {
-    if (freq.QuadPart == 0) return 0.0;
-    return 1000.0 * static_cast<double>(ticks.QuadPart) / static_cast<double>(freq.QuadPart);
+double HookProfiler::TicksToMs(LONGLONG ticks, LONGLONG freq) {
+    return (freq > 0) ? (static_cast<double>(ticks) * 1000.0 / static_cast<double>(freq)) : 0.0;
 }
 
 // ---------------------------------------------------------------------------
@@ -30,7 +29,7 @@ void HookProfiler::Initialize() {
     LARGE_INTEGER now;
     QueryPerformanceCounter(&now);
     window_start_ticks_ = now.QuadPart;
-    window_start_ms_ = TicksToMs(now, freq);
+    window_start_ms_ = TicksToMs(now.QuadPart, freq.QuadPart);
     window_samples_ = 0;
 
     LUA_LOG_INFO("HookProfiler initialized: QPC freq={}, buffer={} samples, 5s rolling window", freq.QuadPart, kBufferSize);
@@ -45,7 +44,7 @@ void HookProfiler::BeginFrame() {
     QueryPerformanceCounter(&now);
 
     // Use the frequency stored from Initialize()
-    double frame_ms = TicksToMs(now, freq_.QuadPart);
+    double frame_ms = TicksToMs(now.QuadPart, freq_.QuadPart);
 
     // Check if 5s window has elapsed -> flush and reset
     double delta_ms = frame_ms; // simplified: store raw delta for now
