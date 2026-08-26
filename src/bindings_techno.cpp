@@ -54,12 +54,12 @@ bool ValidateTechno(TechnoClass* pTechno) {
 
     // RTTI / type check - WhatAmI() should never return an unexpected
     // enum value for a legitimate TechnoClass, but we guard against it.
-    AbstractType::Type type = pTechno->WhatAmI();
-    if (type != AbstractType::Building &&
-        type != AbstractType::Unit &&
-        type != AbstractType::Infantry &&
-        type != AbstractType::Aircraft) {
-        LUA_LOG_WARN("ValidateTechno: invalid RTTI type {} for techno ptr", static_cast<int>(type));
+    auto what = pTechno->WhatAmI();
+    if (what != AbstractType::Building &&
+        what != AbstractType::Unit &&
+        what != AbstractType::Infantry &&
+        what != AbstractType::Aircraft) {
+        LUA_LOG_WARN("ValidateTechno: invalid RTTI type {} for techno ptr", static_cast<int>(what));
         return false;
     }
 
