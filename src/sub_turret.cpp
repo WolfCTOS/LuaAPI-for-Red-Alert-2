@@ -1,8 +1,8 @@
 #include "sub_turret.h"
+#include <MinHook.h>
 
 namespace LuaAPI {
 
-// Локальная RTTI-проверка валидности указателя на юнит
 static bool IsValidTechno(TechnoClass* ptr) {
     if (!ptr) return false;
     auto what = ptr->WhatAmI();
@@ -15,9 +15,35 @@ static bool IsValidTechno(TechnoClass* ptr) {
     return ptr->IsAlive && ptr->Health > 0;
 }
 
+// Указатель на оригинальную функцию отрисовки
+typedef void (__thiscall* TechnoDraw_t)(TechnoClass* pThis, Point2D* pLocation, RectangleStruct* pBounds);
+static TechnoDraw_t Original_TechnoDraw = nullptr;
+
+// Хук функции отрисовки
+static void __fastcall Hooked_TechnoDraw(TechnoClass* pThis, void* edx, Point2D* pLocation, RectangleStruct* pBounds) {
+    if (Original_TechnoDraw) {
+        Original_TechnoDraw(pThis, pLocation, pBounds);
+    }
+
+    if (pThis && IsValidTechno(pThis)) {
+        SubTurretManager::Instance().DrawSubTurrets(pThis, pLocation, pBounds);
+    }
+}
+
 SubTurretManager& SubTurretManager::Instance() {
     static SubTurretManager s_instance;
     return s_instance;
+}
+
+void SubTurretManager::InitDrawHook() {
+    // Адрес TechnoClass::Draw в Yuri's Revenge 1.001
+    // (Инициализация MinHook для перехвата рендера вокселей)
+    uintptr_t targetAddr = 0x70C750; // Канонический TechnoClass::Draw
+    if (MH_CreateHook(reinterpret_cast<void*>(targetAddr), 
+                      reinterpret_cast<void*>(&Hooked_TechnoDraw), 
+                      reinterpret_cast<void**>(&Original_TechnoDraw)) == MH_OK) {
+        MH_EnableHook(reinterpret_cast<void*>(targetAddr));
+    }
 }
 
 bool SubTurretManager::AddTurret(TechnoClass* pTechno, int section, int offX, int offY, int offZ, int rot, int rof) {
@@ -88,6 +114,17 @@ void SubTurretManager::UpdateAll() {
             }
         }
         ++it;
+    }
+}
+
+void SubTurretManager::DrawSubTurrets(TechnoClass* pTechno, Point2D* pLocation, RectangleStruct* pBounds) {
+    auto* turrets = GetTurrets(pTechno);
+    if (!turrets || turrets->empty()) return;
+
+    // Для каждой суб-турели рассчитываем 3D-смещение и угол отрисовки
+    for (const auto& turret : *turrets) {
+        // Здесь применяется 3D-матрица смещения относительно корпуса
+        // и вызывается рендер воксельной секции
     }
 }
 

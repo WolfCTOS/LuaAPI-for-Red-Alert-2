@@ -1,3 +1,4 @@
+﻿#include "sub_turret.h"
 #include <windows.h>
 #include <LuaAPI/logger.hpp>
 #include <LuaAPI/lua_engine.hpp>
@@ -17,6 +18,7 @@ DWORD WINAPI Bootstrap(LPVOID param) {
 
     // Initialize hook profiler (QPC circular buffer, 5s rolling window).
     LuaAPI::HookProfilerModuleInit();
+        LuaAPI::SubTurretManager::Instance().InitDrawHook();
 
     // Install game simulation hooks via MinHook
     // (ScenarioClass::Update @ 0x685650 + StringTable::LoadString watermark).

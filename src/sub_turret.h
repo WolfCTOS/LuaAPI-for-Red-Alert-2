@@ -7,13 +7,13 @@
 namespace LuaAPI {
 
 struct SubTurretData {
-    int voxelSection = 1;
-    CoordStruct offset{0, 0, 0};
-    int facing = 0;
-    int targetFacing = 0;
-    int rot = 8;
-    int rofTimer = 0;
-    int baseRof = 45;
+    int voxelSection = 1;        // Индекс секции в .vxl (1, 2, 3...)
+    CoordStruct offset{0, 0, 0}; // 3D-оффсет в лептонах
+    int facing = 0;              // Текущий угол (0..255)
+    int targetFacing = 0;        // Целевой угол на цель (0..255)
+    int rot = 8;                 // Скорость поворота
+    int rofTimer = 0;            // Кулдаун
+    int baseRof = 45;            // Базовая перезарядка
     TechnoClass* target = nullptr;
 };
 
@@ -28,6 +28,9 @@ public:
 
     void UpdateAll();
     bool FireTurret(TechnoClass* pTechno, size_t turretIndex, TechnoClass* pTarget);
+    void DrawSubTurrets(TechnoClass* pTechno, Point2D* pLocation, RectangleStruct* pBounds);
+
+    void InitDrawHook();
 
 private:
     std::unordered_map<TechnoClass*, std::vector<SubTurretData>> m_turrets;
