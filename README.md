@@ -186,3 +186,9 @@ Full methodology, frame time distribution, and reproduction instructions are ava
 Yuri's Revenge is a trademark of Electronic Arts.
 
 Developed for the C&C modding community (Haven / CnCNet / PPM).
+
+---
+
+## 📖 API Reference
+
+Full documentation of all Lua functions, signatures, and safety guarantees: [API.md](API.md).

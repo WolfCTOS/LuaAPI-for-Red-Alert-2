@@ -82,7 +82,7 @@
 
 - [x] **Gate 8.1: Long-Run Combat Stress Test (18k Frames / 5-min Battle)**
   - *Why:* Доказывает отсутствие утечек памяти и деградации сборщика мусора (GC). Успешно пройден: 17 993 кадра, 7 Brutal ботов, **56.24 FPS 1% Low**, 0 вылетов.
-- [ ] **Gate 8.2: Comprehensive API Reference Manual (`API.md`)**
+- [x] **Gate 8.2: Comprehensive API Reference Manual (`API.md`)**
   - *Why:* Сторонние моддеры не могут разрабатывать моды вслепую. Необходим полный справочник всех функций, сигнатур, типов и сниппетов.
 - [ ] **Gate 8.3: CnCNet ModBase Native Integration**
   - *Why:* Обеспечивает возможность внедрения `LuaAPI.dll` в крупные модпаки (DTA, Mental Omega) через прозрачный запуск без всплывающих окон.
