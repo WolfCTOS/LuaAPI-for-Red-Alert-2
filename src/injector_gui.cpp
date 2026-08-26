@@ -108,6 +108,10 @@ bool g_skipInjection = false;
 bool g_injectCnCNet = false;
 std::wstring g_gameName;
 AppState g_appState = AppState::Ready;
+bool g_dirty = false;
+bool g_launching = false;
+constexpr UINT WM_APP_LAUNCH_DONE = WM_APP + 1;
+constexpr UINT kToastTimerId = 1;
 
 // Translatable status: store the KEY, localize at paint time so the
 // RU/EN switch instantly re-translates even previously shown statuses.
@@ -145,12 +149,33 @@ bool g_hoverLang = false;
 bool g_trackingMouse = false;
 bool g_headless = false;
 
-// Layout metrics recomputed in RecalcLayout.
-// Maximum visible mod area before scrollbar appears
-const int kMaxModArea = 400;
-
+// Layout centralization - single source of truth
+struct Layout {
+    RECT launch, inject, lang, save, list;
+    int footerTop, footerBottom, bannerTop, bannerBottom;
+};
+Layout ComputeLayout(int w, int h) {
+    Layout l{};
+    int btnWidth = (w - kPad * 2 - 12) / 2;
+    l.launch = RECT{ kPad, 96, kPad + btnWidth, 140 };
+    l.inject = RECT{ kPad + btnWidth + 12, 96, w - kPad, 140 };
+    l.lang   = RECT{ w - 110, 16, w - 20, 44 };
+    // list area sits between buttons and footer
+    l.list   = RECT{ kPad, kPad * 2, w - kPad, h - kPad * 3 - 80 };
+    l.footerTop = h - 136; l.footerBottom = h - 92;
+    l.bannerTop = h - 92; l.bannerBottom = h - 68;
+    l.save = RECT{ w - kPad - 200, h - 55, w - kPad, h - 17 };
+    return l;
+}
 RECT ListRect() {
-    return RECT{ kPad, kPad * 2, g_clientW - kPad, g_clientH - kPad * 3 - 80 };
+    return ComputeLayout(g_clientW, g_clientH).list;
+}
+inline void ClampScroll() {
+    Layout l = ComputeLayout(g_clientW, g_clientH);
+    int listHeight = l.list.bottom - l.list.top;
+    int totalModHeight = static_cast<int>(g_mods.size()) * 70;
+    int maxScroll = std::max(0, totalModHeight - listHeight);
+    g_scroll = std::max(0, std::min(g_scroll, maxScroll));
 }
 
 // ---------------------------------------------------------------------------
@@ -260,6 +285,23 @@ std::wstring GetExeDirectory() {
     return slash == std::wstring::npos ? L"." : path.substr(0, slash);
 }
 
+std::wstring GetPrefsPath() { return GetExeDirectory() + L"\\injector.ini"; }
+void LoadPrefs() {
+    wchar_t buf[16]={0};
+    GetPrivateProfileStringW(L"UI", L"lang", L"RU", buf, 16, GetPrefsPath().c_str());
+    g_isRussian = (_wcsicmp(buf, L"EN") != 0);
+}
+void SavePrefs() {
+    WritePrivateProfileStringW(L"UI", L"lang", g_isRussian ? L"RU" : L"EN", GetPrefsPath().c_str());
+}
+void ShowToast(const std::wstring& msg) {
+    SetStatusCustom(msg);
+    if (g_hwnd) {
+        KillTimer(g_hwnd, kToastTimerId);
+        SetTimer(g_hwnd, kToastTimerId, 2000, nullptr);
+    }
+}
+
 void LogLine(const std::wstring& text) {
     std::wofstream log(GetExeDirectory() + L"\\injector_log.txt",
                        std::ios::app);
@@ -309,11 +351,9 @@ bool InjectDllIntoProcess(DWORD pid, const std::wstring& dllPath, std::wstring* 
         return false;
     }
 
-    int pathBytes = WideCharToMultiByte(CP_ACP, 0, dllPath.c_str(), -1, nullptr, 0, nullptr, nullptr);
-    std::string narrowPath(static_cast<size_t>(pathBytes), '\0');
-    WideCharToMultiByte(CP_ACP, 0, dllPath.c_str(), -1, &narrowPath[0], pathBytes, nullptr, nullptr);
-
-    void* remoteBase = VirtualAllocEx(process, nullptr, narrowPath.size(),
+    // Unicode: use LoadLibraryW + wchar_t buffer to support Cyrillic install paths
+    size_t bytes = (dllPath.size() + 1) * sizeof(wchar_t);
+    void* remoteBase = VirtualAllocEx(process, nullptr, bytes,
                                       MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
     if (!remoteBase) {
         if (error) *error = L"VirtualAllocEx failed (error " + std::to_wstring(GetLastError()) + L")";
@@ -321,16 +361,16 @@ bool InjectDllIntoProcess(DWORD pid, const std::wstring& dllPath, std::wstring* 
         return false;
     }
 
-    if (!WriteProcessMemory(process, remoteBase, narrowPath.c_str(), narrowPath.size(), nullptr)) {
+    if (!WriteProcessMemory(process, remoteBase, dllPath.c_str(), bytes, nullptr)) {
         if (error) *error = L"WriteProcessMemory failed (error " + std::to_wstring(GetLastError()) + L")";
         VirtualFreeEx(process, remoteBase, 0, MEM_RELEASE);
         CloseHandle(process);
         return false;
     }
 
-    auto loadLibraryA = reinterpret_cast<LPTHREAD_START_ROUTINE>(
-        GetProcAddress(GetModuleHandleW(L"kernel32.dll"), "LoadLibraryA"));
-    HANDLE thread = CreateRemoteThread(process, nullptr, 0, loadLibraryA, remoteBase, 0, nullptr);
+    auto loadLibraryW = reinterpret_cast<LPTHREAD_START_ROUTINE>(
+        GetProcAddress(GetModuleHandleW(L"kernel32.dll"), "LoadLibraryW"));
+    HANDLE thread = CreateRemoteThread(process, nullptr, 0, loadLibraryW, remoteBase, 0, nullptr);
     if (!thread) {
         if (error) *error = L"CreateRemoteThread failed (error " + std::to_wstring(GetLastError()) + L")";
         VirtualFreeEx(process, remoteBase, 0, MEM_RELEASE);
@@ -346,7 +386,7 @@ bool InjectDllIntoProcess(DWORD pid, const std::wstring& dllPath, std::wstring* 
     CloseHandle(process);
 
     if (exitCode == 0) {
-        if (error) *error = L"LoadLibraryA returned NULL inside the target";
+        if (error) *error = L"LoadLibraryW returned NULL inside the target";
         return false;
     }
     return true;
@@ -398,12 +438,12 @@ void DoInject() {
                     L"\u041E\u0448\u0438\u0431\u043A\u0430", MB_ICONERROR | MB_OK);
     }
 }
-void DoLaunchGame() {
-    std::wstring exeDir = GetExeDirectory();
-    std::wstring gamePath = exeDir + L"\\gamemd.exe";
-    std::wstring dllPath = exeDir + L"\\LuaAPI.dll";
-    std::wstring stubPath = exeDir + L"\\RA2MD.EXE";
+void DoLaunchGameAsync(HWND hwnd);
 
+void DoLaunchGame() {
+    if (g_launching) return;
+    std::wstring exeDir = GetExeDirectory();
+    std::wstring dllPath = exeDir + L"\\LuaAPI.dll";
     if (!FileExists(dllPath)) {
         g_appState = AppState::StatusError;
         SetStatusKey(StatusKey::DllMissing);
@@ -411,70 +451,60 @@ void DoLaunchGame() {
                     L"\u041E\u0448\u0438\u0431\u043A\u0430", MB_ICONERROR | MB_OK);
         return;
     }
-
-    // If the game is already running, just inject.
     DWORD existing = FindTargetProcess();
     if (existing != 0) {
         g_gamePid = existing;
         g_gameName = kGameProcess;
-
         std::wstring error;
-        HANDLE process = OpenProcess(
-            PROCESS_CREATE_THREAD | PROCESS_QUERY_INFORMATION | PROCESS_VM_OPERATION | PROCESS_VM_WRITE | PROCESS_VM_READ,
+        HANDLE process = OpenProcess(PROCESS_CREATE_THREAD | PROCESS_QUERY_INFORMATION | PROCESS_VM_OPERATION | PROCESS_VM_WRITE | PROCESS_VM_READ,
             FALSE, existing);
-        if (process == nullptr) {
-            SetStatus(L"OpenProcess failed");
-            return;
-        }
+        if (!process) { SetStatus(L"OpenProcess failed"); return; }
         bool ok = InjectDllIntoProcess(existing, dllPath, &error);
         CloseHandle(process);
-        if (ok) SetStatus(L"LuaAPI.dll \u0432\u043D\u0435\u0434\u0440\u0451\u043D \u0443\u0441\u043F\u0435\u0448\u043D\u043E!");
-        else SetStatus(L"\u041E\u0448\u0438\u0431\u043A\u0430 \u0432\u043D\u0435\u0434\u0440\u0435\u043D\u0438\u044F");
+        if (ok) { g_appState = AppState::Injected; SetStatusKey(StatusKey::Injected); }
+        else { g_appState = AppState::StatusError; SetStatusKey(StatusKey::InjectFail); }
+        InvalidateRect(g_hwnd, nullptr, TRUE);
         return;
     }
+    // Async path: spawn thread, disable UI
+    g_launching = true;
+    g_appState = AppState::Busy;
+    SetStatusKey(StatusKey::BusyLaunch);
+    InvalidateRect(g_hwnd, nullptr, TRUE);
+    HWND hwnd = g_hwnd;
+    std::thread([hwnd]() { DoLaunchGameAsync(hwnd); }).detach();
+}
 
-    // Launch through the native stub loader - it prepares the environment
-    // (CD-check bypass etc.) that a direct gamemd.exe start lacks.
+void DoLaunchGameAsync(HWND hwnd) {
+    std::wstring exeDir = GetExeDirectory();
+    std::wstring dllPath = exeDir + L"\\LuaAPI.dll";
+    std::wstring stubPath = exeDir + L"\\RA2MD.EXE";
     if (FileExists(stubPath)) {
         LogLine(L"Launching via RA2MD.EXE stub...");
-        STARTUPINFOW si{};
-        si.cb = sizeof(si);
+        STARTUPINFOW si{}; si.cb = sizeof(si);
         PROCESS_INFORMATION pi{};
-        if (CreateProcessW(stubPath.c_str(), nullptr, nullptr, nullptr, FALSE,
-                           0, nullptr, exeDir.c_str(), &si, &pi)) {
-            CloseHandle(pi.hThread);
-            CloseHandle(pi.hProcess);
+        if (CreateProcessW(stubPath.c_str(), nullptr, nullptr, nullptr, FALSE, 0, nullptr, exeDir.c_str(), &si, &pi)) {
+            CloseHandle(pi.hThread); CloseHandle(pi.hProcess);
         } else {
             LogLine(L"Stub launch failed, falling back to direct spawn");
         }
     }
-
-    // Wait for the real game process to appear, then inject immediately.
-    SetStatus(L"\u0416\u0434\u0451\u043C \u0437\u0430\u043F\u0443\u0441\u043A\u0430 gamemd.exe...");
-    for (int i = 0; i < 600; ++i) { // up to 120 seconds
+    bool injected = false;
+    std::wstring err;
+    DWORD foundPid = 0;
+    for (int i = 0; i < 600; ++i) {
         Sleep(200);
         DWORD pid = FindTargetProcess();
-        if (pid == 0)
-            continue;
-
-        std::wstring error;
-        HANDLE process = OpenProcess(
-            PROCESS_CREATE_THREAD | PROCESS_QUERY_INFORMATION | PROCESS_VM_OPERATION | PROCESS_VM_WRITE | PROCESS_VM_READ,
-            FALSE, pid);
-        if (!process)
-            continue;
-
-        bool ok = InjectDllIntoProcess(pid, dllPath, &error);
+        if (!pid) continue;
+        HANDLE process = OpenProcess(PROCESS_CREATE_THREAD | PROCESS_QUERY_INFORMATION | PROCESS_VM_OPERATION | PROCESS_VM_WRITE | PROCESS_VM_READ, FALSE, pid);
+        if (!process) continue;
+        bool ok = InjectDllIntoProcess(pid, dllPath, &err);
         CloseHandle(process);
-
-        if (ok) {
-            g_gamePid = pid;
-            g_gameName = kGameProcess;
-            SetStatus(L"LuaAPI \u0432\u043D\u0435\u0434\u0440\u0451\u043D \u0432 \u0438\u0433\u0440\u0443!");
-            LogLine(L"Injected into freshly spawned gamemd.exe");
-        }
+        if (ok) { foundPid = pid; injected = true; LogLine(L"Injected into freshly spawned gamemd.exe"); }
+        else { foundPid = pid; }
         break;
     }
+    PostMessageW(hwnd, WM_APP_LAUNCH_DONE, (WPARAM)injected, (LPARAM)foundPid);
 }
 
 void DoInjectAttach() {
@@ -513,15 +543,26 @@ std::vector<std::wstring> LoadActiveModIds(const std::wstring& exeDir) {
     std::vector<std::wstring> ids;
     std::ifstream file(exeDir + L"\\scripts\\active_mods.txt");
     std::string line;
+    bool first = true;
     while (std::getline(file, line)) {
-        while (!line.empty() && (line.back() == '\r' || line.back() == ' '))
+        if (first) {
+            first = false;
+            if (line.size() >= 3 && (unsigned char)line[0]==0xEF && (unsigned char)line[1]==0xBB && (unsigned char)line[2]==0xBF)
+                line.erase(0,3);
+        }
+        while (!line.empty() && (line.back() == '\r' || line.back() == ' ' || line.back() == '\t'))
             line.pop_back();
-        size_t start = line.find_first_not_of(' ');
+        size_t start = line.find_first_not_of(" \t");
         if (start == std::string::npos)
             continue;
         if (line[start] == '#')
             continue;
-        ids.push_back(std::wstring(line.begin() + start, line.end()));
+        // trim end already done, extract id
+        std::string id = line.substr(start);
+        // trim trailing spaces inside id
+        size_t end = id.find_last_not_of(" \t");
+        if (end != std::string::npos) id = id.substr(0, end+1);
+        ids.push_back(std::wstring(id.begin(), id.end()));
     }
     return ids;
 }
@@ -566,6 +607,7 @@ void ScanMods() {
     g_mods.clear();
     g_scroll = 0;
     std::wstring exeDir = GetExeDirectory();
+    auto activeIds = LoadActiveModIds(exeDir);
 
     WIN32_FIND_DATAW fd{};
     HANDLE find = FindFirstFileW((exeDir + L"\\scripts\\mods\\*").c_str(), &fd);
@@ -614,7 +656,7 @@ void ScanMods() {
         if (entry.author.empty())
             entry.author = L"unknown";
 
-        for (const auto& id : LoadActiveModIds(exeDir)) {
+        for (const auto& id : activeIds) {
             if (_wcsicmp(entry.id.c_str(), id.c_str()) == 0) {
                 entry.enabled = true;
                 break;
@@ -647,9 +689,11 @@ void SaveMods() {
         }
     }
     out.flush();
-
+    out.close();
+    g_dirty = false;
     g_appState = AppState::Ready;
-    SetStatusKey(StatusKey::Ready);
+    ShowToast(L10N(L"\u2713 \u0421\u043E\u0445\u0440\u0430\u043D\u0435\u043D\u043E", L"\u2713 Saved"));
+    // toast timer will revert to Ready after 2s, just invalidate now
     InvalidateRect(g_hwnd, nullptr, TRUE);
 }
 
@@ -663,15 +707,13 @@ int EnabledModCount() {
 std::vector<std::pair<size_t, size_t>> DetectConflicts() {
     std::vector<std::pair<size_t, size_t>> hits;
     for (size_t i = 0; i < g_mods.size(); ++i) {
-        if (!g_mods[i].enabled)
-            continue;
-        for (size_t j = 0; j < g_mods.size(); ++j) {
-            if (i == j || !g_mods[j].enabled)
-                continue;
-            for (const auto& c : g_mods[i].conflicts) {
-                if (_wcsicmp(c.c_str(), g_mods[j].id.c_str()) == 0)
-                    hits.emplace_back(i, j);
-            }
+        if (!g_mods[i].enabled) continue;
+        for (size_t j = i + 1; j < g_mods.size(); ++j) {
+            if (!g_mods[j].enabled) continue;
+            bool conflict = false;
+            for (const auto& c : g_mods[i].conflicts) if (_wcsicmp(c.c_str(), g_mods[j].id.c_str())==0) { conflict = true; break; }
+            if (!conflict) for (const auto& c : g_mods[j].conflicts) if (_wcsicmp(c.c_str(), g_mods[i].id.c_str())==0) { conflict = true; break; }
+            if (conflict) hits.emplace_back(i, j);
         }
     }
     return hits;
@@ -743,11 +785,8 @@ void PaintAll(HDC dc) {
     GetCursorPos(&cursor);
     ScreenToClient(g_hwnd, &cursor);
 
-    // Compute usable mod area height, accounting for scroll
-    int listHeight = ListRect().bottom - ListRect().top;
-    int totalModHeight = static_cast<int>(g_mods.size()) * 70; // 62 + 8 padding
-    int maxScroll = std::max(0, totalModHeight - listHeight);
-    g_scroll = std::max(0, std::min(g_scroll, maxScroll));
+    // Scroll already clamped in ClampScroll(), just use it
+    // (paint stays pure)
 
     // Empty state UX: show hint when no mods detected
     if (g_mods.empty()) {
@@ -811,49 +850,75 @@ void PaintAll(HDC dc) {
             if (k + 1 < conflicts.size())
                 warning += L";  ";
         }
-        // Place banner just above the footer, with minimum spacing from mod list
-        int bannerTop = g_clientH - 92;
-        int bannerBottom = g_clientH - 68;
-        int listBottom = ListRect().bottom;
-        // Prevent banner from overlapping mod list - push above with minimum 8px gap
-        if (bannerTop > listBottom + 8) {
+        Layout bl = ComputeLayout(g_clientW, g_clientH);
+        int bannerTop = bl.bannerTop;
+        int bannerBottom = bl.bannerBottom;
+        int listBottom = bl.list.bottom;
+        if (bannerTop < listBottom + 8) { // ensure gap from list
             bannerTop = listBottom + 8;
             bannerBottom = bannerTop + 24;
         }
-        // Ensure banner doesn't go above the mod section header area
-        int modSectionTop = g_rcLaunch.bottom + 16;
+        int modSectionTop = bl.launch.bottom + 16;
         if (bannerTop < modSectionTop) {
             bannerTop = modSectionTop;
             bannerBottom = bannerTop + 24;
+        }
+        // clamp banner inside footer area
+        if (bannerBottom > g_clientH - kPad - 38) {
+            bannerBottom = g_clientH - kPad - 38;
+            bannerTop = bannerBottom - 24;
         }
         DrawTextR(dc, warning, RECT{kPad, bannerTop, w - kPad, bannerBottom}, g_fontSmall, kOrange);
     }
 
     // ---- Footer ----
-    // Active count above conflict banner
-    int footerTop = g_clientH - 136;
-    int footerBottom = g_clientH - 92;
+    Layout fl = ComputeLayout(g_clientW, g_clientH);
     DrawTextR(dc, Str_ActiveCount(EnabledModCount(), static_cast<int>(g_mods.size())),
-              RECT{kPad, footerTop, 280, footerBottom}, g_fontReg, kDim);
+              RECT{kPad, fl.footerTop, 280, fl.footerBottom}, g_fontReg, kDim);
 
-    // Save button - sync g_rcSave with clamped visual position so hover/hit-test matches paint
-    int saveTop = g_clientH - 55;
-    int saveBottom = g_clientH - 17;
-    int bannerBottom = g_clientH - 68;
-    if (saveTop < bannerBottom + 8) {
-        saveTop = bannerBottom + 8;
-        saveBottom = saveTop + 38;
+    // Save button is already computed in ComputeLayout and synced in RecalcLayout/Clamp
+    // Apply same clamping as layout to handle banner overlap, then sync global
+    {
+        Layout sl = ComputeLayout(g_clientW, g_clientH);
+        int saveTop = sl.save.top, saveBottom = sl.save.bottom;
+        int bannerBottom = sl.bannerBottom;
+        if (saveTop < bannerBottom + 8) {
+            saveTop = bannerBottom + 8;
+            saveBottom = saveTop + 38;
+        }
+        if (saveBottom > g_clientH - kPad) {
+            saveBottom = g_clientH - kPad;
+            saveTop = saveBottom - 38;
+        }
+        g_rcSave = RECT{ g_clientW - kPad - 200, saveTop, g_clientW - kPad, saveBottom };
     }
-    if (saveBottom > g_clientH - kPad) {
-        saveBottom = g_clientH - kPad;
-        saveTop = saveBottom - 38;
+    // Dim save button when launching
+    COLORREF saveFill = g_launching ? kBadge : (g_hoverSave ? kGreenHover : kGreen);
+    if (g_launching) {
+        // still draw but with disabled look
     }
-    // Update global rect so hit-testing (OnLeftDown / WM_MOUSEMOVE) matches what we draw
-    g_rcSave = RECT{ g_clientW - kPad - 200, saveTop, g_clientW - kPad, saveBottom };
-    COLORREF saveFill = g_hoverSave ? kGreenHover : kGreen;
     FillRoundRect(dc, g_rcSave, saveFill, 10);
-    DrawTextR(dc, Str_SaveBtn(), g_rcSave, g_fontHeader, kText,
+    DrawTextR(dc, Str_SaveBtn(), g_rcSave, g_fontHeader, g_launching ? kDim : kText,
               DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+
+    // ---- Minimal scrollbar (6px, dark theme) ----
+    {
+        Layout l = ComputeLayout(g_clientW, g_clientH);
+        int listHeight = l.list.bottom - l.list.top;
+        int totalModHeight = static_cast<int>(g_mods.size()) * 70;
+        if (totalModHeight > listHeight) {
+            int maxScroll = totalModHeight - listHeight;
+            int trackH = listHeight - 8;
+            int trackX = l.list.right - 6;
+            int trackY = l.list.top + 4;
+            // track
+            FillRoundRect(dc, RECT{trackX, trackY, trackX+6, trackY+trackH}, kBadge, 3);
+            // thumb
+            int thumbH = std::max(20, trackH * listHeight / totalModHeight);
+            int thumbY = trackY + (maxScroll ? (g_scroll * (trackH - thumbH) / maxScroll) : 0);
+            FillRoundRect(dc, RECT{trackX, thumbY, trackX+6, thumbY+thumbH}, kDim, 3);
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -872,9 +937,11 @@ POINT CursorInClient() {
 void OnLeftDown(POINT pt) {
     if (PointIn(g_rcLang, pt)) {
         g_isRussian = !g_isRussian;
+        SavePrefs();
         InvalidateRect(g_hwnd, nullptr, TRUE);
         return;
     }
+    if (g_launching) return; // disable clicks while launching
     if (PointIn(g_rcLaunch, pt)) { DoLaunchGame(); return; }
     if (PointIn(g_rcInject, pt)) { DoInjectAttach(); return; }
     if (PointIn(g_rcSave, pt)) { SaveMods(); return; }
@@ -889,6 +956,7 @@ void OnLeftDown(POINT pt) {
         RECT card{ kPad, yPos, ListRect().right - kPad, yPos + 62 };
         if (PointIn(box, pt) || PointIn(card, pt)) {
             m.enabled = !m.enabled;
+            g_dirty = true;
             InvalidateRect(g_hwnd, nullptr, TRUE);
             return;
         }
@@ -900,14 +968,13 @@ void OnLeftDown(POINT pt) {
 
 
 void RecalcLayout() {
-    int w = g_clientW;
-    int h = g_clientH;
-
-    int btnWidth = (w - kPad * 2 - 12) / 2;
-    g_rcLaunch = RECT{ kPad, 96, kPad + btnWidth, 140 };
-    g_rcInject = RECT{ kPad + btnWidth + 12, 96, w - kPad, 140 };
-    g_rcSave = RECT{ w - kPad - 200, h - 55, w - kPad, h - 17 };
-    g_rcLang = RECT{ w - 110, 16, w - 20, 44 };
+    Layout l = ComputeLayout(g_clientW, g_clientH);
+    g_rcLaunch = l.launch;
+    g_rcInject = l.inject;
+    g_rcLang = l.lang;
+    g_rcSave = l.save;
+    // keep clamped
+    ClampScroll();
 }
 
 LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
@@ -916,7 +983,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         BOOL dark = TRUE;
         DwmSetWindowAttribute(hwnd, 20, &dark, sizeof(dark));
         DwmSetWindowAttribute(hwnd, 19, &dark, sizeof(dark));
-        // Initialize layout before first paint - WM_SIZE may not fire before WM_PAINT on some DPIs
+        LoadPrefs();
         RECT rc; GetClientRect(hwnd, &rc);
         g_clientW = rc.right - rc.left; g_clientH = rc.bottom - rc.top;
         if (g_clientW == 0) g_clientW = kDefaultClientW;
@@ -930,22 +997,32 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         g_clientW = LOWORD(lParam);
         g_clientH = HIWORD(lParam);
         RecalcLayout();
+        ClampScroll();
         InvalidateRect(hwnd, nullptr, TRUE);
         return 0;
     case WM_MOUSEMOVE: {
         POINT pt{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
-        bool hL = PointIn(g_rcLaunch, pt);
-        bool hI = PointIn(g_rcInject, pt);
-        bool hS = PointIn(g_rcSave, pt);
+        bool hL = (!g_launching) && PointIn(g_rcLaunch, pt);
+        bool hI = (!g_launching) && PointIn(g_rcInject, pt);
+        bool hS = (!g_launching) && PointIn(g_rcSave, pt);
         bool hG = PointIn(g_rcLang, pt);
-        bool overList = pt.y > ListRect().top && pt.y < ListRect().bottom;
+        bool overList = false;
+        // Only invalidate overList if it changes hover state of cards - throttle
         if ((hL != g_hoverLaunch) || (hI != g_hoverInject) ||
-            (hS != g_hoverSave) || (hG != g_hoverLang) || overList) {
+            (hS != g_hoverSave) || (hG != g_hoverLang)) {
             g_hoverLaunch = hL;
             g_hoverInject = hI;
             g_hoverSave = hS;
             g_hoverLang = hG;
             InvalidateRect(hwnd, nullptr, TRUE);
+        } else {
+            // check card hover without invalidating every move: only if scroll or card under cursor changed
+            static int lastHoverIdx = -1;
+            int idx = -1;
+            RECT list = ListRect();
+            int yPos = list.top + 4 - g_scroll;
+            for (size_t i=0;i<g_mods.size();++i){ RECT card{ kPad, yPos, list.right - kPad, yPos + 62 }; if (PointIn(card, pt)) { idx=(int)i; break; } yPos+=70; }
+            if (idx != lastHoverIdx) { lastHoverIdx = idx; InvalidateRect(hwnd, nullptr, TRUE); }
         }
         if (!g_trackingMouse) {
             TRACKMOUSEEVENT tme{ sizeof(tme), TME_LEAVE, hwnd, 0 };
@@ -961,11 +1038,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         return 0;
     case WM_MOUSEWHEEL: {
         int delta = GET_WHEEL_DELTA_WPARAM(wParam);
-        int listHeight = ListRect().bottom - ListRect().top;
-        int totalModHeight = static_cast<int>(g_mods.size()) * 70;
-        int maxScroll = std::max(0, totalModHeight - listHeight);
-        g_scroll -= delta / WHEEL_DELTA * 40;
-        g_scroll = std::max(0, std::min(g_scroll, maxScroll));
+        // high-res wheel: use delta directly, 40px per notch
+        g_scroll -= delta * 40 / WHEEL_DELTA;
+        ClampScroll();
         InvalidateRect(hwnd, nullptr, TRUE);
         return 0;
     }
@@ -1001,7 +1076,54 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         mmi->ptMinTrackSize.y = 520;
         return 0;
     }
+    case WM_TIMER:
+        if (wParam == kToastTimerId) {
+            KillTimer(hwnd, kToastTimerId);
+            SetStatusKey(StatusKey::Ready);
+        }
+        return 0;
+    case WM_APP_LAUNCH_DONE: {
+        g_launching = false;
+        bool ok = (bool)wParam;
+        DWORD pid = (DWORD)lParam;
+        if (ok && pid) {
+            g_gamePid = pid; g_gameName = kGameProcess;
+            g_appState = AppState::Injected; SetStatusKey(StatusKey::Injected);
+        } else if (pid) {
+            g_gamePid = pid; g_appState = AppState::StatusError; SetStatusKey(StatusKey::InjectFail);
+        } else {
+            g_appState = AppState::StatusError; SetStatusKey(StatusKey::NotFound);
+        }
+        InvalidateRect(hwnd, nullptr, TRUE);
+        return 0;
+    }
+    case WM_CLOSE: {
+        if (g_dirty) {
+            // silent auto-save per spec (no MessageBox)
+            SaveMods();
+        }
+        DestroyWindow(hwnd);
+        return 0;
+    }
+    case WM_DPICHANGED: {
+        // wParam loword = new DPI x, hiword = y
+        RECT* const prc = reinterpret_cast<RECT*>(lParam);
+        // Recreate fonts scaled to new DPI
+        int dpi = HIWORD(wParam);
+        if (dpi==0) dpi=96;
+        DeleteObject(g_fontTitle); DeleteObject(g_fontHeader); DeleteObject(g_fontReg); DeleteObject(g_fontSmall);
+        g_fontTitle = CreateFontW(-MulDiv(16, dpi, 72), 0,0,0,FW_BOLD, FALSE,FALSE,FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH|FF_DONTCARE, L"Segoe UI");
+        g_fontHeader= CreateFontW(-MulDiv(11, dpi, 72),0,0,0,FW_SEMIBOLD,FALSE,FALSE,FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH|FF_DONTCARE, L"Segoe UI");
+        g_fontReg   = CreateFontW(-MulDiv(12, dpi, 72),0,0,0,FW_NORMAL,FALSE,FALSE,FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH|FF_DONTCARE, L"Segoe UI");
+        g_fontSmall = CreateFontW(-MulDiv(10, dpi, 72),0,0,0,FW_NORMAL,FALSE,FALSE,FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH|FF_DONTCARE, L"Segoe UI");
+        g_clientW = prc->right - prc->left; g_clientH = prc->bottom - prc->top;
+        RecalcLayout(); ClampScroll();
+        SetWindowPos(hwnd, nullptr, prc->left, prc->top, g_clientW, g_clientH, SWP_NOZORDER|SWP_NOACTIVATE);
+        InvalidateRect(hwnd, nullptr, TRUE);
+        return 0;
+    }
     case WM_DESTROY:
+        KillTimer(hwnd, kToastTimerId);
         PostQuitMessage(0);
         return 0;
     default:
