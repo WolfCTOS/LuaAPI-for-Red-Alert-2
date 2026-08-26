@@ -1,6 +1,7 @@
 #include <LuaAPI/bindings_techno.hpp>
 #include <LuaAPI/bindings_house.hpp>
 #include <LuaAPI/logger.hpp>
+#include "sub_turret.h"
 
 extern "C" {
 #include <lua.h>
@@ -488,6 +489,84 @@ int game_GetUnitsInRadius(lua_State* L) {
     return 1;
 }
 
+// === Gate 10: Multi-Turret System ===
+
+// techno:AddSubTurret(section, offX, offY, offZ, rot, rof) -> bool
+int Techno_AddSubTurret(lua_State* L) {
+    auto* pTechno = CheckTechno(L, 1);
+    if (!ValidateTechno(pTechno)) { lua_pushboolean(L, 0); return 1; }
+    int section = (int)luaL_checkinteger(L, 2);
+    int offX = (int)luaL_checkinteger(L, 3);
+    int offY = (int)luaL_checkinteger(L, 4);
+    int offZ = (int)luaL_checkinteger(L, 5);
+    int rot = luaL_optinteger(L, 6, 8);
+    int rof = luaL_optinteger(L, 7, 45);
+    bool ok = SubTurretManager::Instance().AddTurret(pTechno, section, offX, offY, offZ, rot, rof);
+    lua_pushboolean(L, ok ? 1 : 0);
+    return 1;
+}
+// techno:GetSubTurretCount() -> int
+int Techno_GetSubTurretCount(lua_State* L) {
+    auto* pTechno = CheckTechno(L, 1);
+    if (!ValidateTechno(pTechno)) { lua_pushinteger(L, 0); return 1; }
+    auto* v = SubTurretManager::Instance().GetTurrets(pTechno);
+    lua_pushinteger(L, v ? (lua_Integer)v->size() : 0);
+    return 1;
+}
+// techno:GetSubTurret(idx) -> table or nil
+int Techno_GetSubTurret(lua_State* L) {
+    auto* pTechno = CheckTechno(L, 1);
+    if (!ValidateTechno(pTechno)) { lua_pushnil(L); return 1; }
+    int idx = (int)luaL_checkinteger(L, 2); // 1-based
+    auto* v = SubTurretManager::Instance().GetTurrets(pTechno);
+    if (!v || idx < 1 || idx > (int)v->size()) { lua_pushnil(L); return 1; }
+    auto& d = (*v)[idx-1];
+    lua_createtable(L, 0, 9);
+    lua_pushinteger(L, d.voxelSection); lua_setfield(L, -2, "section");
+    lua_pushinteger(L, d.offset.X); lua_setfield(L, -2, "offX");
+    lua_pushinteger(L, d.offset.Y); lua_setfield(L, -2, "offY");
+    lua_pushinteger(L, d.offset.Z); lua_setfield(L, -2, "offZ");
+    lua_pushinteger(L, d.facing); lua_setfield(L, -2, "facing");
+    lua_pushinteger(L, d.targetFacing); lua_setfield(L, -2, "targetFacing");
+    lua_pushinteger(L, d.rot); lua_setfield(L, -2, "rot");
+    lua_pushinteger(L, d.rofTimer); lua_setfield(L, -2, "rofTimer");
+    lua_pushinteger(L, d.baseRof); lua_setfield(L, -2, "baseRof");
+    return 1;
+}
+// techno:SetSubTurretTarget(idx, target) -> bool
+int Techno_SetSubTurretTarget(lua_State* L) {
+    auto* pTechno = CheckTechno(L, 1);
+    if (!ValidateTechno(pTechno)) { lua_pushboolean(L, 0); return 1; }
+    int idx = (int)luaL_checkinteger(L, 2);
+    void* ud = luaL_testudata(L, 3, kMetaName);
+    TechnoClass* pTarget = ud ? *static_cast<TechnoClass**>(ud) : nullptr;
+    if (pTarget && !ValidateTechno(pTarget)) pTarget = nullptr;
+    auto* v = SubTurretManager::Instance().GetTurrets(pTechno);
+    if (!v || idx < 1 || idx > (int)v->size()) { lua_pushboolean(L, 0); return 1; }
+    (*v)[idx-1].target = pTarget;
+    lua_pushboolean(L, 1);
+    return 1;
+}
+// techno:FireSubTurret(idx, target) -> bool
+int Techno_FireSubTurret(lua_State* L) {
+    auto* pTechno = CheckTechno(L, 1);
+    if (!ValidateTechno(pTechno)) { lua_pushboolean(L, 0); return 1; }
+    int idx = (int)luaL_checkinteger(L, 2);
+    void* ud = luaL_testudata(L, 3, kMetaName);
+    TechnoClass* pTarget = ud ? *static_cast<TechnoClass**>(ud) : nullptr;
+    if (!pTarget || !ValidateTechno(pTarget)) { lua_pushboolean(L, 0); return 1; }
+    bool ok = SubTurretManager::Instance().FireTurret(pTechno, (size_t)(idx-1), pTarget);
+    lua_pushboolean(L, ok ? 1 : 0);
+    return 1;
+}
+// techno:ClearSubTurrets() -> nil
+int Techno_ClearSubTurrets(lua_State* L) {
+    auto* pTechno = CheckTechno(L, 1);
+    if (!ValidateTechno(pTechno)) return 0;
+    SubTurretManager::Instance().RemoveTechno(pTechno);
+    return 0;
+}
+
 const luaL_Reg kTechnoMethods[] = {
     { "GetTypeName",   Techno_GetTypeName   },
     { "GetHealth",     Techno_GetHealth     },
@@ -506,6 +585,12 @@ const luaL_Reg kTechnoMethods[] = {
     { "Disable",       Techno_Disable       },
     { "SetHealthRatio", Techno_SetHealthRatio },
     { "AttachParticleSystem", Techno_AttachParticleSystem },
+    { "AddSubTurret", Techno_AddSubTurret },
+    { "GetSubTurretCount", Techno_GetSubTurretCount },
+    { "GetSubTurret", Techno_GetSubTurret },
+    { "SetSubTurretTarget", Techno_SetSubTurretTarget },
+    { "FireSubTurret", Techno_FireSubTurret },
+    { "ClearSubTurrets", Techno_ClearSubTurrets },
     { nullptr, nullptr }
 };
 

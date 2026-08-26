@@ -6,6 +6,7 @@
 #include <MinHook.h>
 
 #include "hook_profiler.h"
+#include "sub_turret.h"
 
 extern "C" {
 #include <lua.h>
@@ -294,6 +295,7 @@ void OnGameFrame() {
         return;
 
     LuaAPI::ProcessDisabledObjects(Unsorted::CurrentFrame);
+    LuaAPI::SubTurretManager::Instance().UpdateAll();
 
     // Fire pre-damage callbacks registered by mods (OnPreDamage).
     if (g_L && g_scriptReady) {
@@ -406,6 +408,9 @@ void ResetSession() {
         luaL_unref(g_L, LUA_REGISTRYINDEX, ref);
     }
     g_preDamageCallbackRefs.clear();
+
+    // 1b. Clear sub-turret state
+    LuaAPI::SubTurretManager::Instance().ClearAll();
 
     // 2. Reset the Lua VM state for a new match.
     if (g_L) {
