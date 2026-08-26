@@ -5,7 +5,7 @@
 - **Phase 2: Alpha-1 - Core Lifecycle & Safety (Milestone 6)** -> [x] DONE / VERIFIED
 - **Phase 3: Alpha-2 - Spatial Queries & Extended Events (Milestone 7)** -> [x] DONE / VERIFIED
 - **Phase 4: Beta - Feature Freeze & Stress Hardening (Milestone 8)** -> [x] DONE / VERIFIED
-- **Phase 5: Production Release v1.0 (Milestone 9)** -> [ ] PLANNED
+- **Phase 5: Production Release v1.0 (Milestone 9)** -> [x] DONE / VERIFIED
 
 ---
 
@@ -94,11 +94,12 @@
 ### [ ] Milestone 9: Production Release v1.0
 > **Why Milestone 9:** Р¤РёРЅР°Р»СЊРЅС‹Р№ РїСѓР±Р»РёС‡РЅС‹Р№ РІС‹С…РѕРґ РїР»Р°С‚С„РѕСЂРјС‹ РІ РјРёСЂРѕРІРѕРµ СЃРѕРѕР±С‰РµСЃС‚РІРѕ C&C СЃ РіРѕС‚РѕРІС‹РјРё РёРЅСЃС‚СЂСѓРјРµРЅС‚Р°РјРё, РёРЅР¶РµРєС‚РѕСЂРѕРј Рё РґРѕРєСѓРјРµРЅС‚Р°С†РёРµР№.
 
-- [ ] **Gate 9.1: Public Release Package (v1.0.0 Stable ZIP)**
+- [x] **Gate 9.1: Public Release Package (v1.0.0 Stable ZIP)**
   - *Why:* РџСѓР±Р»РёРєР°С†РёСЏ РіРѕС‚РѕРІРѕРіРѕ Р°СЂС…РёРІР° СЃ Р±РёРЅР°СЂРЅРёРєР°РјРё, Р»Р°СѓРЅС‡РµСЂРѕРј Рё СЃС‚Р°СЂС‚РѕРІС‹РјРё РјРѕРґР°РјРё РЅР° GitHub Releases Рё ModDB.
-- [ ] **Gate 9.2: Community Showcase Announcement (Haven & PPM)**
+- [x] **Gate 9.2: Community Showcase Announcement (Haven & PPM)**
   - *Why:* РћС„РёС†РёР°Р»СЊРЅР°СЏ РїСЂРµР·РµРЅС‚Р°С†РёСЏ РїР»Р°С‚С„РѕСЂРјС‹ РјРѕРґРґРµСЂР°Рј СЃ РґРµРјРѕРЅСЃС‚СЂР°С†РёРµР№ СЂРµС€РµРЅРёСЏ РїСЂРѕР±Р»РµРјС‹ `0xC0000005` Рё Р±РµРЅС‡РјР°СЂРєР°РјРё РїСЂРѕРёР·РІРѕРґРёС‚РµР»СЊРЅРѕСЃС‚Рё.
 
 -\s\[ \] Gate 8\.3: CnCNet ModBase Native Integration
+
 
 
