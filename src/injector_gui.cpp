@@ -160,8 +160,9 @@ Layout ComputeLayout(int w, int h) {
     l.launch = RECT{ kPad, 96, kPad + btnWidth, 140 };
     l.inject = RECT{ kPad + btnWidth + 12, 96, w - kPad, 140 };
     l.lang   = RECT{ w - 110, 16, w - 20, 44 };
-    // list area sits between buttons and footer
-    l.list   = RECT{ kPad, kPad * 2, w - kPad, h - kPad * 3 - 80 };
+    // list area строго ПОД заголовком секции "МОДЫ" (g_rcLaunch.bottom+36), не перекрывает кнопки
+    int sectionBottom = l.launch.bottom + 36; // y=176 при дефолте
+    l.list   = RECT{ kPad, sectionBottom + 8, w - kPad, h - kPad * 3 - 80 };
     l.footerTop = h - 136; l.footerBottom = h - 92;
     l.bannerTop = h - 92; l.bannerBottom = h - 68;
     l.save = RECT{ w - kPad - 200, h - 55, w - kPad, h - 17 };
@@ -776,69 +777,71 @@ void PaintAll(HDC dc) {
     DrawTextR(dc, Str_ModsHeader(), RECT{kPad, g_rcLaunch.bottom + 16, 260, g_rcLaunch.bottom + 36},
               g_fontSmall, kDim);
 
-    // ---- Mod cards ----
-    RECT list = ListRect();
-    SaveDC(dc);
-    IntersectClipRect(dc, list.left, list.top, list.right, list.bottom);
+    // ---- Mod cards ---- (СТРОГО внутри маски списка)
+    Layout l = ComputeLayout(g_clientW, g_clientH);
+    // Сохраняем контекст и ставим жесткую маску отсечения по границам списка
+    int savedDC = SaveDC(dc);
+    IntersectClipRect(dc, l.list.left, l.list.top, l.list.right, l.list.bottom);
 
     POINT cursor;
     GetCursorPos(&cursor);
     ScreenToClient(g_hwnd, &cursor);
 
-    // Scroll already clamped in ClampScroll(), just use it
-    // (paint stays pure)
-
-    // Empty state UX: show hint when no mods detected
+    // Empty state UX: show hint when no mods detected (внутри маски)
     if (g_mods.empty()) {
         DrawTextR(dc, L10N(L"Моды не найдены — поместите папки в scripts/mods/", L"No mods found — place folders in scripts/mods/"),
-                  RECT{kPad, ListRect().top + 20, g_clientW - kPad, ListRect().top + 44}, g_fontSmall, kDim, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+                  RECT{kPad, l.list.top + 20, g_clientW - kPad, l.list.top + 44}, g_fontSmall, kDim, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
     }
 
-    int yPos = ListRect().top + 4 - g_scroll;
-    for (auto& m : g_mods) {
-        // Stop drawing if we've moved past the visible area
-        if (yPos > ListRect().bottom + 70) break;
+    // Отрисовка карточек модов с учетом скролла
+    int yPos = l.list.top + 4 - g_scroll;
+    for (size_t i = 0; i < g_mods.size(); ++i) {
+        auto& m = g_mods[i];
+        // Рисуем только если карточка попадает в видимую область списка
+        if (yPos + 70 >= l.list.top && yPos <= l.list.bottom) {
+            RECT card{ kPad, yPos, l.list.right - kPad, yPos + 62 };
+            // Clamp card to list rectangle (на случай частичной видимости)
+            if (card.right > l.list.right) card.right = l.list.right;
+            if (card.bottom > l.list.bottom) card.bottom = l.list.bottom;
+            if (card.top < l.list.top) card.top = l.list.top;
+            bool hovered = PtInRect(&card, cursor);
 
-        RECT card{ kPad, yPos, ListRect().right - kPad, yPos + 62 };
-        // Clamp card to list rectangle
-        if (card.right > ListRect().right) card.right = ListRect().right;
-        if (card.bottom > ListRect().bottom) card.bottom = ListRect().bottom;
-        bool hovered = PtInRect(&card, cursor);
+            FillRoundRect(dc, card, hovered ? kHover : kSurface, 10,
+                          m.enabled ? kGreen : kBadge, m.enabled);
 
-        FillRoundRect(dc, card, hovered ? kHover : kSurface, 10,
-                      m.enabled ? kGreen : kBadge, m.enabled);
+            RECT box{ card.left + 12, card.top + 12, card.left + 30, card.top + 30 };
+            FillRoundRect(dc, box, m.enabled ? kGreen : kBg, 4, m.enabled ? kGreen : kBadge, true);
+            if (m.enabled) {
+                HFONT old = static_cast<HFONT>(SelectObject(dc, g_fontReg));
+                SetTextColor(dc, kText);
+                SetBkMode(dc, TRANSPARENT);
+                DrawTextW(dc, L"[x]", -1, &box, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+                SelectObject(dc, old);
+            }
 
-        RECT box{ card.left + 12, card.top + 12, card.left + 30, card.top + 30 };
-        FillRoundRect(dc, box, m.enabled ? kGreen : kBg, 4, m.enabled ? kGreen : kBadge, true);
-        if (m.enabled) {
-            HFONT old = static_cast<HFONT>(SelectObject(dc, g_fontReg));
-            SetTextColor(dc, kText);
-            SetBkMode(dc, TRANSPARENT);
-            DrawTextW(dc, L"[x]", -1, &box, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-            SelectObject(dc, old);
+            int tx = card.left + 42;
+            DrawTextR(dc, m.name, RECT{tx, card.top + 8, tx + 200, card.top + 30}, g_fontHeader, kText);
+
+            std::wstring badge = L"[v" + m.version + L"]";
+            HFONT measureFont = static_cast<HFONT>(SelectObject(dc, g_fontSmall));
+            SIZE sz{};
+            GetTextExtentPoint32W(dc, badge.c_str(), static_cast<int>(badge.size()), &sz);
+            SelectObject(dc, measureFont);
+            RECT badgeRc{ tx + 200, card.top + 11, tx + 208 + sz.cx, card.top + 29 };
+            FillRoundRect(dc, badgeRc, kBadge, 6);
+            DrawTextR(dc, badge, badgeRc, g_fontSmall, kText, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+
+            DrawTextR(dc, L"by " + m.author, RECT{badgeRc.right + 8, card.top + 11, card.right - 10, card.top + 29},
+                      g_fontSmall, kDim);
+
+            DrawTextR(dc, m.description, RECT{tx, card.top + 34, card.right - 12, card.bottom - 6},
+                      g_fontSmall, kDim, DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS);
         }
-
-        int tx = card.left + 42;
-        DrawTextR(dc, m.name, RECT{tx, card.top + 8, tx + 200, card.top + 30}, g_fontHeader, kText);
-
-        std::wstring badge = L"[v" + m.version + L"]";
-        HFONT measureFont = static_cast<HFONT>(SelectObject(dc, g_fontSmall));
-        SIZE sz{};
-        GetTextExtentPoint32W(dc, badge.c_str(), static_cast<int>(badge.size()), &sz);
-        SelectObject(dc, measureFont);
-        RECT badgeRc{ tx + 200, card.top + 11, tx + 208 + sz.cx, card.top + 29 };
-        FillRoundRect(dc, badgeRc, kBadge, 6);
-        DrawTextR(dc, badge, badgeRc, g_fontSmall, kText, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-
-        DrawTextR(dc, L"by " + m.author, RECT{badgeRc.right + 8, card.top + 11, card.right - 10, card.top + 29},
-                  g_fontSmall, kDim);
-
-        DrawTextR(dc, m.description, RECT{tx, card.top + 34, card.right - 12, card.bottom - 6},
-                  g_fontSmall, kDim, DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS);
-
         yPos += 70;
     }
-    RestoreDC(dc, -1);
+
+    // Восстанавливаем контекст (снимаем маску отсечения)
+    RestoreDC(dc, savedDC);
 
 // ---- Conflict banner ----
     auto conflicts = DetectConflicts();
