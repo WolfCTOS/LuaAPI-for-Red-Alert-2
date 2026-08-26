@@ -1,8 +1,8 @@
-# LuaAPI for Red Alert 2 — Yuri's Revenge
+﻿# LuaAPI for Red Alert 2 — Yuri's Revenge
 
 A high-performance, native x86 runtime that injects a **Lua 5.4 scripting engine** into `gamemd.exe` (Yuri's Revenge 1.001). It enables complex, dynamic gameplay mechanics, reactive inbound events, and stateful mod logic to be written in pure Lua with **zero engine overhead** (< 0.01 FPS delta).
 
-> **Status:** `v0.1.0-Alpha` (Milestone 6: Lifecycle Hardening, RTTI Pointer Safety & Core Gameplay API).  
+> **Status:** `v1.0.0 Production Release` (All Milestones 1–9 Verified & Benchmarked).  
 > **Compatibility:** Singleplayer, Skirmish, and CnCNet Multiplayer (Deterministic RNG).
 
 ---
