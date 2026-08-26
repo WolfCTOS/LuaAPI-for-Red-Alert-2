@@ -4,7 +4,7 @@
 - **Phase 1: Proof of Concept & MVP (Milestones 1вЂ“5)** -> [x] DONE / VERIFIED
 - **Phase 2: Alpha-1 - Core Lifecycle & Safety (Milestone 6)** -> [x] DONE / VERIFIED
 - **Phase 3: Alpha-2 - Spatial Queries & Extended Events (Milestone 7)** -> [x] DONE / VERIFIED
-- **Phase 4: Beta - Feature Freeze & Stress Hardening (Milestone 8)** -> [ ] IN PROGRESS (Gate 8.1 Passed)
+- **Phase 4: Beta - Feature Freeze & Stress Hardening (Milestone 8)** -> [x] DONE / VERIFIED
 - **Phase 5: Production Release v1.0 (Milestone 9)** -> [ ] PLANNED
 
 ---
@@ -86,7 +86,7 @@
   - *Why:* РЎС‚РѕСЂРѕРЅРЅРёРµ РјРѕРґРґРµСЂС‹ РЅРµ РјРѕРіСѓС‚ СЂР°Р·СЂР°Р±Р°С‚С‹РІР°С‚СЊ РјРѕРґС‹ РІСЃР»РµРїСѓСЋ. РќРµРѕР±С…РѕРґРёРј РїРѕР»РЅС‹Р№ СЃРїСЂР°РІРѕС‡РЅРёРє РІСЃРµС… С„СѓРЅРєС†РёР№, СЃРёРіРЅР°С‚СѓСЂ, С‚РёРїРѕРІ Рё СЃРЅРёРїРїРµС‚РѕРІ.
 - [x] **Gate 8.3: CnCNet ModBase Native Integration**
   - *Why:* РћР±РµСЃРїРµС‡РёРІР°РµС‚ РІРѕР·РјРѕР¶РЅРѕСЃС‚СЊ РІРЅРµРґСЂРµРЅРёСЏ `LuaAPI.dll` РІ РєСЂСѓРїРЅС‹Рµ РјРѕРґРїР°РєРё (DTA, Mental Omega) С‡РµСЂРµР· РїСЂРѕР·СЂР°С‡РЅС‹Р№ Р·Р°РїСѓСЃРє Р±РµР· РІСЃРїР»С‹РІР°СЋС‰РёС… РѕРєРѕРЅ.
-- [ ] **Gate 8.4: Feature Freeze & API Stabilization**
+- [x] **Gate 8.4: Feature Freeze & API Stabilization**
   - *Why:* Р¤РёРєСЃР°С†РёСЏ СЃРёРіРЅР°С‚СѓСЂ РІСЃРµС… С„СѓРЅРєС†РёР№ Lua, РіР°СЂР°РЅС‚РёСЂСѓСЋС‰Р°СЏ, С‡С‚Рѕ РјРѕРґС‹, СЃРѕР·РґР°РЅРЅС‹Рµ СЃРµРіРѕРґРЅСЏ, РЅРµ СЃР»РѕРјР°СЋС‚СЃСЏ РІ Р±СѓРґСѓС‰РёС… РІРµСЂСЃРёСЏС… РґРІРёР¶РєР°.
 
 ---
@@ -100,4 +100,5 @@
   - *Why:* РћС„РёС†РёР°Р»СЊРЅР°СЏ РїСЂРµР·РµРЅС‚Р°С†РёСЏ РїР»Р°С‚С„РѕСЂРјС‹ РјРѕРґРґРµСЂР°Рј СЃ РґРµРјРѕРЅСЃС‚СЂР°С†РёРµР№ СЂРµС€РµРЅРёСЏ РїСЂРѕР±Р»РµРјС‹ `0xC0000005` Рё Р±РµРЅС‡РјР°СЂРєР°РјРё РїСЂРѕРёР·РІРѕРґРёС‚РµР»СЊРЅРѕСЃС‚Рё.
 
 -\s\[ \] Gate 8\.3: CnCNet ModBase Native Integration
+
 
