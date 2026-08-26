@@ -7,6 +7,7 @@
 - **Phase 3: Alpha-2 - Spatial Queries & Extended Events (Milestone 7)** -> [x] DONE / VERIFIED
 - **Phase 4: Beta - Feature Freeze & Stress Hardening (Milestone 8)** -> [x] DONE / VERIFIED
 - **Phase 5: Production Release v1.0 (Milestone 9)** -> [x] DONE / VERIFIED
+- **Phase 6: Multi-Turret & Advanced Combat Systems (Milestone 10)** -> [ ] IN PROGRESS
 
 ---
 
@@ -106,3 +107,18 @@
   - *Why:* Publishes a pre-compiled binary package with the GUI launcher and sample mods on GitHub Releases.
 - [x] **Gate 9.2: Community Showcase Announcement (Haven & PPM)**
   - *Why:* Official announcement presenting the platform, the `0xC0000005` crash prevention architecture, and hardware performance benchmarks.
+
+---
+
+### [ ] Milestone 10: Multi-Turret & Advanced Combat Systems (v1.1) (CURRENT)
+
+> **Why Milestone 10:** In vanilla RA2/YR, `TechnoClass` is hardcoded to a single primary turret and one target. This milestone breaks that 25-year limitation, enabling capital ships and heavy combat vehicles to engage multiple ground, air, and naval targets simultaneously with independent 3D voxel turret rotations.
+
+- [ ] **Gate 10.1: Sub-Turret Memory Model & State Lifecycle**
+  - *Why:* A safe C++ sidecar container attached to `TechnoClass*` storing sub-turret state (facing, target, ROF timer, weapon type, 3D offset) with automatic cleanup on unit destruction.
+- [ ] **Gate 10.2: Independent Targeting & Combat Dispatch**
+  - *Why:* Enables per-turret/per-slot target acquisition (AG vs AA vs AS) with smooth Rate-of-Turn (ROT) angle stepping and native `BulletClass::Create` projectile spawning.
+- [ ] **Gate 10.3: Voxel Matrix Rendering Hook (3D Sub-Turret Drawing)**
+  - *Why:* Hooks into `TechnoClass::Draw` to compute `Matrix3D` transformations for each sub-turret, rendering distinct 3D voxel sections rotated towards their specific targets during hull movement.
+- [ ] **Gate 10.4: Lua Multi-Turret API & Showcase Mod (`multi_turret_battleship`)**
+  - *Why:* Exposes high-level bindings (`unit:AddSubTurret`, `unit:SetSubTurretTarget`, `unit:FireSubTurret`) and validates a 3-turret capital ship engaging multiple targets in real combat.
