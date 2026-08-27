@@ -94,7 +94,7 @@ function OnTick(frame)
 
     -- Wrap each mod.Update in wall-clock timing
     for idx, mod in ipairs(loadedMods) do
-        if type(mod.Update) == "function" then
+        if mod and type(mod.Update) == "function" then
             local modName = ACTIVE_MODS[idx]
             local start = os.clock()
             local ok, err = pcall(mod.Update, frame)
