@@ -57,8 +57,12 @@ static void ProcessSpawnedMissiles(TechnoClass* pTechno) {
     SpawnManagerClass* pSpawn = pTechno->SpawnManager;
     if (!pSpawn || pSpawn->SpawnedNodes.Count < 2) return;
 
-    // Главная цель корабля (куда игрок отдал приказ атаки).
-    AbstractClass* primaryTarget = pTechno->Target;
+    // Главная цель: у первого уже летящего узла берём его собственную цель,
+    // а при её отсутствии — цель самого корабля (куда игрок отдал приказ атаки).
+    SpawnControl* node0 = pSpawn->SpawnedNodes.GetItem(0);
+    if (!node0 || !node0->Unit || !IsValidTechno(node0->Unit)) return;
+
+    AbstractClass* primaryTarget = node0->Unit->Target ? node0->Unit->Target : pTechno->Target;
     if (!primaryTarget) return;
 
     CoordStruct targetPos;
@@ -97,19 +101,20 @@ static void ProcessSpawnedMissiles(TechnoClass* pTechno) {
     if (!secondaryTarget) return;
 
     // Ракета №1 летит в главную цель; ракета №2 (node[1]), уже в воздухе, перенаправляется.
-    for (int i = 0; i < pSpawn->SpawnedNodes.Count; ++i) {
-        SpawnControl* node = pSpawn->SpawnedNodes.GetItem(i);
-        if (!node || !node->Unit) continue;
-
-        AircraftClass* pMissile = node->Unit;
-        if (!IsValidTechno(pMissile)) continue;
+    SpawnControl* node1 = pSpawn->SpawnedNodes.GetItem(1);
+    if (node1 && node1->Unit && IsValidTechno(node1->Unit)) {
+        AircraftClass* pMissile = node1->Unit;
 
         // Вторая ракета, находящаяся в полёте (взлёт/атака) на цель.
-        if (i == 1 && (node->Status == SpawnNodeStatus::TakeOff ||
-                       node->Status == SpawnNodeStatus::Attacking)) {
+        if (node1->Status == SpawnNodeStatus::TakeOff ||
+            node1->Status == SpawnNodeStatus::Attacking) {
             __try {
                 // Перенаправляем только если снаряд всё ещё летит в главную цель.
+                // ВАЖНО: обновляем цель у самого юнита (в этой сборке у SpawnControl
+                // нет поля Target — цель узла хранится в node->Unit->Target), иначе
+                // нативный SpawnManagerClass::Update() перезапишет её обратно на primary.
                 if (pMissile->Target != secondaryTarget) {
+                    pMissile->Target = secondaryTarget;
                     pMissile->SetTarget(secondaryTarget);
                     pMissile->SetDestination(secondaryTarget, true);
                 }
