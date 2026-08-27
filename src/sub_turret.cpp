@@ -314,6 +314,8 @@ void SubTurretManager::ManagePrimaryAttackTarget(TechnoClass* pTechno) {
         }
         if (asTechno && IsValidTechno(asTechno) && asTechno != cached) {
             m_primaryAttackTarget[pTechno] = asTechno;
+            LUA_LOG_INFO("[PrimaryTarget] '{}' accepted new order -> '{}'",
+                         SafeTechnoId(pTechno), SafeTechnoId(asTechno));
         }
         return;
     }
@@ -341,6 +343,8 @@ void SubTurretManager::ManagePrimaryAttackTarget(TechnoClass* pTechno) {
         pTechno->Target = cached;
         pTechno->QueueMission(Mission::Attack, false);
         pTechno->NextMission();
+        LUA_LOG_INFO("[PrimaryTarget] '{}' Rearm/Guard drift detected -> forcing back to '{}'",
+                     SafeTechnoId(pTechno), SafeTechnoId(cached));
     } __except (EXCEPTION_EXECUTE_HANDLER) {
     }
 }
