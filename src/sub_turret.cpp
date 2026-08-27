@@ -120,12 +120,15 @@ static void ProcessSpawnedMissiles(TechnoClass* pTechno) {
         return;
     }
 
-    constexpr int kSplitSearchRadius = 12 * 256;       // радиус поиска 12 клеток
-    constexpr int kSplitSearchRadiusSq = kSplitSearchRadius * kSplitSearchRadius;
+    constexpr long long kSplitSearchRadius = 12LL * 256;     // радиус поиска 12 клеток
+    constexpr long long kSplitSearchRadiusSq = kSplitSearchRadius * kSplitSearchRadius;
 
     // Ищем ближайшего соседнего врага вокруг главной цели.
+    // ВАЖНО: координаты в лептонах; квадрат разности на больших картах превышает 2^31,
+    // поэтому считаем в 64-битном — иначе переполнение signed int даёт отрицательный `d`
+    // и поиск цели ломается (см. постмортем "Integer Overflow in Distance Math").
     TechnoClass* secondaryTarget = nullptr;
-    int bestDistSq = kSplitSearchRadiusSq;
+    long long bestDistSq = kSplitSearchRadiusSq;
     for (int i = 0; i < TechnoClass::Array.Count; ++i) {
         TechnoClass* candidate = TechnoClass::Array.GetItem(i);
         if (!candidate || !IsValidTechno(candidate)) continue;
@@ -138,9 +141,9 @@ static void ProcessSpawnedMissiles(TechnoClass* pTechno) {
         __except (EXCEPTION_EXECUTE_HANDLER) { ok = false; }
         if (!ok) continue;
 
-        int dx = cPos.X - targetPos.X;
-        int dy = cPos.Y - targetPos.Y;
-        int d = dx * dx + dy * dy;
+        long long dx = static_cast<long long>(cPos.X) - targetPos.X;
+        long long dy = static_cast<long long>(cPos.Y) - targetPos.Y;
+        long long d = dx * dx + dy * dy;
         if (d <= kSplitSearchRadiusSq && d < bestDistSq) {
             bestDistSq = d;
             secondaryTarget = candidate;
