@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include <YRPP.h>
 #include <vector>
 #include <unordered_map>
@@ -7,13 +7,13 @@
 namespace LuaAPI {
 
 struct SubTurretData {
-    int voxelSection = 1;        // Индекс секции в .vxl (1, 2, 3...)
-    CoordStruct offset{0, 0, 0}; // 3D-оффсет в лептонах
-    int facing = 0;              // Текущий угол (0..255)
-    int targetFacing = 0;        // Целевой угол на цель (0..255)
-    int rot = 8;                 // Скорость поворота
-    int rofTimer = 0;            // Кулдаун
-    int baseRof = 45;            // Базовая перезарядка
+    int voxelSection = 1;
+    CoordStruct offset{0, 0, 0};
+    int facing = 0;
+    int targetFacing = 0;
+    int rot = 12;
+    int rofTimer = 0;
+    int baseRof = 30;
     TechnoClass* target = nullptr;
 };
 
@@ -37,8 +37,8 @@ public:
 
 private:
     std::unordered_map<TechnoClass*, std::vector<SubTurretData>> m_turrets;
-    bool m_isUpdating = false;
     std::vector<TechnoClass*> m_pendingRemovals;
+    bool m_isUpdating = false;
 };
 
 } // namespace LuaAPI

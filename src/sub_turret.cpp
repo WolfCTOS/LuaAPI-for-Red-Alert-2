@@ -1,4 +1,7 @@
-﻿#include "sub_turret.h"
+#include "sub_turret.h"
+
+#include <SpawnManagerClass.h>
+#include <AircraftClass.h>
 
 namespace LuaAPI {
 
@@ -18,7 +21,6 @@ static bool IsValidTechno(TechnoClass* ptr) {
         if (!ptr->IsAlive || ptr->Health <= 0 || ptr->InLimbo) return false;
         return true;
     } __except (EXCEPTION_EXECUTE_HANDLER) {
-        // Если объект уже разрушен в памяти и vtable стёрта — безопасно возвращаем false
         return false;
     }
 }
@@ -29,6 +31,7 @@ static bool IsValidTechno(TechnoClass* ptr) {
 static bool SafeComputeAim(TechnoClass* pTarget, const CoordStruct& myPos,
                            int currentFacing, int* pDesiredFacing, int* pDiff) {
     if (!pTarget || !pDesiredFacing || !pDiff) return false;
+
     __try {
         CoordStruct targetPos = pTarget->GetCoords();
         double dx = static_cast<double>(targetPos.X - myPos.X);
@@ -40,6 +43,79 @@ static bool SafeComputeAim(TechnoClass* pTarget, const CoordStruct& myPos,
         return true;
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return false;
+    }
+}
+
+// ==== Разделение залпа для НАСТОЯЩИХ физических ракет (SpawnManager) ====
+// Дредноут (DMISL) и Авианосец (HORNET) через SpawnManagerClass запускают реальные
+// летающие снаряды/истребители. Ракета №1 летит в главную цель, а ракета №2
+// перенаправляется на ближайшего соседнего врага вокруг главной цели (радиус 12 клеток).
+static void ProcessSpawnedMissiles(TechnoClass* pTechno) {
+    if (!pTechno || !IsValidTechno(pTechno)) return;
+
+    // Проверяем, есть ли у корабля менеджер ракет (Дредноут / Авианосец).
+    SpawnManagerClass* pSpawn = pTechno->SpawnManager;
+    if (!pSpawn || pSpawn->SpawnedNodes.Count < 2) return;
+
+    // Главная цель корабля (куда игрок отдал приказ атаки).
+    AbstractClass* primaryTarget = pTechno->Target;
+    if (!primaryTarget) return;
+
+    CoordStruct targetPos;
+    __try {
+        targetPos = primaryTarget->GetCoords();
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return;
+    }
+
+    constexpr int kSplitSearchRadius = 12 * 256;       // радиус поиска 12 клеток
+    constexpr int kSplitSearchRadiusSq = kSplitSearchRadius * kSplitSearchRadius;
+
+    // Ищем ближайшего соседнего врага вокруг главной цели.
+    TechnoClass* secondaryTarget = nullptr;
+    int bestDistSq = kSplitSearchRadiusSq;
+    for (int i = 0; i < TechnoClass::Array.Count; ++i) {
+        TechnoClass* candidate = TechnoClass::Array.GetItem(i);
+        if (!candidate || !IsValidTechno(candidate)) continue;
+        if (candidate == primaryTarget || candidate == pTechno) continue;
+        if (candidate->Owner == pTechno->Owner) continue;
+
+        CoordStruct cPos;
+        bool ok = false;
+        __try { cPos = candidate->GetCoords(); ok = true; }
+        __except (EXCEPTION_EXECUTE_HANDLER) { ok = false; }
+        if (!ok) continue;
+
+        int dx = cPos.X - targetPos.X;
+        int dy = cPos.Y - targetPos.Y;
+        int d = dx * dx + dy * dy;
+        if (d <= kSplitSearchRadiusSq && d < bestDistSq) {
+            bestDistSq = d;
+            secondaryTarget = candidate;
+        }
+    }
+    if (!secondaryTarget) return;
+
+    // Ракета №1 летит в главную цель; ракета №2 (node[1]), уже в воздухе, перенаправляется.
+    for (int i = 0; i < pSpawn->SpawnedNodes.Count; ++i) {
+        SpawnControl* node = pSpawn->SpawnedNodes.GetItem(i);
+        if (!node || !node->Unit) continue;
+
+        AircraftClass* pMissile = node->Unit;
+        if (!IsValidTechno(pMissile)) continue;
+
+        // Вторая ракета, находящаяся в полёте (взлёт/атака) на цель.
+        if (i == 1 && (node->Status == SpawnNodeStatus::TakeOff ||
+                       node->Status == SpawnNodeStatus::Attacking)) {
+            __try {
+                // Перенаправляем только если снаряд всё ещё летит в главную цель.
+                if (pMissile->Target != secondaryTarget) {
+                    pMissile->SetTarget(secondaryTarget);
+                    pMissile->SetDestination(secondaryTarget, true);
+                }
+            } __except (EXCEPTION_EXECUTE_HANDLER) {
+            }
+        }
     }
 }
 
@@ -76,7 +152,7 @@ std::vector<SubTurretData>* SubTurretManager::GetTurrets(TechnoClass* pTechno) {
 
 void SubTurretManager::RemoveTechno(TechnoClass* pTechno) {
     if (!pTechno) return;
-    
+
     // Мгновенная глобальная инвалидация целей
     InvalidateTargetGlobally(pTechno);
 
@@ -107,8 +183,8 @@ void SubTurretManager::ClearAll() {
 void SubTurretManager::UpdateAll() {
     m_isUpdating = true;
 
-    // Башни создаются ТОЛЬКО из Lua (AddSubTurret / auto-attach через мод).
-    // Здесь движок лишь обслуживает уже зарегистрированные башни.
+    // 1. Обслуживание суб-турелей (создаются ИСКЛЮЧИТЕЛЬНО из Lua):
+    //    только кулдаун и плавное вращение. Выбор цели и стрельба — из Lua.
     std::vector<TechnoClass*> activeUnits;
     activeUnits.reserve(m_turrets.size());
     for (const auto& pair : m_turrets) {
@@ -126,13 +202,12 @@ void SubTurretManager::UpdateAll() {
         for (size_t tIdx = 0; tIdx < turrets->size(); ++tIdx) {
             auto& turret = (*turrets)[tIdx];
 
-            // 1. Кулдаун перезарядки
+            // Кулдаун перезарядки
             if (turret.rofTimer > 0) {
                 turret.rofTimer--;
             }
 
-            // 2. Плавное вращение facing в сторону targetFacing со скоростью rot.
-            //    Выбор цели и стрельба выполняются ИСКЛЮЧИТЕЛЬНО из Lua.
+            // Плавное вращение facing в сторону targetFacing со скоростью rot.
             if (turret.target && IsValidTechno(turret.target)) {
                 int desiredFacing = 0;
                 int diff = 0;
@@ -151,6 +226,14 @@ void SubTurretManager::UpdateAll() {
                     turret.target = nullptr;
                 }
             }
+        }
+    }
+
+    // 2. Перехват запущенных физических ракет/истребителей всех кораблей со SpawnManager.
+    for (int i = 0; i < TechnoClass::Array.Count; ++i) {
+        TechnoClass* pObj = TechnoClass::Array.GetItem(i);
+        if (pObj && IsValidTechno(pObj) && pObj->SpawnManager) {
+            ProcessSpawnedMissiles(pObj);
         }
     }
 
@@ -188,7 +271,7 @@ bool SubTurretManager::FireTurret(TechnoClass* pTechno, size_t turretIndex, Tech
     __try {
         // Проверяем результат выстрела: если цель погибла (NowDead/Dead) — МГНОВЕННЫЙ BAIL!
         DamageState result = pTarget->ReceiveDamage(&damage, 0, pWH, pTechno, false, false, pTechno->Owner);
-        
+
         // Если цель уничтожена (Health <= 0 или DamageState == Dead) — мгновенно инвалидируем её у ВСЕХ турелей!
         if (result == DamageState::NowDead || !IsValidTechno(pTarget)) {
             InvalidateTargetGlobally(pTarget);
