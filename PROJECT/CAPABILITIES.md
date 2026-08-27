@@ -102,6 +102,7 @@ Verification Status: [x] VERIFIED (damaged_fleet mod)
     Hook into OnScenarioStart (fires on frame 1 immediately after map load).
     Query naval units via house:GetUnits() or area coordinates.
     Assign fractional health via unit:SetHealthRatio(0.35) and attach real particle systems via unit:AttachParticleSystem("DamageSmokeSys").
+    
 ⚠️ Hard Lessons Learned:
     Do not initialize on Frame 0 before Scenario Init: Querying unit arrays before ScenarioClass::Instance has finished loading causes pointers to uninitialized map memory. Always hook into the post-load OnScenarioStart event.
 
