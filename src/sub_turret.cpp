@@ -266,18 +266,13 @@ bool SubTurretManager::FireTurret(TechnoClass* pTechno, size_t turretIndex, Tech
 
     turret.rofTimer = turret.baseRof;
 
-    // Корабль с ракетным спавном (Дредноут/Авианосец): НЕ наносим скрытый урон через
-    // ReceiveDamage. Вместо этого отдаём РОДНОЙ нативный боевой приказ, чтобы корабль
-    // открыл люки шахт, проиграл анимацию/звук и физически выпустил ракеты (DMISL/HORNET).
+    // Корабль с ракетным спавном (Дредноут/Авианосец): НЕ вызываем ReceiveDamage и не
+    // наносим мгновенный урон вручную — иначе получим ДВОЙНОЙ урон (double damage).
+    // Урон наносят только сами летающие ракеты (DMISL/HORNET) при физическом падении
+    // на цель. Здесь лишь выставляем кулдаун; нативный боевой приказ выдаёт
+    // FireSplitSalvo(), а перехват разделения ракет делает ProcessSpawnedMissiles().
     if (pTechno->SpawnManager) {
-        __try {
-            pTechno->SetTarget(pTarget);
-            pTechno->SetDestination(pTarget, true);
-            pTechno->QueueMission(Mission::Attack, true);
-            return true;
-        } __except (EXCEPTION_EXECUTE_HANDLER) {
-            return false;
-        }
+        return true;
     }
 
     // Обычная башня без ракетного спавна: мгновенный урон по готовности.
