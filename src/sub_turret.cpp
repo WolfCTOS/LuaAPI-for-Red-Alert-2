@@ -146,24 +146,35 @@ static void ProcessSpawnedMissiles(TechnoClass* pTechno) {
         return;
     }
 
-    // Полное перенаведение локомотора ракеты (RocketLocomotor): обновляем не только
-    // указатель Target, но и целевые 3D-координаты полёта. Это заставляет DMISL
-    // физически перепроложить кривую и развернуться в воздухе к новой цели.
-    // ПРИМЕЧАНИЕ: в этой YRpp-сборке нет методов Assign_Target / Assign_Destination —
-    // их нативными эквивалентами являются TechnoClass::SetTarget (vtable 0x6FCDB0)
-    // и TechnoClass::SetDestination; принудительный пересчёт миссии — QueueMission.
+    // ОТВЯЗКА ракеты №2 от родительского SpawnManager: нативный SpawnManagerClass::AI()
+    // каждый кадр принудительно перезаписывает Destination/Target всех запущенных ракет
+    // обратно на главную цель (Owner->Target), из-за чего наш выбор второй цели тут же
+    // сбрасывается движком на первое здание. Поэтому отвязываем ракету и отдаём ей
+    // независимый боевой приказ.
+    // ПРИМЕЧАНИЕ: методов Assign_Target / Assign_Destination в этой сборке НЕТ — их
+    // нативными эквивалентами являются TechnoClass::SetTarget (vtable 0x6FCDB0) и
+    // TechnoClass::SetDestination; принудительный пересчёт миссии — QueueMission.
     __try {
+        // 1. Отвязываем ракету от родительского SpawnManager, чтобы он не сбрасывал её координаты!
+        pMissile->SpawnOwner = nullptr;
+        node1->Unit = nullptr;                   // менеджер больше не управляет этой ракетой
+        // Слот без юнита: Dead (respawning) — безопасное "вакантное" состояние,
+        // чтобы AI менеджера не пытался запустить нулевой юнит (Idle подразумевает
+        // припаркованный юнит и рискован бы).
+        node1->Status = SpawnNodeStatus::Dead;
+
+        // 2. Назначаем вторую цель и отдаём независимый боевой приказ.
         CoordStruct newDest = secondaryTarget->GetCoords();
         pMissile->Target = secondaryTarget;
         pMissile->SetTarget(secondaryTarget);
         pMissile->SetDestination(secondaryTarget, true);
         pMissile->QueueMission(Mission::Attack, false);
 
-        LUA_LOG_INFO("[SplitMissile] '{}' redirected missile#2 'DMISL' -> '{}' (dist {:.1f} cells)",
-                     SafeTechnoId(pTechno), SafeTechnoId(secondaryTarget),
+        LUA_LOG_INFO("[SplitMissile] Decoupled missile #2 from SpawnManager -> attacking '{}' independently (dist {:.1f} cells)!",
+                     SafeTechnoId(secondaryTarget),
                      std::sqrt(static_cast<double>(bestDistSq)) / 256.0);
     } __except (EXCEPTION_EXECUTE_HANDLER) {
-        LUA_LOG_WARN("[SplitMissile] '{}' SEH while redirecting missile#2",
+        LUA_LOG_WARN("[SplitMissile] '{}' SEH while decoupling missile#2",
                      SafeTechnoId(pTechno));
     }
 }
