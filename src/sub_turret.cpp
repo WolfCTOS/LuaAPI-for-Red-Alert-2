@@ -241,6 +241,7 @@ void SubTurretManager::RemoveTechno(TechnoClass* pTechno) {
 
     // Мгновенная глобальная инвалидация целей
     InvalidateTargetGlobally(pTechno);
+    m_primaryAttackTarget.erase(pTechno);
 
     if (m_isUpdating) {
         m_pendingRemovals.push_back(pTechno);
@@ -258,12 +259,90 @@ void SubTurretManager::InvalidateTargetGlobally(TechnoClass* pDeadTarget) {
             }
         }
     }
+    // Чистим кэш главных целей: мёртвый таргет или мёртвый корабль-владелец.
+    for (auto cit = m_primaryAttackTarget.begin(); cit != m_primaryAttackTarget.end();) {
+        if (cit->first == pDeadTarget || cit->second == pDeadTarget) {
+            cit = m_primaryAttackTarget.erase(cit);
+        } else {
+            ++cit;
+        }
+    }
 }
 
 void SubTurretManager::ClearAll() {
     m_turrets.clear();
     m_pendingRemovals.clear();
+    m_primaryAttackTarget.clear();
     m_isUpdating = false;
+}
+
+// Персистентная фиксация главной цели атаки (Dreadnought / Aircraft-carrier).
+// Нативный AI после расхода боезапаса (Rearm/Guard) перебирает ближайшую цель и может
+// переключить корабль на соседнее здание. Мы храним явно заданную игроком цель и, пока
+// она жива, возвращаем корабль на неё. Записи в кэш делаются ВНЕ __try, чтобы C++-исключения
+// (аллокация unordered_map) не пересекали SEH-блоки.
+void SubTurretManager::ManagePrimaryAttackTarget(TechnoClass* pTechno) {
+    if (!pTechno) return;
+
+    // --- Защищённое чтение миссии и текущей цели ---
+    Mission mission = Mission::None;
+    AbstractClass* pCurrent = nullptr;
+    __try {
+        mission = pTechno->CurrentMission;
+        pCurrent = pTechno->Target;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return;
+    }
+
+    auto it = m_primaryAttackTarget.find(pTechno);
+    TechnoClass* cached = (it != m_primaryAttackTarget.end()) ? it->second : nullptr;
+
+    // 1. Корабль в состоянии атаки: принимаем его текущую цель как явный приказ игрока
+    //    (сигнал «игрок отдал новый приказ атаки») и обновляем кэш.
+    if (mission == Mission::Attack) {
+        TechnoClass* asTechno = nullptr;
+        if (pCurrent) {
+            int what = -1;
+            __try { what = static_cast<int>(pCurrent->WhatAmI()); }
+            __except (EXCEPTION_EXECUTE_HANDLER) { return; }
+            if (what == static_cast<int>(AbstractType::Building) ||
+                what == static_cast<int>(AbstractType::Unit) ||
+                what == static_cast<int>(AbstractType::Infantry) ||
+                what == static_cast<int>(AbstractType::Aircraft)) {
+                asTechno = static_cast<TechnoClass*>(pCurrent);
+            }
+        }
+        if (asTechno && IsValidTechno(asTechno) && asTechno != cached) {
+            m_primaryAttackTarget[pTechno] = asTechno;
+        }
+        return;
+    }
+
+    // 2. Возврат на закэшированную цель — только в Guard/Sleep (то самое окно Rearm,
+    //    когда нативный AI пытается перецелиться). Прочие миссии не трогаем.
+    if (mission != Mission::Guard && mission != Mission::Sleep) {
+        return;
+    }
+
+    // 3. Кэш пуст — форсить нечего.
+    if (!cached) return;
+
+    // 4. Закэшированная цель мертва/невалидна — очищаем запись; юнит вправе сам выбрать цель.
+    if (!IsValidTechno(cached)) {
+        m_primaryAttackTarget.erase(pTechno);
+        return;
+    }
+
+    // 5. Корабль и так смотрит на закэшированную цель — ничего не делаем.
+    if (pCurrent == cached) return;
+
+    // 6. Живая закэшированная цель, а корабль смотрит на другую — принудительно возвращаем.
+    __try {
+        pTechno->Target = cached;
+        pTechno->QueueMission(Mission::Attack, false);
+        pTechno->NextMission();
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    }
 }
 
 void SubTurretManager::UpdateAll() {
@@ -278,7 +357,10 @@ void SubTurretManager::UpdateAll() {
     }
 
     for (TechnoClass* pTechno : activeUnits) {
-        if (!IsValidTechno(pTechno)) continue;
+        if (!IsValidTechno(pTechno)) {
+            m_primaryAttackTarget.erase(pTechno);   // корабль уничтожен — чистим кэш
+            continue;
+        }
 
         auto* turrets = GetTurrets(pTechno);
         if (!turrets) continue;
@@ -313,6 +395,9 @@ void SubTurretManager::UpdateAll() {
                 }
             }
         }
+
+        // 3. Персистентная фиксация главной цели атаки (возврат после Rearm/Guard).
+        ManagePrimaryAttackTarget(pTechno);
     }
 
     // 2. Перехват запущенных физических ракет/истребителей всех кораблей со SpawnManager.

@@ -39,6 +39,14 @@ private:
     std::unordered_map<TechnoClass*, std::vector<SubTurretData>> m_turrets;
     std::vector<TechnoClass*> m_pendingRemovals;
     bool m_isUpdating = false;
+
+    // Явно назначенная игроком главная цель атаки по каждому кораблю с суб-турелями.
+    // Храним её персистентно между циклами перезарядки (Rearm), чтобы нативный AI не
+    // переключал Дредноут/Авианосец на ближайшее соседнее здание после расхода боезапаса.
+    std::unordered_map<TechnoClass*, TechnoClass*> m_primaryAttackTarget;
+
+    // Фиксирует/восстанавливает главную цель атаки корабля (вызывается из UpdateAll).
+    void ManagePrimaryAttackTarget(TechnoClass* pTechno);
 };
 
 } // namespace LuaAPI
