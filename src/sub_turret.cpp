@@ -1,5 +1,6 @@
 #include "sub_turret.h"
 
+#include <LuaAPI/logger.hpp>
 #include <SpawnManagerClass.h>
 #include <AircraftClass.h>
 
@@ -22,6 +23,24 @@ static bool IsValidTechno(TechnoClass* ptr) {
         return true;
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return false;
+    }
+}
+
+// Безопасное получение строкового ID цели для подробного логирования.
+// Никогда не разыменовывает ненадёжные указатели за пределами __try.
+static const char* SafeTechnoId(AbstractClass* pObj) {
+    if (!pObj) return "nil";
+    __try {
+        auto what = pObj->WhatAmI();
+        if (what == AbstractType::Building ||
+            what == AbstractType::Unit ||
+            what == AbstractType::Infantry ||
+            what == AbstractType::Aircraft) {
+            return static_cast<TechnoClass*>(pObj)->GetType()->get_ID();
+        }
+        return "cell/other";
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return "?";
     }
 }
 
@@ -57,13 +76,34 @@ static void ProcessSpawnedMissiles(TechnoClass* pTechno) {
     SpawnManagerClass* pSpawn = pTechno->SpawnManager;
     if (!pSpawn || pSpawn->SpawnedNodes.Count < 2) return;
 
+    // Обе ракеты/истребителя залпа.
+    auto* node0 = pSpawn->SpawnedNodes.GetItem(0);
+    auto* node1 = pSpawn->SpawnedNodes.GetItem(1);
+    if (!node0 || !node1 || !node0->Unit || !node1->Unit) return;
+    if (!IsValidTechno(node0->Unit) || !IsValidTechno(node1->Unit)) return;
+
+    // Перехватываем ракеты СТРОГО во время старта из шахты (TakeOff) — на выходе
+    // из люка, пока цель у снаряда ещё только формируется. В полёте (Attacking) уже
+    // не вмешиваемся, чтобы не бороться с нативным приказом.
+    const bool node0Launch = (node0->Status == SpawnNodeStatus::TakeOff);
+    const bool node1Launch = (node1->Status == SpawnNodeStatus::TakeOff);
+    if (!node0Launch && !node1Launch) {
+        return;
+    }
+
+    LUA_LOG_INFO("[SplitMissile] '{}' launch gate: node0={} node1={} (spawned {})",
+                 SafeTechnoId(pTechno),
+                 static_cast<int>(node0->Status), static_cast<int>(node1->Status),
+                 pSpawn->SpawnedNodes.Count);
+
     // Главная цель: у первого уже летящего узла берём его собственную цель,
     // а при её отсутствии — цель самого корабля (куда игрок отдал приказ атаки).
-    SpawnControl* node0 = pSpawn->SpawnedNodes.GetItem(0);
-    if (!node0 || !node0->Unit || !IsValidTechno(node0->Unit)) return;
-
     AbstractClass* primaryTarget = node0->Unit->Target ? node0->Unit->Target : pTechno->Target;
-    if (!primaryTarget) return;
+    if (!primaryTarget) {
+        LUA_LOG_WARN("[SplitMissile] '{}' has no primary target on launch; nothing to split",
+                     SafeTechnoId(pTechno));
+        return;
+    }
 
     CoordStruct targetPos;
     __try {
@@ -98,28 +138,32 @@ static void ProcessSpawnedMissiles(TechnoClass* pTechno) {
             secondaryTarget = candidate;
         }
     }
-    if (!secondaryTarget) return;
 
-    // Ракета №1 летит в главную цель; ракета №2 (node[1]), уже в воздухе, перенаправляется.
-    SpawnControl* node1 = pSpawn->SpawnedNodes.GetItem(1);
-    if (node1 && node1->Unit && IsValidTechno(node1->Unit)) {
+    if (!secondaryTarget) {
+        LUA_LOG_WARN("[SplitMissile] '{}' launch: no secondary target within 12 cells of '{}'; salvo stays single-target",
+                     SafeTechnoId(pTechno), SafeTechnoId(primaryTarget));
+        return;
+    }
+
+    // Перенаправляем вторую ракету (node[1]) строго на её взлёте из шахты.
+    if (node1->Status == SpawnNodeStatus::TakeOff) {
         AircraftClass* pMissile = node1->Unit;
-
-        // Вторая ракета, находящаяся в полёте (взлёт/атака) на цель.
-        if (node1->Status == SpawnNodeStatus::TakeOff ||
-            node1->Status == SpawnNodeStatus::Attacking) {
-            __try {
-                // Перенаправляем только если снаряд всё ещё летит в главную цель.
+        __try {
+            if (pMissile->Target != secondaryTarget) {
                 // ВАЖНО: обновляем цель у самого юнита (в этой сборке у SpawnControl
                 // нет поля Target — цель узла хранится в node->Unit->Target), иначе
                 // нативный SpawnManagerClass::Update() перезапишет её обратно на primary.
-                if (pMissile->Target != secondaryTarget) {
-                    pMissile->Target = secondaryTarget;
-                    pMissile->SetTarget(secondaryTarget);
-                    pMissile->SetDestination(secondaryTarget, true);
-                }
-            } __except (EXCEPTION_EXECUTE_HANDLER) {
+                pMissile->Target = secondaryTarget;
+                pMissile->SetTarget(secondaryTarget);
+                pMissile->SetDestination(secondaryTarget, true);
+                LUA_LOG_INFO("[SplitMissile] '{}' redirected missile#2 '{}' -> '{}' (dist {:.1f} cells)",
+                             SafeTechnoId(pTechno), SafeTechnoId(node0->Unit),
+                             SafeTechnoId(secondaryTarget),
+                             std::sqrt(static_cast<double>(bestDistSq)) / 256.0);
             }
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            LUA_LOG_WARN("[SplitMissile] '{}' SEH while redirecting missile#2",
+                         SafeTechnoId(pTechno));
         }
     }
 }
