@@ -264,6 +264,23 @@ bool SubTurretManager::FireTurret(TechnoClass* pTechno, size_t turretIndex, Tech
     auto& turret = (*turrets)[turretIndex];
     if (turret.rofTimer > 0) return false;
 
+    turret.rofTimer = turret.baseRof;
+
+    // Корабль с ракетным спавном (Дредноут/Авианосец): НЕ наносим скрытый урон через
+    // ReceiveDamage. Вместо этого отдаём РОДНОЙ нативный боевой приказ, чтобы корабль
+    // открыл люки шахт, проиграл анимацию/звук и физически выпустил ракеты (DMISL/HORNET).
+    if (pTechno->SpawnManager) {
+        __try {
+            pTechno->SetTarget(pTarget);
+            pTechno->SetDestination(pTarget, true);
+            pTechno->QueueMission(Mission::Attack, true);
+            return true;
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            return false;
+        }
+    }
+
+    // Обычная башня без ракетного спавна: мгновенный урон по готовности.
     WarheadTypeClass* pWH = WarheadTypeClass::Find("AP");
     if (!pWH && WarheadTypeClass::Array.Count > 0) {
         pWH = WarheadTypeClass::Array.GetItem(0);
@@ -271,7 +288,6 @@ bool SubTurretManager::FireTurret(TechnoClass* pTechno, size_t turretIndex, Tech
     if (!pWH) return false;
 
     int damage = 50;
-    turret.rofTimer = turret.baseRof;
 
     __try {
         // Проверяем результат выстрела: если цель погибла (NowDead/Dead) — МГНОВЕННЫЙ BAIL!
@@ -313,11 +329,31 @@ bool SubTurretManager::FireSplitSalvo(TechnoClass* pTechno) {
     auto* turrets = GetTurrets(pTechno);
     if (!turrets || turrets->empty()) return false;
 
+    // Дредноут / Авианосец (ракетный спавн): вместо скрытого урона через ReceiveDamage
+    // отдаём РОДНОЙ нативный боевой приказ атаки. Корабль открывает люки шахт и физически
+    // запускает залп ракет (DMISL / HORNET) со звуком и летящими снарядами.
+    if (pTechno->SpawnManager) {
+        for (size_t i = 0; i < turrets->size(); ++i) {
+            auto& turret = (*turrets)[i];
+            if (turret.target && IsValidTechno(turret.target)) {
+                __try {
+                    pTechno->SetTarget(turret.target);
+                    pTechno->SetDestination(turret.target, true);
+                    pTechno->QueueMission(Mission::Attack, true);
+                    return true;
+                } __except (EXCEPTION_EXECUTE_HANDLER) {
+                    return false;
+                }
+            }
+        }
+        return false;
+    }
+
+    // Обычные башни без ракетного спавна: принудительный пуск по назначенным целям.
     bool anyFired = false;
     for (size_t i = 0; i < turrets->size(); ++i) {
         auto& turret = (*turrets)[i];
         if (turret.target && IsValidTechno(turret.target)) {
-            // Принудительный пуск башни по своей назначенной цели
             if (FireTurret(pTechno, i, turret.target)) {
                 anyFired = true;
             }
