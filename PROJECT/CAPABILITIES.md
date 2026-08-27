@@ -48,25 +48,19 @@ function ShieldMod.OnRegister()
 end
 
 return ShieldMod
+```
 
 Case Study 2: Dynamic Bounties, Economy & HUD Feeds
-
-    Outcome: Real-time credit rewards awarded directly to the killer's treasury upon scoring hits or destroying targets, accompanied by standard in-game HUD alerts.
-
-    Why: Eliminates the need for dozens of complex FinalAlert2 triggers to track mission kills and economic rewards.
-
-    Verification Status: [x] VERIFIED (bounty_hunter mod)
+Outcome: Real-time credit rewards awarded directly to the killer's treasury upon scoring hits or destroying targets, accompanied by standard in-game HUD alerts.
+Why: Eliminates the need for dozens of complex FinalAlert2 triggers to track mission kills and economic rewards.
+Verification Status: [x] VERIFIED (bounty_hunter mod)
 
 🛠️ How It Works (Architecture)
-
     Subscribe to OnPreDamage or OnUnitDestroyed.
-
     Extract the attacker's HouseClass* via attacker:GetHouse().
-
     Safely mutate the economy balance via house_AddCredits(house, amount).
-
     Output real-time notifications to the player's message ticker via game_PrintMessage(text, color).
-```
+
 ⚠️ Hard Lessons Learned:
 Null Attacker Traps: When units die from map triggers, crushing, or environmental hazards, attacker can be nil. Always guard with if attacker and attacker:GetHouse() then before accessing house methods to avoid script aborts.
 📝 Lua Recipe:
