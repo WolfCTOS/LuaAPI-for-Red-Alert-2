@@ -82,26 +82,24 @@ static void ProcessSpawnedMissiles(TechnoClass* pTechno) {
     if (!node0 || !node1 || !node0->Unit || !node1->Unit) return;
     if (!IsValidTechno(node0->Unit) || !IsValidTechno(node1->Unit)) return;
 
-    // Перехватываем ракеты СТРОГО во время старта из шахты (TakeOff) — на выходе
-    // из люка, пока цель у снаряда ещё только формируется. В полёте (Attacking) уже
+    // Перехватываем ракету №2 СТРОГО на старте из шахты (TakeOff). В полёте (Attacking)
     // не вмешиваемся, чтобы не бороться с нативным приказом.
-    const bool node0Launch = (node0->Status == SpawnNodeStatus::TakeOff);
-    const bool node1Launch = (node1->Status == SpawnNodeStatus::TakeOff);
-    if (!node0Launch && !node1Launch) {
+    if (node1->Status != SpawnNodeStatus::TakeOff) {
         return;
     }
 
-    LUA_LOG_INFO("[SplitMissile] '{}' launch gate: node0={} node1={} (spawned {})",
-                 SafeTechnoId(pTechno),
-                 static_cast<int>(node0->Status), static_cast<int>(node1->Status),
-                 pSpawn->SpawnedNodes.Count);
+    AircraftClass* pMissile = node1->Unit;
 
     // Главная цель: у первого уже летящего узла берём его собственную цель,
     // а при её отсутствии — цель самого корабля (куда игрок отдал приказ атаки).
     AbstractClass* primaryTarget = node0->Unit->Target ? node0->Unit->Target : pTechno->Target;
-    if (!primaryTarget) {
-        LUA_LOG_WARN("[SplitMissile] '{}' has no primary target on launch; nothing to split",
-                     SafeTechnoId(pTechno));
+    if (!primaryTarget) return;
+
+    // Идемпотентность: ракета уже перенаправлена (её цель отличается от главной) —
+    // СРАЗУ выходим, не пересчитывая вторичную цель и не сбрасывая состояние локомотора.
+    // Статус TakeOff длится десятки кадров, поэтому без этого гарда мы бы спамили и
+    // перещёлкивали летящую ракету ~50 раз в секунду.
+    if (pMissile->Target && pMissile->Target != primaryTarget) {
         return;
     }
 
@@ -140,31 +138,29 @@ static void ProcessSpawnedMissiles(TechnoClass* pTechno) {
     }
 
     if (!secondaryTarget) {
-        LUA_LOG_WARN("[SplitMissile] '{}' launch: no secondary target within 12 cells of '{}'; salvo stays single-target",
-                     SafeTechnoId(pTechno), SafeTechnoId(primaryTarget));
         return;
     }
 
-    // Перенаправляем вторую ракету (node[1]) строго на её взлёте из шахты.
-    if (node1->Status == SpawnNodeStatus::TakeOff) {
-        AircraftClass* pMissile = node1->Unit;
-        __try {
-            if (pMissile->Target != secondaryTarget) {
-                // ВАЖНО: обновляем цель у самого юнита (в этой сборке у SpawnControl
-                // нет поля Target — цель узла хранится в node->Unit->Target), иначе
-                // нативный SpawnManagerClass::Update() перезапишет её обратно на primary.
-                pMissile->Target = secondaryTarget;
-                pMissile->SetTarget(secondaryTarget);
-                pMissile->SetDestination(secondaryTarget, true);
-                LUA_LOG_INFO("[SplitMissile] '{}' redirected missile#2 '{}' -> '{}' (dist {:.1f} cells)",
-                             SafeTechnoId(pTechno), SafeTechnoId(node0->Unit),
-                             SafeTechnoId(secondaryTarget),
-                             std::sqrt(static_cast<double>(bestDistSq)) / 256.0);
-            }
-        } __except (EXCEPTION_EXECUTE_HANDLER) {
-            LUA_LOG_WARN("[SplitMissile] '{}' SEH while redirecting missile#2",
-                         SafeTechnoId(pTechno));
-        }
+    // Доп. защита от повторов (на случай смены вторичной цели между кадрами).
+    if (pMissile->Target == secondaryTarget) {
+        return;
+    }
+
+    // Полное перенаведение локомотора ракеты (RocketLocomotor): обновляем не только
+    // указатель Target, но и целевые 3D-координаты полёта через SetDestination. Это
+    // заставляет DMISL физически развернуться в воздухе и лететь к новой цели.
+    __try {
+        CoordStruct newDest = secondaryTarget->GetCoords();
+        pMissile->Target = secondaryTarget;
+        pMissile->SetTarget(secondaryTarget);
+        pMissile->SetDestination(secondaryTarget, true);
+
+        LUA_LOG_INFO("[SplitMissile] '{}' split salvo: Missile #1 -> Primary, Missile #2 redirected -> '{}' at ({}, {})",
+                     SafeTechnoId(pTechno), SafeTechnoId(secondaryTarget),
+                     newDest.X / 256, newDest.Y / 256);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        LUA_LOG_WARN("[SplitMissile] '{}' SEH while redirecting missile#2",
+                     SafeTechnoId(pTechno));
     }
 }
 
