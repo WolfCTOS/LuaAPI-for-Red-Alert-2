@@ -83,3 +83,7 @@ When working on this codebase, **DO NOT REPEAT THESE MISTAKES**. Every one of th
 2. **Z-Mode Non-Linear Waypoint Interception:** Intercepting `PlanningModeClass` (Z-key) command buffer to route targets to `SetSplitTargets`.
 3. **Dynamic Salvo Convergence:** Automatic fallback where destroying Target A causes subsequent missile salvos to double-down on surviving Target B.
 4. **Milestone 11 (Tactical AI & Naval Intelligence):** `CellClass` water sampling, island detection, and dynamic build queue overrides for naval maps.
+### 8. The RocketLocomotor Pre-Computed Ballistic Spline Trap
+- **The Trap:** Attempting to steer an in-flight \DMISL\ missile by changing \pMissile->Target\, \SetDestination\, or calling \NextMission()\ during flight.
+- **The Reality:** \RocketLocomotor\ computes a rigid 3D Bezier curve \(t)\$ at the instant of initialization. During flight, it does not re-evaluate navigation targets.
+- **The Rule:** Target B must be bound to Node 1 *before* the trajectory spline is instantiated at launch, or dispatched via a native ballistic \BulletClass\ projectile.
