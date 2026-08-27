@@ -664,6 +664,22 @@ int World_GetUnits(lua_State* L) {
     return 1;
 }
 
+// World.GetAllUnits() -> table of EVERY techno in TechnoClass::Array
+// (buildings, vehicles, infantry, aircraft). Never tied to coordinates,
+// so it works on huge maps and reloaded saves.
+int World_GetAllUnits(lua_State* L) {
+    lua_createtable(L, static_cast<int>(TechnoClass::Array.Count), 0);
+    int n = 0;
+    for (int i = 0; i < TechnoClass::Array.Count; ++i) {
+        TechnoClass* pItem = TechnoClass::Array.GetItem(i);
+        if (!pItem || !ValidateTechno(pItem))
+            continue;
+        PushTechno(L, pItem);
+        lua_seti(L, -2, ++n);
+    }
+    return 1;
+}
+
 } // anonymous namespace
 
 // Checks whether the pointer is still present in the engine's active object
@@ -735,6 +751,8 @@ void RegisterTechnoBindings(lua_State* L) {
     lua_setfield(L, -2, "GetBuildings");
     lua_pushcfunction(L, World_GetUnits);
     lua_setfield(L, -2, "GetUnits");
+    lua_pushcfunction(L, World_GetAllUnits);
+    lua_setfield(L, -2, "GetAllUnits");
     lua_pushcfunction(L, game_GetWaypoint);
     lua_setfield(L, -2, "GetWaypoint");
     lua_pushcfunction(L, game_GetUnitsInRadius);
