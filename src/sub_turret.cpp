@@ -170,13 +170,21 @@ static void ProcessSpawnedMissiles(TechnoClass* pTechno) {
         pMissile->SetDestination(secondaryTarget, true);
         pMissile->QueueMission(Mission::Attack, false);
 
-        // 3. Принудительно передаём локомотору физические 3D-координаты второй цели.
+        // 3. Принудительный пересчёт полётного шага AircraftClass: QueueMission +
+        //    NextMission() заставляют движок сбросить старый полётный шаг и проложить
+        //    новый курс к цели. (Поля NavList в этой сборке НЕТ — нативный эквивалент
+        //    сброса навигации — перезапуск миссии атаки через NextMission, а не
+        //    NavList.Clear()/AddItem.)
+        pMissile->QueueMission(Mission::Attack, false);
+        pMissile->NextMission();
+
+        // 4. Принудительно передаём локомотору физические 3D-координаты второй цели.
         //    Иначе RocketLocomotor продолжает лететь по старой параболе к главной цели.
         //    (Метода Fly_To в этой сборке нет — нативный эквивалент —
         //    ILocomotion/LocomotionClass::Force_Immediate_Destination, 0x55AC00.)
         static_cast<FootClass*>(pMissile)->Locomotor->Force_Immediate_Destination(targetCoords);
 
-        LUA_LOG_INFO("[SplitMissile] Rocket trajectory updated -> flying directly to '{}' at ({}, {})!",
+        LUA_LOG_INFO("[SplitMissile] NavList reset -> Missile #2 homing to '{}' at ({}, {})!",
                      SafeTechnoId(secondaryTarget),
                      targetCoords.X / 256, targetCoords.Y / 256);
     } __except (EXCEPTION_EXECUTE_HANDLER) {
