@@ -141,7 +141,7 @@ bool SubTurretManager::AddTurret(TechnoClass* pTechno, int section, int offX, in
     data.facing = 0;
     data.targetFacing = 0;
     data.rot = (rot > 0) ? rot : 12;
-    data.baseRof = (rof > 0) ? rof : 30;
+    data.baseRof = (rof > 0) ? rof : 90;
     data.rofTimer = 0;
     data.target = nullptr;
 

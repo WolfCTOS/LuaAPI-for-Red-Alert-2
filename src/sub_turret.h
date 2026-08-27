@@ -13,7 +13,7 @@ struct SubTurretData {
     int targetFacing = 0;
     int rot = 12;
     int rofTimer = 0;
-    int baseRof = 30;
+    int baseRof = 90;
     TechnoClass* target = nullptr;
 };
 

@@ -1,1 +1,2 @@
+# LuaAPI active mods - one mod ID per line
 multi_turret_battleship
