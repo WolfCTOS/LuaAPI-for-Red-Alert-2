@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include <YRPP.h>
 #include <vector>
 #include <unordered_map>
@@ -24,6 +24,7 @@ public:
     bool AddTurret(TechnoClass* pTechno, int section, int offX, int offY, int offZ, int rot, int rof);
     std::vector<SubTurretData>* GetTurrets(TechnoClass* pTechno);
     void RemoveTechno(TechnoClass* pTechno);
+    void InvalidateTargetGlobally(TechnoClass* pDeadTarget);
     void ClearAll();
 
     void UpdateAll();
@@ -34,6 +35,8 @@ public:
 
 private:
     std::unordered_map<TechnoClass*, std::vector<SubTurretData>> m_turrets;
+    bool m_isUpdating = false;
+    std::vector<TechnoClass*> m_pendingRemovals;
 };
 
 } // namespace LuaAPI

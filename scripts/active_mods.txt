@@ -1,4 +1,1 @@
-# LuaAPI active mods - one mod ID per line
-bounty_hunter
-delayed_explosion
-smart_ai
+multi_turret_battleship
