@@ -164,15 +164,21 @@ static void ProcessSpawnedMissiles(TechnoClass* pTechno) {
         node1->Status = SpawnNodeStatus::Dead;
 
         // 2. Назначаем вторую цель и отдаём независимый боевой приказ.
-        CoordStruct newDest = secondaryTarget->GetCoords();
+        CoordStruct targetCoords = secondaryTarget->GetCoords();
         pMissile->Target = secondaryTarget;
         pMissile->SetTarget(secondaryTarget);
         pMissile->SetDestination(secondaryTarget, true);
         pMissile->QueueMission(Mission::Attack, false);
 
-        LUA_LOG_INFO("[SplitMissile] Decoupled missile #2 from SpawnManager -> attacking '{}' independently (dist {:.1f} cells)!",
+        // 3. Принудительно передаём локомотору физические 3D-координаты второй цели.
+        //    Иначе RocketLocomotor продолжает лететь по старой параболе к главной цели.
+        //    (Метода Fly_To в этой сборке нет — нативный эквивалент —
+        //    ILocomotion/LocomotionClass::Force_Immediate_Destination, 0x55AC00.)
+        static_cast<FootClass*>(pMissile)->Locomotor->Force_Immediate_Destination(targetCoords);
+
+        LUA_LOG_INFO("[SplitMissile] Rocket trajectory updated -> flying directly to '{}' at ({}, {})!",
                      SafeTechnoId(secondaryTarget),
-                     std::sqrt(static_cast<double>(bestDistSq)) / 256.0);
+                     targetCoords.X / 256, targetCoords.Y / 256);
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         LUA_LOG_WARN("[SplitMissile] '{}' SEH while decoupling missile#2",
                      SafeTechnoId(pTechno));
