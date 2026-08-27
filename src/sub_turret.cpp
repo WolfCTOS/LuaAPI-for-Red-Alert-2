@@ -90,6 +90,16 @@ static void ProcessSpawnedMissiles(TechnoClass* pTechno) {
 
     AircraftClass* pMissile = node1->Unit;
 
+    // ONE-SHOT DECOUPLING LATCH: ракета уже отвязана от SpawnManager
+    // (pMissile->SpawnOwner == nullptr) — значит мы уже перенаправили её в этом залпе.
+    // Повторно её НЕ трогаем, иначе каждая итерация TakeOff заново дёргает
+    // RocketLocomotor (опасно для предрассчитанной сплайн-траектории) и спамит лог.
+    // SpawnManager ставит SpawnOwner при создании снаряда, поэтому это надёжный
+    // однократный признак "уже отвязана".
+    if (pMissile->SpawnOwner == nullptr) {
+        return;
+    }
+
     // Главная цель: у первого уже летящего узла берём его собственную цель,
     // а при её отсутствии — цель самого корабля (куда игрок отдал приказ атаки).
     AbstractClass* primaryTarget = node0->Unit->Target ? node0->Unit->Target : pTechno->Target;
@@ -168,7 +178,6 @@ static void ProcessSpawnedMissiles(TechnoClass* pTechno) {
         pMissile->Target = secondaryTarget;
         pMissile->SetTarget(secondaryTarget);
         pMissile->SetDestination(secondaryTarget, true);
-        pMissile->QueueMission(Mission::Attack, false);
 
         // 3. Принудительный пересчёт полётного шага AircraftClass: QueueMission +
         //    NextMission() заставляют движок сбросить старый полётный шаг и проложить
@@ -376,13 +385,38 @@ bool SubTurretManager::AssignSplitTargets(TechnoClass* pTechno, const std::vecto
     auto* turrets = GetTurrets(pTechno);
     if (!turrets || turrets->empty()) return false;
 
-    // Распределяем цели по свободным башням (1 цель на 1 башню)
-    for (size_t i = 0; i < turrets->size(); ++i) {
-        if (i < targets.size() && IsValidTechno(targets[i]) && targets[i]->Owner != pTechno->Owner) {
-            (*turrets)[i].target = targets[i];
-        } else {
-            (*turrets)[i].target = nullptr;
+    // Dynamic Salvo Convergence: собираем до двух живых вражеских целей (A и B).
+    // IsValidTechno() SEH-защищён и проверяет IsAlive/Health>0/!InLimbo, поэтому
+    // виртуальные вызовы и поля мёртвых/висячих указателей не трогаем (Trap #2).
+    TechnoClass* targetA = nullptr;
+    TechnoClass* targetB = nullptr;
+    for (TechnoClass* cand : targets) {
+        if (!cand) continue;
+        if (!IsValidTechno(cand)) continue;
+        if (cand->Owner == pTechno->Owner) continue;
+        if (!targetA) targetA = cand;
+        else if (!targetB) targetB = cand;
+        else break;
+    }
+
+    // Если цель A уничтожена/пуста, обе башни сходятся на B, и наоборот.
+    if (!targetA && !targetB) {
+        for (auto& turret : *turrets) {
+            turret.target = nullptr;
         }
+        return false;
+    }
+
+    for (size_t i = 0; i < turrets->size(); ++i) {
+        TechnoClass* assign = nullptr;
+        if (i == 0) {
+            assign = targetA ? targetA : targetB;          // Башня 0 -> A (или B, если A мёртв)
+        } else if (i == 1) {
+            assign = targetB ? targetB : targetA;          // Башня 1 -> B (или A, если B мёртв)
+        } else {
+            assign = targetA ? targetA : targetB;          // доп. башни сходятся на первой живой цели
+        }
+        (*turrets)[i].target = assign;
     }
     return true;
 }
@@ -397,20 +431,27 @@ bool SubTurretManager::FireSplitSalvo(TechnoClass* pTechno) {
     // отдаём РОДНОЙ нативный боевой приказ атаки. Корабль открывает люки шахт и физически
     // запускает залп ракет (DMISL / HORNET) со звуком и летящими снарядами.
     if (pTechno->SpawnManager) {
+        // Dynamic Salvo Convergence: берём первую ЖИВУЮ цель из распределённых башен.
+        // Если TargetA погибла до/в момент пуска, корабль наводится на живую TargetB —
+        // залп физически не уходит на мёртвое здание.
+        TechnoClass* validTarget = nullptr;
         for (size_t i = 0; i < turrets->size(); ++i) {
             auto& turret = (*turrets)[i];
             if (turret.target && IsValidTechno(turret.target)) {
-                __try {
-                    pTechno->SetTarget(turret.target);
-                    pTechno->SetDestination(turret.target, true);
-                    pTechno->QueueMission(Mission::Attack, true);
-                    return true;
-                } __except (EXCEPTION_EXECUTE_HANDLER) {
-                    return false;
-                }
+                validTarget = turret.target;
+                break;
             }
         }
-        return false;
+        if (!validTarget) return false;
+
+        __try {
+            pTechno->SetTarget(validTarget);
+            pTechno->SetDestination(validTarget, true);
+            pTechno->QueueMission(Mission::Attack, true);
+            return true;
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            return false;
+        }
     }
 
     // Обычные башни без ракетного спавна: принудительный пуск по назначенным целям.
