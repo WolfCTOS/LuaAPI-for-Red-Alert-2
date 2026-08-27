@@ -95,9 +95,10 @@ return BountyMod
 ```
 
 Case Study 3: Silent Battle-Damaged Starting Fleet (Frame 0)
-    Outcome: Scenario begins with pre-damaged, smoking, or burning naval task forces and armored convoys without audio glitches or false alarms.
+Outcome: Scenario begins with pre-damaged, smoking, or burning naval task forces and armored convoys without audio glitches or false alarms.
 Why: Setting health via map triggers leaves units visually undamaged (no smoke particle emitter attached). Firing off-map artillery on frame 0 triggers false EVA "Our base is under attack!" sirens.
 Verification Status: [x] VERIFIED (damaged_fleet mod)
+
 🛠️ How It Works (Architecture)
     Hook into OnScenarioStart (fires on frame 1 immediately after map load).
     Query naval units via house:GetUnits() or area coordinates.
@@ -132,7 +133,9 @@ return FleetMod
 ```
 
 Case Study 4: Multi-Turret Batteries & Non-Linear Z-Mode Targeting
+
 Outcome: Capital ships, heavy tanks, and fortifications engage up to 3 separate ground, air, and naval targets simultaneously with independent rate-of-turn (ROT) aiming and split-salvo Waypoint (Z) targeting.
+
 Why: Solves the 25-year-old engine bottleneck where units are locked to 1 global target and 1 turret, causing massive overkill.
 Verification Status: [x] VERIFIED (SubTurretManager & multi_turret_battleship mod)
 
