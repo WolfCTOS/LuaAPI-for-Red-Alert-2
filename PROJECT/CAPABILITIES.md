@@ -65,8 +65,6 @@ Verification Status: [x] VERIFIED (bounty_hunter mod)
 Null Attacker Traps: When units die from map triggers, crushing, or environmental hazards, attacker can be nil. Always guard with if attacker and attacker:GetHouse() then before accessing house methods to avoid script aborts.
 📝 Lua Recipe:
 ```
-code Lua
-
 -- scripts/mods/bounty_hunter/main.lua
 local BountyMod = {}
 
