@@ -147,17 +147,21 @@ static void ProcessSpawnedMissiles(TechnoClass* pTechno) {
     }
 
     // Полное перенаведение локомотора ракеты (RocketLocomotor): обновляем не только
-    // указатель Target, но и целевые 3D-координаты полёта через SetDestination. Это
-    // заставляет DMISL физически развернуться в воздухе и лететь к новой цели.
+    // указатель Target, но и целевые 3D-координаты полёта. Это заставляет DMISL
+    // физически перепроложить кривую и развернуться в воздухе к новой цели.
+    // ПРИМЕЧАНИЕ: в этой YRpp-сборке нет методов Assign_Target / Assign_Destination —
+    // их нативными эквивалентами являются TechnoClass::SetTarget (vtable 0x6FCDB0)
+    // и TechnoClass::SetDestination; принудительный пересчёт миссии — QueueMission.
     __try {
         CoordStruct newDest = secondaryTarget->GetCoords();
         pMissile->Target = secondaryTarget;
         pMissile->SetTarget(secondaryTarget);
         pMissile->SetDestination(secondaryTarget, true);
+        pMissile->QueueMission(Mission::Attack, false);
 
-        LUA_LOG_INFO("[SplitMissile] '{}' split salvo: Missile #1 -> Primary, Missile #2 redirected -> '{}' at ({}, {})",
+        LUA_LOG_INFO("[SplitMissile] '{}' redirected missile#2 'DMISL' -> '{}' (dist {:.1f} cells)",
                      SafeTechnoId(pTechno), SafeTechnoId(secondaryTarget),
-                     newDest.X / 256, newDest.Y / 256);
+                     std::sqrt(static_cast<double>(bestDistSq)) / 256.0);
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         LUA_LOG_WARN("[SplitMissile] '{}' SEH while redirecting missile#2",
                      SafeTechnoId(pTechno));
