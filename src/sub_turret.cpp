@@ -43,18 +43,6 @@ static bool SafeComputeAim(TechnoClass* pTarget, const CoordStruct& myPos,
     }
 }
 
-// SEH-защищённая проверка дистанции до кандидата (доступ к координатам).
-static bool SafeInRange(TechnoClass* pTarget, const CoordStruct& myPos, int maxDistSq) {
-    if (!pTarget) return false;
-    __try {
-        CoordStruct cPos = pTarget->GetCoords();
-        int distSq = (cPos.X - myPos.X) * (cPos.X - myPos.X) + (cPos.Y - myPos.Y) * (cPos.Y - myPos.Y);
-        return distSq < maxDistSq;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        return false;
-    }
-}
-
 SubTurretManager& SubTurretManager::Instance() {
     static SubTurretManager s_instance;
     return s_instance;
@@ -119,22 +107,8 @@ void SubTurretManager::ClearAll() {
 void SubTurretManager::UpdateAll() {
     m_isUpdating = true;
 
-    // 1. Авто-оснащение кораблей
-    for (int i = 0; i < TechnoClass::Array.Count; ++i) {
-        TechnoClass* pObj = TechnoClass::Array.GetItem(i);
-        if (pObj && IsValidTechno(pObj) && m_turrets.find(pObj) == m_turrets.end()) {
-            TechnoTypeClass* pType = pObj->GetTechnoType();
-            if (pType && pType->ID) {
-                const char* id = pType->ID;
-                if (strcmp(id, "DRED") == 0 || strcmp(id, "DEST") == 0 || strcmp(id, "APOC") == 0) {
-                    AddTurret(pObj, 1, 40, 0, 15, 12, 25);
-                    AddTurret(pObj, 2, -40, 0, 15, 12, 25);
-                }
-            }
-        }
-    }
-
-    // 2. Логика наведения и стрельбы
+    // Башни создаются ТОЛЬКО из Lua (AddSubTurret / auto-attach через мод).
+    // Здесь движок лишь обслуживает уже зарегистрированные башни.
     std::vector<TechnoClass*> activeUnits;
     activeUnits.reserve(m_turrets.size());
     for (const auto& pair : m_turrets) {
@@ -152,25 +126,13 @@ void SubTurretManager::UpdateAll() {
         for (size_t tIdx = 0; tIdx < turrets->size(); ++tIdx) {
             auto& turret = (*turrets)[tIdx];
 
+            // 1. Кулдаун перезарядки
             if (turret.rofTimer > 0) {
                 turret.rofTimer--;
             }
 
-            // Проверяем жива ли текущая цель
-            if (!turret.target || !IsValidTechno(turret.target) || turret.target->Owner == pTechno->Owner) {
-                turret.target = nullptr;
-                for (int i = 0; i < TechnoClass::Array.Count; ++i) {
-                    TechnoClass* candidate = TechnoClass::Array.GetItem(i);
-                    if (candidate && IsValidTechno(candidate) && candidate->Owner != pTechno->Owner) {
-                        if (SafeInRange(candidate, myPos, 4608 * 4608)) {
-                            turret.target = candidate;
-                            break;
-                        }
-                    }
-                }
-            }
-
-            // Наведение и огонь (SEH-защищено)
+            // 2. Плавное вращение facing в сторону targetFacing со скоростью rot.
+            //    Выбор цели и стрельба выполняются ИСКЛЮЧИТЕЛЬНО из Lua.
             if (turret.target && IsValidTechno(turret.target)) {
                 int desiredFacing = 0;
                 int diff = 0;
@@ -183,10 +145,6 @@ void SubTurretManager::UpdateAll() {
                         } else {
                             turret.facing = (turret.facing - (std::min)(turret.rot, 256 - diff)) & 0xFF;
                         }
-                    }
-
-                    if (turret.rofTimer <= 0 && (diff < 24 || diff > 232)) {
-                        FireTurret(pTechno, tIdx, turret.target);
                     }
                 } else {
                     // Цель повреждена/висячий указатель — перестаём её преследовать
@@ -242,6 +200,42 @@ bool SubTurretManager::FireTurret(TechnoClass* pTechno, size_t turretIndex, Tech
     }
 
     return true;
+}
+
+bool SubTurretManager::AssignSplitTargets(TechnoClass* pTechno, const std::vector<TechnoClass*>& targets) {
+    if (!IsValidTechno(pTechno) || targets.empty()) return false;
+
+    auto* turrets = GetTurrets(pTechno);
+    if (!turrets || turrets->empty()) return false;
+
+    // Распределяем цели по свободным башням (1 цель на 1 башню)
+    for (size_t i = 0; i < turrets->size(); ++i) {
+        if (i < targets.size() && IsValidTechno(targets[i]) && targets[i]->Owner != pTechno->Owner) {
+            (*turrets)[i].target = targets[i];
+        } else {
+            (*turrets)[i].target = nullptr;
+        }
+    }
+    return true;
+}
+
+bool SubTurretManager::FireSplitSalvo(TechnoClass* pTechno) {
+    if (!IsValidTechno(pTechno)) return false;
+
+    auto* turrets = GetTurrets(pTechno);
+    if (!turrets || turrets->empty()) return false;
+
+    bool anyFired = false;
+    for (size_t i = 0; i < turrets->size(); ++i) {
+        auto& turret = (*turrets)[i];
+        if (turret.target && IsValidTechno(turret.target)) {
+            // Принудительный пуск башни по своей назначенной цели
+            if (FireTurret(pTechno, i, turret.target)) {
+                anyFired = true;
+            }
+        }
+    }
+    return anyFired;
 }
 
 } // namespace LuaAPI

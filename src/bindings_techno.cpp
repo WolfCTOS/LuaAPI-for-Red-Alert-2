@@ -1,4 +1,4 @@
-#include <LuaAPI/bindings_techno.hpp>
+﻿#include <LuaAPI/bindings_techno.hpp>
 #include <LuaAPI/bindings_house.hpp>
 #include <LuaAPI/logger.hpp>
 #include "sub_turret.h"
@@ -566,6 +566,38 @@ int Techno_ClearSubTurrets(lua_State* L) {
     SubTurretManager::Instance().RemoveTechno(pTechno);
     return 0;
 }
+// techno:SetSplitTargets({target1, target2, ...}) -> bool
+// Распределяет переданные цели по свободным башням (1 цель на 1 башню).
+int Techno_SetSplitTargets(lua_State* L) {
+    auto* pTechno = CheckTechno(L, 1);
+    if (!ValidateTechno(pTechno)) { lua_pushboolean(L, 0); return 1; }
+
+    luaL_checktype(L, 2, LUA_TTABLE);
+
+    std::vector<TechnoClass*> targets;
+    lua_Integer n = luaL_len(L, 2);
+    for (lua_Integer i = 1; i <= n; ++i) {
+        lua_geti(L, 2, i);
+        void* ud = luaL_testudata(L, -1, kMetaName);
+        TechnoClass* pTarget = ud ? *static_cast<TechnoClass**>(ud) : nullptr;
+        if (pTarget && !ValidateTechno(pTarget)) pTarget = nullptr;
+        targets.push_back(pTarget);
+        lua_pop(L, 1);
+    }
+
+    bool ok = SubTurretManager::Instance().AssignSplitTargets(pTechno, targets);
+    lua_pushboolean(L, ok ? 1 : 0);
+    return 1;
+}
+// techno:FireSplitSalvo() -> bool
+// Принудительно пускает все башни по их назначенным целям.
+int Techno_FireSplitSalvo(lua_State* L) {
+    auto* pTechno = CheckTechno(L, 1);
+    if (!ValidateTechno(pTechno)) { lua_pushboolean(L, 0); return 1; }
+    bool ok = SubTurretManager::Instance().FireSplitSalvo(pTechno);
+    lua_pushboolean(L, ok ? 1 : 0);
+    return 1;
+}
 
 const luaL_Reg kTechnoMethods[] = {
     { "GetTypeName",   Techno_GetTypeName   },
@@ -591,6 +623,8 @@ const luaL_Reg kTechnoMethods[] = {
     { "SetSubTurretTarget", Techno_SetSubTurretTarget },
     { "FireSubTurret", Techno_FireSubTurret },
     { "ClearSubTurrets", Techno_ClearSubTurrets },
+    { "SetSplitTargets", Techno_SetSplitTargets },
+    { "FireSplitSalvo", Techno_FireSplitSalvo },
     { nullptr, nullptr }
 };
 

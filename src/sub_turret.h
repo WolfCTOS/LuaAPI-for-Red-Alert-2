@@ -29,6 +29,8 @@ public:
 
     void UpdateAll();
     bool FireTurret(TechnoClass* pTechno, size_t turretIndex, TechnoClass* pTarget);
+    bool AssignSplitTargets(TechnoClass* pTechno, const std::vector<TechnoClass*>& targets);
+    bool FireSplitSalvo(TechnoClass* pTechno);
     void DrawSubTurrets(TechnoClass* pTechno, Point2D* pLocation, RectangleStruct* pBounds);
 
     void InitDrawHook();
