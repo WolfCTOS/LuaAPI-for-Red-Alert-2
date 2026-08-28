@@ -37,6 +37,16 @@ using ExecuteDoList_t = void(__fastcall*)(void*);
 ExecuteDoList_t g_pOriginalExecuteDoList = nullptr;
 bool g_installed = false;
 
+// EventClass(int houseIndex, EventType eventType) @ 0x4C66C0 — this в ECX.
+// Детур и оригинал объявлены __fastcall (this -> ECX на x86), т.к. __thiscall
+// недоступен для свободных функций на MSVC (C3865). eventType принимаем как int
+// (стек-слот 4 байта) и маскируем до байта — так надёжнее по ABI.
+using EventClassCtor_t = void(__fastcall*)(void*, int, int);
+EventClassCtor_t g_pOriginalEventCtor = nullptr;
+bool g_ctorInstalled = false;
+
+constexpr uintptr_t kEventClassCtorAddr = 0x004C66C0;
+
 std::unordered_map<TechnoClass*, TargetClass> g_PlayerTargetOverride;
 
 // ---------------------------------------------------------------------------
@@ -108,14 +118,30 @@ bool IsSpawnerShip(TechnoClass* pTechno) {
 
 // Отдельная НЕ-SEH функция для набора увиденных типов: std::set не должен
 // находиться в функции с __try (C2712), поэтому живёт здесь.
-static bool ReportEventTypeOnce(unsigned char type) {
-    static std::set<unsigned char> s_seenTypes;
-    const bool firstCall = s_seenTypes.empty();
-    const bool newType = s_seenTypes.insert(type).second;
-    if (firstCall || newType) {
-        LUA_LOG_INFO("[EventHook] ExecuteDoList called, type=0x{:X}", type);
+// Логирует первый вызов и каждое НОВОЕ значение, чтобы не завалить лог при
+// покадровом вызове. Ключ — сочетание имени источника (tag) и значения.
+static void ReportTypeOnce(const char* tag, unsigned int value) {
+    static std::set<std::pair<const char*, unsigned int>> s_seen;
+    if (s_seen.emplace(tag, value).second) {
+        LUA_LOG_INFO("[EventHook] {} type=0x{:X}", tag, value);
     }
-    return firstCall || newType;
+}
+
+// ---------------------------------------------------------------------------
+// Хук на конструктор EventClass(int houseIndex, EventType eventType) @ 0x4C66C0.
+// ВАЖНО: срабатывает ПРИ СОЗДАНИИ события, т.е. ВСЕГДА, и даёт тип до того, как
+// приказ будет исполнен. Именно здесь надёжнее всего отличить приказ игрока.
+// __thiscall недоступен для свободных функций (C3865) -> детур объявлен __fastcall:
+// на x86 this приходит в ECX, что совпадает с __thiscall.
+// ---------------------------------------------------------------------------
+void __fastcall Hooked_EventClassCtor(void* ecx_this, int houseIndex, int eventTypeArg) {
+    // Диагностика: какие типы событий вообще создаются.
+    ReportTypeOnce("EventClassCtor", static_cast<unsigned int>(eventTypeArg) & 0xFFu);
+
+    // Вызываем оригинальный конструктор, чтобы объект корректно инициализировался.
+    if (g_pOriginalEventCtor) {
+        g_pOriginalEventCtor(ecx_this, houseIndex, eventTypeArg);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -134,7 +160,7 @@ void __fastcall Hooked_ExecuteDoList(void* ecx_this, void* /*edx*/) {
         readType = false;
     }
     if (readType) {
-        ReportEventTypeOnce(type); // логирует первый вызов + новые типы
+        ReportTypeOnce("ExecuteDoList", static_cast<unsigned int>(type));
     }
     // ======================================
 
@@ -173,33 +199,67 @@ void __fastcall Hooked_ExecuteDoList(void* ecx_this, void* /*edx*/) {
 }
 
 bool Install() {
-    if (g_installed || g_pOriginalExecuteDoList) return true;
+    bool allOk = true;
 
-    MH_STATUS st = MH_CreateHook(
-        reinterpret_cast<LPVOID>(kExecuteDoListAddr),
-        reinterpret_cast<LPVOID>(&Hooked_ExecuteDoList),
-        reinterpret_cast<LPVOID*>(&g_pOriginalExecuteDoList));
-    if (st != MH_OK) {
-        LUA_LOG_WARN("[EventHook] MH_CreateHook(0x{:X}) -> {}", kExecuteDoListAddr, static_cast<int>(st));
-        return false;
+    // --- Хук 1: конструктор EventClass @ 0x4C66C0 (надёжный, при создании) ---
+    if (!g_ctorInstalled && !g_pOriginalEventCtor) {
+        MH_STATUS st = MH_CreateHook(
+            reinterpret_cast<LPVOID>(kEventClassCtorAddr),
+            reinterpret_cast<LPVOID>(&Hooked_EventClassCtor),
+            reinterpret_cast<LPVOID*>(&g_pOriginalEventCtor));
+        if (st != MH_OK) {
+            LUA_LOG_WARN("[EventHook] MH_CreateHook(EventClassCtor 0x{:X}) -> {}",
+                         kEventClassCtorAddr, static_cast<int>(st));
+            allOk = false;
+        } else {
+            st = MH_EnableHook(reinterpret_cast<LPVOID>(kEventClassCtorAddr));
+            if (st != MH_OK) {
+                LUA_LOG_WARN("[EventHook] MH_EnableHook(EventClassCtor 0x{:X}) -> {}",
+                             kEventClassCtorAddr, static_cast<int>(st));
+                allOk = false;
+            } else {
+                g_ctorInstalled = true;
+                LUA_LOG_INFO("[EventHook] installed on EventClass::EventClass @ 0x{:X}",
+                             kEventClassCtorAddr);
+            }
+        }
     }
 
-    st = MH_EnableHook(reinterpret_cast<LPVOID>(kExecuteDoListAddr));
-    if (st != MH_OK) {
-        LUA_LOG_WARN("[EventHook] MH_EnableHook(0x{:X}) -> {}", kExecuteDoListAddr, static_cast<int>(st));
-        return false;
+    // --- Хук 2: Execute_DoList @ 0x64CC68 (запасной, если вызывается) ---
+    if (!g_installed && !g_pOriginalExecuteDoList) {
+        MH_STATUS st = MH_CreateHook(
+            reinterpret_cast<LPVOID>(kExecuteDoListAddr),
+            reinterpret_cast<LPVOID>(&Hooked_ExecuteDoList),
+            reinterpret_cast<LPVOID*>(&g_pOriginalExecuteDoList));
+        if (st != MH_OK) {
+            LUA_LOG_WARN("[EventHook] MH_CreateHook(0x{:X}) -> {}", kExecuteDoListAddr, static_cast<int>(st));
+            allOk = false;
+        } else {
+            st = MH_EnableHook(reinterpret_cast<LPVOID>(kExecuteDoListAddr));
+            if (st != MH_OK) {
+                LUA_LOG_WARN("[EventHook] MH_EnableHook(0x{:X}) -> {}", kExecuteDoListAddr, static_cast<int>(st));
+                allOk = false;
+            } else {
+                g_installed = true;
+                LUA_LOG_INFO("[EventHook] installed on EventClass::Execute_DoList @ 0x{:X}", kExecuteDoListAddr);
+            }
+        }
     }
 
-    g_installed = true;
-    LUA_LOG_INFO("[EventHook] installed on EventClass::Execute_DoList @ 0x{:X}", kExecuteDoListAddr);
-    return true;
+    return allOk;
 }
 
 void Uninstall() {
-    if (!g_installed) return;
-    MH_DisableHook(reinterpret_cast<LPVOID>(kExecuteDoListAddr));
-    MH_RemoveHook(reinterpret_cast<LPVOID>(kExecuteDoListAddr));
-    g_installed = false;
+    if (g_ctorInstalled) {
+        MH_DisableHook(reinterpret_cast<LPVOID>(kEventClassCtorAddr));
+        MH_RemoveHook(reinterpret_cast<LPVOID>(kEventClassCtorAddr));
+        g_ctorInstalled = false;
+    }
+    if (g_installed) {
+        MH_DisableHook(reinterpret_cast<LPVOID>(kExecuteDoListAddr));
+        MH_RemoveHook(reinterpret_cast<LPVOID>(kExecuteDoListAddr));
+        g_installed = false;
+    }
     g_PlayerTargetOverride.clear();
 }
 
