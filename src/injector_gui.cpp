@@ -1098,21 +1098,32 @@ void ToggleFullscreen() {
 
     if (!g_fullscreen) {
         GetWindowRect(g_hwnd, &g_windowedRect);
+        // Borderless: только WS_POPUP, без WS_EX_TOPMOST (он накрывал бы окна других
+        // приложений, даже без фокуса). Разворачиваемся в рабочую область монитора под окном
+        // (rcWork — без таскбара), а не в весь экран, чтобы таскбар остался видимой.
         LONG style = GetWindowLongW(g_hwnd, GWL_STYLE);
-        LONG exstyle = GetWindowLongW(g_hwnd, GWL_EXSTYLE);
         SetWindowLongW(g_hwnd, GWL_STYLE, (style & ~WS_OVERLAPPEDWINDOW) | WS_POPUP);
-        SetWindowLongW(g_hwnd, GWL_EXSTYLE, exstyle | WS_EX_TOPMOST);
-        SetWindowPos(g_hwnd, HWND_TOPMOST, 0, 0,
-                     GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN),
-                     SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+
+        HMONITOR mon = MonitorFromWindow(g_hwnd, MONITOR_DEFAULTTONEAREST);
+        MONITORINFO mi{};
+        mi.cbSize = sizeof(mi);
+        if (mon && GetMonitorInfoW(mon, &mi)) {
+            const RECT& w = mi.rcWork;
+            SetWindowPos(g_hwnd, HWND_TOP, w.left, w.top,
+                         w.right - w.left, w.bottom - w.top,
+                         SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+        } else {
+            // Fallback на весь экран, если не удалось получить информацию о мониторе.
+            SetWindowPos(g_hwnd, HWND_TOP, 0, 0,
+                         GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN),
+                         SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+        }
         g_fullscreen = true;
     } else {
         LONG style = GetWindowLongW(g_hwnd, GWL_STYLE);
-        LONG exstyle = GetWindowLongW(g_hwnd, GWL_EXSTYLE);
         SetWindowLongW(g_hwnd, GWL_STYLE, (style & ~WS_POPUP) |
                       WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_THICKFRAME);
-        SetWindowLongW(g_hwnd, GWL_EXSTYLE, exstyle & ~WS_EX_TOPMOST);
-        SetWindowPos(g_hwnd, HWND_NOTOPMOST,
+        SetWindowPos(g_hwnd, HWND_TOP,
                      g_windowedRect.left, g_windowedRect.top,
                      g_windowedRect.right - g_windowedRect.left,
                      g_windowedRect.bottom - g_windowedRect.top,
@@ -1155,7 +1166,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             ToggleFullscreen();
             return 0;
         }
-        return 0;
+        break; // не обработанные клавиши — в DefWindowProc, а не молча глотать
     case WM_MOUSEMOVE: {
         POINT pt{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
         // ---- Drag-and-drop reorder of mod cards ----
