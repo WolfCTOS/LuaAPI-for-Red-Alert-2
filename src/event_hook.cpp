@@ -272,9 +272,7 @@ void Update() {
                              reinterpret_cast<uintptr_t>(pCached));
             __try {
                 pShip->Target = pCached;
-                pShip->QueueMission(Mission::Attack, false);
-                pShip->NextMission();
-                LUA_LOG_CRITICAL("Update: forced target done");
+                LUA_LOG_CRITICAL("Update: forced target only (no QueueMission)");
                 LUA_LOG_INFO("[EventHook] '{}' drift detected -> forcing back to '{}'",
                              SafeTechnoName(pShip), SafeTechnoName(pCached));
             } __except (EXCEPTION_EXECUTE_HANDLER) {
