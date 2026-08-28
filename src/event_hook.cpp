@@ -10,15 +10,6 @@
 namespace LuaAPI {
 namespace EventHook {
 
-// TargetClass::As_Techno() (0x6E6F20) — не-const и портит this (m_RTTI мог меняться),
-// поэтому всегда передаём копию. Читаем через raw offset из датабуфера события.
-static TechnoClass* TargetClassToTechno(TargetClass t) {
-    TechnoClass* p = nullptr;
-    __try { p = t.As_Techno(); }
-    __except (EXCEPTION_EXECUTE_HANDLER) { p = nullptr; }
-    return p;
-}
-
 // ---------------------------------------------------------------------------
 // Константы (адрес FootClass::Active_Click_With для 1.001).
 // Дредноут/Авианосец наследуются от FootClass (движимые юниты), поэтому этот
@@ -34,7 +25,7 @@ using ActiveClickWith_t = void(__fastcall*)(FootClass*, int, void*);
 ActiveClickWith_t g_pOriginalActiveClickWith = nullptr;
 bool g_installed = false;
 
-std::unordered_map<TechnoClass*, TargetClass> g_PlayerTargetOverride;
+std::unordered_map<TechnoClass*, AbstractClass*> g_PlayerTargetOverride;
 
 // ---------------------------------------------------------------------------
 // СЕХ-защищённая валидация техно-объекта (жив, валидный RTTI, не в лимбе).
@@ -169,7 +160,7 @@ void __fastcall Hooked_ActiveClickWith(FootClass* pThis, void* /*edx*/, int acti
                          IsLiveTechno(pTargetTechno) ? 1 : 0);
 
         if (IsSpawnerShip(pShip) && IsLiveTechno(pTargetTechno)) {
-            g_PlayerTargetOverride[pShip] = TargetClass(static_cast<AbstractClass*>(pTarget));
+            g_PlayerTargetOverride[pShip] = static_cast<AbstractClass*>(pTarget);
             LUA_LOG_INFO("[EventHook] player Attack order via ActiveClickWith: '{}' -> '{}' cached",
                          SafeTechnoName(pShip), SafeTechnoName(pTargetTechno));
         }
@@ -227,7 +218,7 @@ void Update() {
 
     for (auto it = g_PlayerTargetOverride.begin(); it != g_PlayerTargetOverride.end();) {
         TechnoClass* pShip = it->first;
-        TargetClass cachedTarget = it->second;
+        AbstractClass* cachedTarget = it->second;
 
         // 1. Корабль-владелец мёртв/невалиден — удаляем запись.
         LUA_LOG_CRITICAL("Update: entry ship=0x{:X}, isSpawner={}",
@@ -241,7 +232,7 @@ void Update() {
         }
 
         // 2. Кэшированная цель мертва/невалидна — удаляем запись.
-        TechnoClass* pCached = TargetClassToTechno(cachedTarget);
+        TechnoClass* pCached = static_cast<TechnoClass*>(cachedTarget);
         LUA_LOG_CRITICAL("Update: cached=0x{:X}, isLive={}",
                          reinterpret_cast<uintptr_t>(pCached),
                          IsLiveTechno(pCached) ? 1 : 0);
@@ -261,13 +252,13 @@ void Update() {
                          reinterpret_cast<uintptr_t>(pShip),
                          reinterpret_cast<uintptr_t>(pCurrent),
                          reinterpret_cast<uintptr_t>(pCached),
-                         (pCurrent != pCached) ? 1 : 0);
-        if (pCurrent != pCached) {
+                         (pCurrent != cachedTarget) ? 1 : 0);
+        if (pCurrent != cachedTarget) {
             LUA_LOG_CRITICAL("Update: forcing target for ship=0x{:X}, target=0x{:X}",
                              reinterpret_cast<uintptr_t>(pShip),
-                             reinterpret_cast<uintptr_t>(pCached));
+                             reinterpret_cast<uintptr_t>(cachedTarget));
             __try {
-                pShip->Target = pCached;
+                pShip->Target = cachedTarget;
                 LUA_LOG_CRITICAL("Update: forced target only (no QueueMission)");
                 LUA_LOG_INFO("[EventHook] '{}' drift detected -> forcing back to '{}'",
                              SafeTechnoName(pShip), SafeTechnoName(pCached));

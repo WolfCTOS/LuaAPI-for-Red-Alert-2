@@ -48,8 +48,9 @@ bool IsSpawnerShip(TechnoClass* pTechno);
 size_t OverrideCount();
 
 // Кэш явных целей игрока: корабль -> сохранённая цель клика атаки.
-// Читается в Update(), заполняется в Hooked_ActiveClickWith().
-extern std::unordered_map<TechnoClass*, TargetClass> g_PlayerTargetOverride;
+// Хранится как сырой AbstractClass* (не TargetClass), чтобы избежать краша в
+// конструкторе TargetClass. Читается в Update(), заполняется в Hooked_ActiveClickWith().
+extern std::unordered_map<TechnoClass*, AbstractClass*> g_PlayerTargetOverride;
 
 } // namespace EventHook
 } // namespace LuaAPI
