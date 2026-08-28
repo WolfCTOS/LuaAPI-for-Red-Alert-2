@@ -2,11 +2,13 @@
 #include <LuaAPI/logger.hpp>
 #include <LuaAPI/bindings_house.hpp>
 #include <LuaAPI/bindings_techno.hpp>
+#include <LuaAPI/bindings_production.hpp>
 
 #include <MinHook.h>
 
 #include "hook_profiler.h"
 #include "sub_turret.h"
+#include "event_hook.h"
 
 extern "C" {
 #include <lua.h>
@@ -172,6 +174,7 @@ lua_State* CreateEngine() {
 
     RegisterHouseBindings(L);
     RegisterTechnoBindings(L);
+    RegisterProductionBindings(L);
 
     return L;
 }
@@ -268,6 +271,11 @@ void InstallGameHook() {
 
     enableStatus = MH_EnableHook(reinterpret_cast<LPVOID>(kLoadStringAddr));
     LUA_LOG_INFO("MH_EnableHook(StringTable::LoadString) -> {} ({})", MH_StatusToString(enableStatus), static_cast<int>(enableStatus));
+
+    // EventClass::Execute_DoList hook: перехват явных приказов атаки игрока
+    // на корабль-спаунер (см. event_hook.h). Безопасен для синхронизации —
+    // читает только уже синхронизированное событие.
+    EventHook::Install();
 }
 
 // True only while an actual match is running. Prevents OnTick, HUD messages
@@ -296,6 +304,7 @@ void OnGameFrame() {
 
     LuaAPI::ProcessDisabledObjects(Unsorted::CurrentFrame);
     LuaAPI::SubTurretManager::Instance().UpdateAll();
+    LuaAPI::EventHook::Update();
 
     // Fire pre-damage callbacks registered by mods (OnPreDamage).
     if (g_L && g_scriptReady) {
@@ -411,6 +420,7 @@ void ResetSession() {
 
     // 1b. Clear sub-turret state
     LuaAPI::SubTurretManager::Instance().ClearAll();
+    LuaAPI::EventHook::ClearAll();
 
     // 2. Reset the Lua VM state for a new match.
     if (g_L) {

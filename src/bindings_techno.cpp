@@ -2,6 +2,7 @@
 #include <LuaAPI/bindings_house.hpp>
 #include <LuaAPI/logger.hpp>
 #include "sub_turret.h"
+#include "event_hook.h"
 
 extern "C" {
 #include <lua.h>
@@ -489,9 +490,23 @@ int game_GetUnitsInRadius(lua_State* L) {
     return 1;
 }
 
-// === Gate 10: Multi-Turret System ===
+// === Gate 10.2: EventHook diagnostics (player attack-order interception) ===
 
-// techno:AddSubTurret(section, offX, offY, offZ, rot, rof) -> bool
+// game:GetEventHookOverrideCount() -> int
+// Сколько явных приказов атаки игрока на корабли-спауэнеры сейчас удерживается.
+int game_GetEventHookOverrideCount(lua_State* L) {
+    lua_pushinteger(L, static_cast<lua_Integer>(EventHook::OverrideCount()));
+    return 1;
+}
+
+// game:ClearEventHookOverrides() -> nil
+// Полная очистка кэша переопределений (вручную, для отладки).
+int game_ClearEventHookOverrides(lua_State* L) {
+    EventHook::ClearAll();
+    return 0;
+}
+
+// === Gate 10: Multi-Turret System ===
 int Techno_AddSubTurret(lua_State* L) {
     auto* pTechno = CheckTechno(L, 1);
     if (!ValidateTechno(pTechno)) { lua_pushboolean(L, 0); return 1; }
@@ -765,6 +780,10 @@ void RegisterTechnoBindings(lua_State* L) {
     lua_setfield(L, -2, "GetWaypoint");
     lua_pushcfunction(L, game_GetUnitsInRadius);
     lua_setfield(L, -2, "GetUnitsInRadius");
+    lua_pushcfunction(L, game_GetEventHookOverrideCount);
+    lua_setfield(L, -2, "GetEventHookOverrideCount");
+    lua_pushcfunction(L, game_ClearEventHookOverrides);
+    lua_setfield(L, -2, "ClearEventHookOverrides");
     lua_setglobal(L, "game");
 }
 
