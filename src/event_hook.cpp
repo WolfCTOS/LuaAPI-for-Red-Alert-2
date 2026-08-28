@@ -166,10 +166,10 @@ void __fastcall Hooked_ActiveClickWith(FootClass* pThis, void* /*edx*/, int acti
         }
     }
 
-    // ДИАГНОСТИКА: временно отключаем оригинал, чтобы найти источник краша
-    // if (g_pOriginalActiveClickWith) {
-    //     g_pOriginalActiveClickWith(pThis, action, pTarget);
-    // }
+    // Возвращаем оригинальный вызов для нормальной обработки приказа атаки
+    if (g_pOriginalActiveClickWith) {
+        g_pOriginalActiveClickWith(pThis, action, pTarget);
+    }
 }
 
 bool Install() {
