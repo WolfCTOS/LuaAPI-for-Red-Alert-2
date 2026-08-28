@@ -51,6 +51,7 @@ constexpr const wchar_t* kWindowTitle = L"RA2 Yuri's Revenge - LuaAPI Engine";
 
 constexpr int kDefaultClientW = 580;
 constexpr int kDefaultClientH = 640;
+constexpr int kMaxContentWidth = 640;  // Максимальная ширина контента (центрируется на широких мониторах)
 constexpr int kPad = 20;
 constexpr int kCardH = 76;     // Высота карточки
 constexpr int kCardGap = 8;    // Зазор между карточками
@@ -190,17 +191,22 @@ struct Layout {
 };
 Layout ComputeLayout(int w, int h) {
     Layout l{};
-    int btnWidth = (w - kPad * 2 - 12) / 2;
-    l.launch = RECT{ kPad, 96, kPad + btnWidth, 140 };
-    l.inject = RECT{ kPad + btnWidth + 12, 96, w - kPad, 140 };
-    l.lang   = RECT{ w - 110, 16, w - 20, 44 };
-    l.fs     = RECT{ w - 176, 16, w - 120, 44 };   // кнопка полноэкранного режима (слева от RU/EN)
+    // Ограничиваем ширину контента и центрируем его, чтобы в fullscreen на широких
+    // мониторах кнопки/карточки не растягивались на весь экран, оставляя пустые поля.
+    int effW = std::min(w, kMaxContentWidth);
+    int xOffset = (w - effW) / 2;
+
+    int btnWidth = (effW - kPad * 2 - 12) / 2;
+    l.launch = RECT{ xOffset + kPad, 96, xOffset + kPad + btnWidth, 140 };
+    l.inject = RECT{ xOffset + kPad + btnWidth + 12, 96, xOffset + effW - kPad, 140 };
+    l.lang   = RECT{ xOffset + effW - 110, 16, xOffset + effW - 20, 44 };
+    l.fs     = RECT{ xOffset + effW - 176, 16, xOffset + effW - 120, 44 };   // кнопка полноэкранного режима (слева от RU/EN)
     // list area строго ПОД заголовком секции "МОДЫ" (g_rcLaunch.bottom+36), не перекрывает кнопки
     int sectionBottom = l.launch.bottom + 36; // y=176 при дефолте
-    l.list   = RECT{ kPad, sectionBottom + 8, w - kPad, h - kPad * 3 - 80 };
+    l.list   = RECT{ xOffset + kPad, sectionBottom + 8, xOffset + effW - kPad, h - kPad * 3 - 80 };
     l.footerTop = h - 136; l.footerBottom = h - 92;
     l.bannerTop = h - 92; l.bannerBottom = h - 68;
-    l.save = RECT{ w - kPad - 200, h - 55, w - kPad, h - 17 };
+    l.save = RECT{ xOffset + effW - kPad - 200, h - 55, xOffset + effW - kPad, h - 17 };
     return l;
 }
 RECT ListRect() {
@@ -819,10 +825,12 @@ void PaintAll(HDC dc) {
     DeleteObject(bg);
 
     int w = g_clientW;
+    int effW = std::min(w, kMaxContentWidth);
+    int xOffset = (w - effW) / 2;
 
     // ---- Header ----
     DrawTextR(dc, L"RED ALERT 2 - LUA ENGINE",
-              RECT{kPad, 14, w - 186, 42}, g_fontTitle, kText);
+              RECT{xOffset + kPad, 14, xOffset + effW - 186, 42}, g_fontTitle, kText);
 
     // Fullscreen toggle (top right, слева от RU/EN)
     FillRoundRect(dc, g_rcFs, g_hoverFs ? kHover : kSurface, 14);
@@ -834,14 +842,14 @@ void PaintAll(HDC dc) {
     DrawTextR(dc, L"RU / EN", g_rcLang, g_fontSmall,
               g_hoverLang ? kText : kDim, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 
-    DrawTextR(dc, Str_Subtitle(), RECT{kPad, 44, w - kPad, 64}, g_fontSmall, kDim);
+    DrawTextR(dc, Str_Subtitle(), RECT{xOffset + kPad, 44, xOffset + effW - kPad, 64}, g_fontSmall, kDim);
 
     // ---- Status row ----
     {
-        int dotX = kPad + 6;
+        int dotX = xOffset + kPad + 6;
         int cy = 82;
         DrawCircle(dc, dotX, cy, 5, CurrentStatusColor());
-        DrawTextR(dc, CurrentStatusText(), RECT{kPad + 18, cy - 12, w - kPad, cy + 12}, g_fontReg, kText);
+        DrawTextR(dc, CurrentStatusText(), RECT{xOffset + kPad + 18, cy - 12, xOffset + effW - kPad, cy + 12}, g_fontReg, kText);
     }
 
     // ---- Action buttons ----
@@ -860,7 +868,7 @@ void PaintAll(HDC dc) {
     }
 
     // ---- Section label ----
-    DrawTextR(dc, Str_ModsHeader(), RECT{kPad, g_rcLaunch.bottom + 16, 260, g_rcLaunch.bottom + 36},
+    DrawTextR(dc, Str_ModsHeader(), RECT{xOffset + kPad, g_rcLaunch.bottom + 16, xOffset + 260, g_rcLaunch.bottom + 36},
               g_fontSmall, kDim);
 
     // ---- Mod cards ---- (СТРОГО внутри маски списка)
@@ -876,7 +884,7 @@ void PaintAll(HDC dc) {
     // Empty state UX: show hint when no mods detected (внутри маски)
     if (g_mods.empty()) {
         DrawTextR(dc, L10N(L"Моды не найдены — поместите папки в scripts/mods/", L"No mods found — place folders in scripts/mods/"),
-                  RECT{kPad, l.list.top + 20, g_clientW - kPad, l.list.top + 44}, g_fontSmall, kDim, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+                  RECT{xOffset + kPad, l.list.top + 20, xOffset + effW - kPad, l.list.top + 44}, g_fontSmall, kDim, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
     }
 
     // Отрисовка карточек модов с учетом скролла (kCardH=76, kCardGap=8, шаг 84, отступ под скроллбар)
@@ -966,13 +974,13 @@ void PaintAll(HDC dc) {
             bannerBottom = g_clientH - kPad - 38;
             bannerTop = bannerBottom - 24;
         }
-        DrawTextR(dc, warning, RECT{kPad, bannerTop, w - kPad, bannerBottom}, g_fontSmall, kOrange);
+        DrawTextR(dc, warning, RECT{xOffset + kPad, bannerTop, xOffset + effW - kPad, bannerBottom}, g_fontSmall, kOrange);
     }
 
     // ---- Footer ----
     Layout fl = ComputeLayout(g_clientW, g_clientH);
     DrawTextR(dc, Str_ActiveCount(EnabledModCount(), static_cast<int>(g_mods.size())),
-              RECT{kPad, fl.footerTop, 280, fl.footerBottom}, g_fontReg, kDim);
+              RECT{xOffset + kPad, fl.footerTop, xOffset + 280, fl.footerBottom}, g_fontReg, kDim);
 
     // Save button is already computed in ComputeLayout and synced in RecalcLayout/Clamp
     // Apply same clamping as layout to handle banner overlap, then sync global
@@ -988,7 +996,7 @@ void PaintAll(HDC dc) {
             saveBottom = g_clientH - kPad;
             saveTop = saveBottom - 38;
         }
-        g_rcSave = RECT{ g_clientW - kPad - 200, saveTop, g_clientW - kPad, saveBottom };
+        g_rcSave = RECT{ xOffset + effW - kPad - 200, saveTop, xOffset + effW - kPad, saveBottom };
     }
     // Dim save button when launching
     COLORREF saveFill = g_launching ? kBadge : (g_hoverSave ? kGreenHover : kGreen);
