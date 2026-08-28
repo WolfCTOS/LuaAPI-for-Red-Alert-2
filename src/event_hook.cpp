@@ -151,6 +151,15 @@ void __fastcall Hooked_ActiveClickWith(FootClass* pThis, void* /*edx*/, int acti
         TechnoClass* pShip = static_cast<TechnoClass*>(pThis);
         TechnoClass* pTargetTechno = ObjectToTechno(pTarget);
 
+        // ==== ДИАГНОСТИКА КЭШИРОВАНИЯ ====
+        // Логируем результат обоих фильтров, чтобы понять, почему кэш не заполняется.
+        LUA_LOG_CRITICAL("ActiveClickWith: action==Attack, pShip=0x{:X}, isSpawner={}, pTarget=0x{:X}, isLive={}",
+                         reinterpret_cast<uintptr_t>(pShip),
+                         IsSpawnerShip(pShip) ? 1 : 0,
+                         reinterpret_cast<uintptr_t>(pTargetTechno),
+                         IsLiveTechno(pTargetTechno) ? 1 : 0);
+        // ====================================
+
         if (IsSpawnerShip(pShip) && IsLiveTechno(pTargetTechno)) {
             g_PlayerTargetOverride[pShip] = TargetClass(static_cast<AbstractClass*>(pTarget));
             LUA_LOG_INFO("[EventHook] player Attack order via ActiveClickWith: '{}' -> '{}' cached",
