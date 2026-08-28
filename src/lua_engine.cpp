@@ -304,7 +304,9 @@ void OnGameFrame() {
 
     LuaAPI::ProcessDisabledObjects(Unsorted::CurrentFrame);
     LuaAPI::SubTurretManager::Instance().UpdateAll();
+    LUA_LOG_CRITICAL("Frame: calling EventHook::Update()");
     LuaAPI::EventHook::Update();
+    LUA_LOG_CRITICAL("Frame: EventHook::Update() returned");
 
     // Fire pre-damage callbacks registered by mods (OnPreDamage).
     if (g_L && g_scriptReady) {

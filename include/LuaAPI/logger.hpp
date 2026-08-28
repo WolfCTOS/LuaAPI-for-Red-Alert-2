@@ -48,7 +48,25 @@ public:
         }
     }
 
+    // Принудительный сброс буфера лога на диск. Критично для диагностики крашей:
+    // при аварийном завершении процесса невыгруженный буфер spdlog теряется.
+    void FlushLog() {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (logger_) {
+            // __try не может находиться в функции с локальными объектами (C2712),
+            // поэтому реальный flush вынесен в отдельную статическую функцию.
+            FlushImpl(logger_.get());
+        }
+    }
+
 private:
+    // Не может иметь локальные объекты с деструктором (иначе C2712 при __try).
+    static void FlushImpl(spdlog::logger* pLogger) {
+        if (!pLogger) return;
+        __try { pLogger->flush(); }
+        __except (EXCEPTION_EXECUTE_HANDLER) { }
+    }
+
     Logger() = default;
 
     std::shared_ptr<spdlog::logger> logger_;
@@ -61,3 +79,12 @@ private:
 #define LUA_LOG_INFO(...)  ::LuaAPI::Logger::instance().log(spdlog::level::info,  __FILE__, __LINE__, __VA_ARGS__)
 #define LUA_LOG_WARN(...)  ::LuaAPI::Logger::instance().log(spdlog::level::warn,  __FILE__, __LINE__, __VA_ARGS__)
 #define LUA_LOG_ERROR(...) ::LuaAPI::Logger::instance().log(spdlog::level::err,   __FILE__, __LINE__, __VA_ARGS__)
+
+// LUA_LOG_CRITICAL: пишет с уровнем critical и НЕМЕДЛЕННО сбрасывает буфер на диск.
+// Это гарантирует, что последнее сообщение перед крашем (Access Violation / нет)
+// попадает в лог-файл, а не теряется в невыгруженном буфере spdlog.
+#define LUA_LOG_CRITICAL(...)              \
+    do {                                    \
+        ::LuaAPI::Logger::instance().log(spdlog::level::critical, __FILE__, __LINE__, __VA_ARGS__); \
+        ::LuaAPI::Logger::instance().FlushLog(); \
+    } while (0)

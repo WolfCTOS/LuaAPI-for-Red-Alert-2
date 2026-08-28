@@ -132,9 +132,11 @@ void __fastcall Hooked_ActiveClickWith(FootClass* pThis, void* /*edx*/, int acti
     }
     LUA_LOG_INFO("[EventHook] ActiveClickWith called, this=0x{:X} [{}], action=0x{:X}",
                  reinterpret_cast<uintptr_t>(pThis), thisClass, actionU);
+    LUA_LOG_CRITICAL("ActiveClickWith: about to call original, this=0x{:X}, action=0x{:X}",
+                     reinterpret_cast<uintptr_t>(pThis), actionU);
     // =======================================
 
-    // Приказ атаки: action == Attack(0x0E), цель — живое техно, корабль — спаунер.
+    // Приказ атаки: action == Attack(0x5), цель — живое техно, корабль — спаунер.
     if (actionU == static_cast<unsigned int>(kActionAttack)) {
         TechnoClass* pShip = static_cast<TechnoClass*>(pThis);
         TechnoClass* pTargetTechno = ObjectToTechno(pTarget);
@@ -150,6 +152,7 @@ void __fastcall Hooked_ActiveClickWith(FootClass* pThis, void* /*edx*/, int acti
     if (g_pOriginalActiveClickWith) {
         g_pOriginalActiveClickWith(pThis, action, pTarget);
     }
+    LUA_LOG_CRITICAL("ActiveClickWith: returned from original");
 }
 
 bool Install() {
@@ -219,13 +222,18 @@ void Update() {
         __except (EXCEPTION_EXECUTE_HANDLER) { pCurrent = nullptr; }
 
         if (pCurrent != pCached) {
+            LUA_LOG_CRITICAL("Update: forcing target for ship=0x{:X}, target=0x{:X}",
+                             reinterpret_cast<uintptr_t>(pShip),
+                             reinterpret_cast<uintptr_t>(pCached));
             __try {
                 pShip->Target = pCached;
                 pShip->QueueMission(Mission::Attack, false);
                 pShip->NextMission();
+                LUA_LOG_CRITICAL("Update: forced target done");
                 LUA_LOG_INFO("[EventHook] '{}' drift detected -> forcing back to '{}'",
                              SafeTechnoName(pShip), SafeTechnoName(pCached));
             } __except (EXCEPTION_EXECUTE_HANDLER) {
+                LUA_LOG_CRITICAL("Update: forced target FAILED (SEH caught)");
             }
         }
         ++it;
