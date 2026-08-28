@@ -24,6 +24,10 @@
 #pragma comment(lib, "dwmapi.lib")
 #pragma comment(lib, "uxtheme.lib")
 
+// Глобальные функции, определённые ниже на уровне файла; видимы и из анонимного namespace.
+void RecalcLayout();
+void ToggleFullscreen();
+
 namespace {
 
 // ---------------------------------------------------------------------------
@@ -148,12 +152,18 @@ RECT g_rcLaunch{};
 RECT g_rcInject{};
 RECT g_rcSave{};
 RECT g_rcLang{};
+RECT g_rcFs{};
 bool g_hoverLaunch = false;
 bool g_hoverInject = false;
 bool g_hoverSave = false;
 bool g_hoverLang = false;
+bool g_hoverFs = false;
 bool g_trackingMouse = false;
 bool g_headless = false;
+bool g_fullscreen = false;
+RECT g_windowedRect{};  // исходная геометрия окна для возврата из полного экрана
+
+// RecCalcLayout/ToggleFullscreen определены ниже на уровне файла (глобально).
 
 // Drag-and-drop reorder state for the mod cards.
 struct DragState {
@@ -175,7 +185,7 @@ struct InjectResult {
 
 // Layout centralization - single source of truth
 struct Layout {
-    RECT launch, inject, lang, save, list;
+    RECT launch, inject, lang, fs, save, list;
     int footerTop, footerBottom, bannerTop, bannerBottom;
 };
 Layout ComputeLayout(int w, int h) {
@@ -184,6 +194,7 @@ Layout ComputeLayout(int w, int h) {
     l.launch = RECT{ kPad, 96, kPad + btnWidth, 140 };
     l.inject = RECT{ kPad + btnWidth + 12, 96, w - kPad, 140 };
     l.lang   = RECT{ w - 110, 16, w - 20, 44 };
+    l.fs     = RECT{ w - 176, 16, w - 120, 44 };   // кнопка полноэкранного режима (слева от RU/EN)
     // list area строго ПОД заголовком секции "МОДЫ" (g_rcLaunch.bottom+36), не перекрывает кнопки
     int sectionBottom = l.launch.bottom + 36; // y=176 при дефолте
     l.list   = RECT{ kPad, sectionBottom + 8, w - kPad, h - kPad * 3 - 80 };
@@ -811,7 +822,12 @@ void PaintAll(HDC dc) {
 
     // ---- Header ----
     DrawTextR(dc, L"RED ALERT 2 - LUA ENGINE",
-              RECT{kPad, 14, w - 130, 42}, g_fontTitle, kText);
+              RECT{kPad, 14, w - 186, 42}, g_fontTitle, kText);
+
+    // Fullscreen toggle (top right, слева от RU/EN)
+    FillRoundRect(dc, g_rcFs, g_hoverFs ? kHover : kSurface, 14);
+    DrawTextR(dc, L"\u26F6", g_rcFs, g_fontSmall,
+              g_hoverFs ? kText : kDim, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 
     // Language toggle (top right)
     FillRoundRect(dc, g_rcLang, g_hoverLang ? kHover : kSurface, 14);
@@ -1039,6 +1055,10 @@ void OnLeftDown(POINT pt) {
         InvalidateRect(g_hwnd, nullptr, TRUE);
         return;
     }
+    if (PointIn(g_rcFs, pt)) {
+        ToggleFullscreen();
+        return;
+    }
     if (g_launching || g_injecting) return; // disable clicks while busy
     if (PointIn(g_rcLaunch, pt)) { DoLaunchGame(); return; }
     if (PointIn(g_rcInject, pt)) { DoInjectAttach(); return; }
@@ -1065,9 +1085,42 @@ void RecalcLayout() {
     g_rcLaunch = l.launch;
     g_rcInject = l.inject;
     g_rcLang = l.lang;
+    g_rcFs = l.fs;
     g_rcSave = l.save;
     // keep clamped
     ClampScroll();
+}
+
+// Переключение полноэкранного режима (borderless). Сохраняет окно-геометрию при входе
+// и восстанавливает её при выходе. Клиентская область обновляется через WM_SIZE.
+void ToggleFullscreen() {
+    if (!g_hwnd) return;
+
+    if (!g_fullscreen) {
+        GetWindowRect(g_hwnd, &g_windowedRect);
+        LONG style = GetWindowLongW(g_hwnd, GWL_STYLE);
+        LONG exstyle = GetWindowLongW(g_hwnd, GWL_EXSTYLE);
+        SetWindowLongW(g_hwnd, GWL_STYLE, (style & ~WS_OVERLAPPEDWINDOW) | WS_POPUP);
+        SetWindowLongW(g_hwnd, GWL_EXSTYLE, exstyle | WS_EX_TOPMOST);
+        SetWindowPos(g_hwnd, HWND_TOPMOST, 0, 0,
+                     GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN),
+                     SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+        g_fullscreen = true;
+    } else {
+        LONG style = GetWindowLongW(g_hwnd, GWL_STYLE);
+        LONG exstyle = GetWindowLongW(g_hwnd, GWL_EXSTYLE);
+        SetWindowLongW(g_hwnd, GWL_STYLE, (style & ~WS_POPUP) |
+                      WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_THICKFRAME);
+        SetWindowLongW(g_hwnd, GWL_EXSTYLE, exstyle & ~WS_EX_TOPMOST);
+        SetWindowPos(g_hwnd, HWND_NOTOPMOST,
+                     g_windowedRect.left, g_windowedRect.top,
+                     g_windowedRect.right - g_windowedRect.left,
+                     g_windowedRect.bottom - g_windowedRect.top,
+                     SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_NOZORDER);
+        g_fullscreen = false;
+    }
+    RecalcLayout();
+    InvalidateRect(g_hwnd, nullptr, TRUE);
 }
 
 LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
@@ -1092,6 +1145,16 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         RecalcLayout();
         ClampScroll();
         InvalidateRect(hwnd, nullptr, TRUE);
+        return 0;
+    case WM_KEYDOWN:
+        if (wParam == VK_F11) {
+            ToggleFullscreen();
+            return 0;
+        }
+        if (wParam == VK_ESCAPE && g_fullscreen) {
+            ToggleFullscreen();
+            return 0;
+        }
         return 0;
     case WM_MOUSEMOVE: {
         POINT pt{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
@@ -1128,14 +1191,16 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         bool hI = (!g_launching && !g_injecting) && PointIn(g_rcInject, pt);
         bool hS = (!g_launching && !g_injecting) && PointIn(g_rcSave, pt);
         bool hG = PointIn(g_rcLang, pt);
+        bool hF = PointIn(g_rcFs, pt);
         bool overList = false;
         // Only invalidate overList if it changes hover state of cards - throttle
         if ((hL != g_hoverLaunch) || (hI != g_hoverInject) ||
-            (hS != g_hoverSave) || (hG != g_hoverLang)) {
+            (hS != g_hoverSave) || (hG != g_hoverLang) || (hF != g_hoverFs)) {
             g_hoverLaunch = hL;
             g_hoverInject = hI;
             g_hoverSave = hS;
             g_hoverLang = hG;
+            g_hoverFs = hF;
             InvalidateRect(hwnd, nullptr, TRUE);
         } else {
             // check card hover without invalidating every move: only if card under cursor changed
@@ -1158,7 +1223,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     }
     case WM_MOUSELEAVE:
         g_trackingMouse = false;
-        g_hoverLaunch = g_hoverInject = g_hoverSave = g_hoverLang = false;
+        g_hoverLaunch = g_hoverInject = g_hoverSave = g_hoverLang = g_hoverFs = false;
         InvalidateRect(hwnd, nullptr, TRUE);
         return 0;
     case WM_MOUSEWHEEL: {
