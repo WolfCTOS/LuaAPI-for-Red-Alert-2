@@ -132,9 +132,10 @@ void __fastcall Hooked_ActiveClickWith(FootClass* pThis, void* /*edx*/, int acti
     }
     LUA_LOG_INFO("[EventHook] ActiveClickWith called, this=0x{:X} [{}], action=0x{:X}",
                  reinterpret_cast<uintptr_t>(pThis), thisClass, actionU);
-    LUA_LOG_CRITICAL("ActiveClickWith: about to call original, this=0x{:X}, action=0x{:X}",
+    // ==== ДИАГНОСТИКА КРАША (шаг 1) ====
+    // ПРОВЕРКА: не вызываем оригинал, чтобы понять, крашится ли игра из-за него.
+    LUA_LOG_CRITICAL("ActiveClickWith: will NOT call original, this=0x{:X}, action=0x{:X}",
                      reinterpret_cast<uintptr_t>(pThis), actionU);
-    // =======================================
 
     // Приказ атаки: action == Attack(0x5), цель — живое техно, корабль — спаунер.
     if (actionU == static_cast<unsigned int>(kActionAttack)) {
@@ -148,11 +149,11 @@ void __fastcall Hooked_ActiveClickWith(FootClass* pThis, void* /*edx*/, int acti
         }
     }
 
-    // Всегда вызываем оригинал — клик обрабатывается движком как обычно.
-    if (g_pOriginalActiveClickWith) {
-        g_pOriginalActiveClickWith(pThis, action, pTarget);
-    }
-    LUA_LOG_CRITICAL("ActiveClickWith: returned from original");
+    // ВЫЗОВ ОРИГИНАЛА ЗАКОММЕНТИРОВАН (диагностика). Если краш уйдёт — проблема в оригинале.
+    // if (g_pOriginalActiveClickWith) {
+    //     g_pOriginalActiveClickWith(pThis, action, pTarget);
+    // }
+    LUA_LOG_CRITICAL("ActiveClickWith: original skipped");
 }
 
 bool Install() {
@@ -199,19 +200,31 @@ void Uninstall() {
 }
 
 void Update() {
+    LUA_LOG_CRITICAL("Update: begin, overrideCount={}", g_PlayerTargetOverride.size());
+
     for (auto it = g_PlayerTargetOverride.begin(); it != g_PlayerTargetOverride.end();) {
         TechnoClass* pShip = it->first;
         TargetClass cachedTarget = it->second;
 
         // 1. Корабль-владелец мёртв/невалиден — удаляем запись.
+        LUA_LOG_CRITICAL("Update: entry ship=0x{:X}, isSpawner={}",
+                         reinterpret_cast<uintptr_t>(pShip),
+                         IsSpawnerShip(pShip) ? 1 : 0);
         if (!IsSpawnerShip(pShip)) {
+            LUA_LOG_CRITICAL("Update: erasing entry (ship not spawner) ship=0x{:X}",
+                             reinterpret_cast<uintptr_t>(pShip));
             it = g_PlayerTargetOverride.erase(it);
             continue;
         }
 
         // 2. Кэшированная цель мертва/невалидна — удаляем запись.
         TechnoClass* pCached = TargetClassToTechno(cachedTarget);
+        LUA_LOG_CRITICAL("Update: cached=0x{:X}, isLive={}",
+                         reinterpret_cast<uintptr_t>(pCached),
+                         IsLiveTechno(pCached) ? 1 : 0);
         if (!IsLiveTechno(pCached)) {
+            LUA_LOG_CRITICAL("Update: erasing entry (target dead) ship=0x{:X}",
+                             reinterpret_cast<uintptr_t>(pShip));
             it = g_PlayerTargetOverride.erase(it);
             continue;
         }
@@ -221,6 +234,11 @@ void Update() {
         __try { pCurrent = pShip->Target; }
         __except (EXCEPTION_EXECUTE_HANDLER) { pCurrent = nullptr; }
 
+        LUA_LOG_CRITICAL("Update: ship=0x{:X}, currentTarget=0x{:X}, cached=0x{:X}, drift={}",
+                         reinterpret_cast<uintptr_t>(pShip),
+                         reinterpret_cast<uintptr_t>(pCurrent),
+                         reinterpret_cast<uintptr_t>(pCached),
+                         (pCurrent != pCached) ? 1 : 0);
         if (pCurrent != pCached) {
             LUA_LOG_CRITICAL("Update: forcing target for ship=0x{:X}, target=0x{:X}",
                              reinterpret_cast<uintptr_t>(pShip),
@@ -238,6 +256,8 @@ void Update() {
         }
         ++it;
     }
+
+    LUA_LOG_CRITICAL("Update: end");
 }
 
 void ClearAll() {
