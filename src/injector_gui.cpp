@@ -1130,7 +1130,7 @@ void ToggleFullscreen() {
     } else {
         LONG style = GetWindowLongW(g_hwnd, GWL_STYLE);
         SetWindowLongW(g_hwnd, GWL_STYLE, (style & ~WS_POPUP) |
-                      WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_THICKFRAME);
+                      WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_THICKFRAME);
         SetWindowPos(g_hwnd, HWND_TOP,
                      g_windowedRect.left, g_windowedRect.top,
                      g_windowedRect.right - g_windowedRect.left,
@@ -1495,7 +1495,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
 
     // Compute window size from desired client area (580 x 640).
     RECT rc{ 0, 0, kDefaultClientW, kDefaultClientH };
-    AdjustWindowRectEx(&rc, WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX, FALSE, 0);
+    AdjustWindowRectEx(&rc, WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX, FALSE, 0);
     int wndW = rc.right - rc.left;
     int wndH = rc.bottom - rc.top;
 
@@ -1503,7 +1503,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
     int y = (GetSystemMetrics(SM_CYSCREEN) - wndH) / 2;
 
     g_hwnd = CreateWindowExW(0, kWindowClass, kWindowTitle,
-                             WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_THICKFRAME,
+                             WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_THICKFRAME,
                              x, y, wndW, wndH,
                              nullptr, nullptr, hInstance, nullptr);
     if (!g_hwnd)
