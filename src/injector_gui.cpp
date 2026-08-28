@@ -114,7 +114,9 @@ std::wstring g_gameName;
 AppState g_appState = AppState::Ready;
 bool g_dirty = false;
 bool g_launching = false;
+bool g_injecting = false;
 constexpr UINT WM_APP_LAUNCH_DONE = WM_APP + 1;
+constexpr UINT WM_APP_INJECT_DONE = WM_APP + 2;
 constexpr UINT kToastTimerId = 1;
 
 // Translatable status: store the KEY, localize at paint time so the
@@ -152,6 +154,24 @@ bool g_hoverSave = false;
 bool g_hoverLang = false;
 bool g_trackingMouse = false;
 bool g_headless = false;
+
+// Drag-and-drop reorder state for the mod cards.
+struct DragState {
+    bool pendingClick = false;   // mouse-down on a card, not yet decided click vs drag
+    bool dragging = false;       // drag in progress (moved > 6px)
+    int pendingIndex = -1;       // card index where mouse-down happened
+    int dragIndex = -1;          // current index of the dragged card
+    POINT downPos{0, 0};         // client coords of the mouse-down
+    int dragAnchorY = 0;         // client Y anchor for step-based swapping
+};
+DragState g_dragState;
+
+// Worker-thread result for async injection, posted to the UI thread via WM_APP_INJECT_DONE.
+struct InjectResult {
+    bool ok = false;
+    DWORD pid = 0;
+    std::wstring error;
+};
 
 // Layout centralization - single source of truth
 struct Layout {
@@ -383,7 +403,18 @@ bool InjectDllIntoProcess(DWORD pid, const std::wstring& dllPath, std::wstring* 
         return false;
     }
 
-    WaitForSingleObject(thread, INFINITE);
+    DWORD waitResult = WaitForSingleObject(thread, 5000);
+    if (waitResult == WAIT_TIMEOUT) {
+        // Не считаем это успехом и не блокируем окно: target не ответил на LoadLibraryW.
+        if (error) *error = L10N(
+            L"\u0412\u043D\u0435\u0434\u0440\u0435\u043D\u0438\u0435 \u0437\u0430\u0432\u0438\u0441\u043B\u043E: \u0446\u0435\u043B\u0435\u0432\u043E\u0439 \u043F\u0440\u043E\u0446\u0435\u0441\u0441 \u043D\u0435 \u0437\u0430\u0433\u0440\u0443\u0437\u0438\u043B DLL \u0437\u0430 5000 \u043C\u0441",
+            L"Injection timed out: target did not load DLL within 5000 ms (WAIT_TIMEOUT)");
+        CloseHandle(thread);
+        VirtualFreeEx(process, remoteBase, 0, MEM_RELEASE);
+        CloseHandle(process);
+        return false;
+    }
+
     DWORD exitCode = 0;
     GetExitCodeThread(thread, &exitCode);
     CloseHandle(thread);
@@ -512,7 +543,16 @@ void DoLaunchGameAsync(HWND hwnd) {
     PostMessageW(hwnd, WM_APP_LAUNCH_DONE, (WPARAM)injected, (LPARAM)foundPid);
 }
 
+void DoInjectAttachAsync(HWND hwnd, DWORD pid, const std::wstring& dllPath) {
+    std::wstring error;
+    bool ok = InjectDllIntoProcess(pid, dllPath, &error);
+    PostMessageW(hwnd, WM_APP_INJECT_DONE, 0,
+                 reinterpret_cast<LPARAM>(new InjectResult{ ok, pid, error }));
+}
+
 void DoInjectAttach() {
+    if (g_injecting) return;
+
     DWORD pid = FindTargetProcess();
     if (pid == 0) {
         g_appState = AppState::StatusError;
@@ -524,20 +564,25 @@ void DoInjectAttach() {
         return;
     }
 
-    g_gamePid = pid;
     std::wstring dllPath = GetExeDirectory() + L"\\LuaAPI.dll";
-    std::wstring error;
+    if (!FileExists(dllPath)) {
+        g_appState = AppState::StatusError;
+        SetStatusKey(StatusKey::DllMissing);
+        MessageBoxW(g_hwnd, (L"\u0424\u0430\u0439\u043B \u043D\u0435 \u043D\u0430\u0439\u0434\u0435\u043D:\n" + dllPath).c_str(),
+                    L"\u041E\u0448\u0438\u0431\u043A\u0430", MB_ICONERROR | MB_OK);
+        return;
+    }
+
+    g_gamePid = pid;
+    g_injecting = true;
     g_appState = AppState::Busy;
     SetStatusKey(StatusKey::BusyInject);
-    if (InjectDllIntoProcess(pid, dllPath, &error)) {
-        g_appState = AppState::Injected;
-        SetStatusKey(StatusKey::Injected);
-    } else {
-        g_appState = AppState::StatusError;
-        SetStatusKey(StatusKey::InjectFail);
-        MessageBoxW(g_hwnd, (L"\u0412\u043D\u0435\u0434\u0440\u0435\u043D\u0438\u0435 \u043D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C:\n" + error).c_str(),
-                    L"\u041E\u0448\u0438\u0431\u043A\u0430", MB_ICONERROR | MB_OK);
-    }
+    InvalidateRect(g_hwnd, nullptr, TRUE);
+
+    // Async: работа внедрения уходит в отдельный поток, результат возвращается через
+    // WM_APP_INJECT_DONE, чтобы окно не замерзало (InjectDllIntoProcess внутри имеет таймаут).
+    HWND hwnd = g_hwnd;
+    std::thread([hwnd, pid, dllPath]() { DoInjectAttachAsync(hwnd, pid, dllPath); }).detach();
 }
 
 // ---------------------------------------------------------------------------
@@ -672,6 +717,27 @@ void ScanMods() {
     } while (FindNextFileW(find, &fd));
 
     FindClose(find);
+
+    // Уважаем пользовательский порядок, сохранённый в active_mods.txt: порядок строк файла
+    // = порядок включённых модов после реордера. Моды из файла идут первыми — в их порядке,
+    // прочие (новые / выключенные) — после, в файловом (алфавитном) порядке, как раньше.
+    if (!activeIds.empty()) {
+        std::vector<ModEntry> ordered;
+        std::vector<bool> used(g_mods.size(), false);
+        for (const auto& id : activeIds) {
+            for (size_t i = 0; i < g_mods.size(); ++i) {
+                if (!used[i] && _wcsicmp(g_mods[i].id.c_str(), id.c_str()) == 0) {
+                    ordered.push_back(std::move(g_mods[i]));
+                    used[i] = true;
+                    break;
+                }
+            }
+        }
+        for (size_t i = 0; i < g_mods.size(); ++i) {
+            if (!used[i]) ordered.push_back(std::move(g_mods[i]));
+        }
+        g_mods = std::move(ordered);
+    }
 }
 
 void SaveMods() {
@@ -771,9 +837,9 @@ void PaintAll(HDC dc) {
         DrawTextR(dc, Str_LaunchBtn(), g_rcLaunch, g_fontHeader, kText,
                   DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 
-        COLORREF blueFill = g_hoverInject ? LerpColor(kBlue, kText, 0.15f) : kBlue;
+        COLORREF blueFill = g_injecting ? kBadge : (g_hoverInject ? LerpColor(kBlue, kText, 0.15f) : kBlue);
         FillRoundRect(dc, g_rcInject, blueFill, 10);
-        DrawTextR(dc, Str_InjectBtn(), g_rcInject, g_fontHeader, kText,
+        DrawTextR(dc, Str_InjectBtn(), g_rcInject, g_fontHeader, g_injecting ? kDim : kText,
                   DT_CENTER | DT_VCENTER | DT_SINGLELINE);
     }
 
@@ -809,8 +875,9 @@ void PaintAll(HDC dc) {
             RECT rcCard = { l.list.left, yPos, l.list.left + cardW, yPos + kCardH };
             RECT card = rcCard; // для hover/клика
             bool hovered = PtInRect(&card, cursor);
+            bool isDrag = g_dragState.dragging && g_dragState.dragIndex == static_cast<int>(i);
 
-            FillRoundRect(dc, card, hovered ? kHover : kSurface, 10,
+            FillRoundRect(dc, card, isDrag ? kBlue : (hovered ? kHover : kSurface), 10,
                           m.enabled ? kGreen : kBadge, m.enabled);
 
             RECT box{ rcCard.left + 12, yPos + 16, rcCard.left + 32, yPos + 36 };
@@ -819,7 +886,15 @@ void PaintAll(HDC dc) {
                 HFONT old = static_cast<HFONT>(SelectObject(dc, g_fontReg));
                 SetTextColor(dc, kText);
                 SetBkMode(dc, TRANSPARENT);
-                DrawTextW(dc, L"[x]", -1, &box, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+                if (m.enabled) {
+                    HPEN pen = CreatePen(PS_SOLID, 2, kText);
+                    HPEN old = static_cast<HPEN>(SelectObject(dc, pen));
+                    MoveToEx(dc, box.left + 4,  box.top + 10, nullptr);
+                    LineTo(dc,   box.left + 8,  box.top + 14);
+                    LineTo(dc,   box.left + 16, box.top + 5);
+                    SelectObject(dc, old);
+                    DeleteObject(pen);
+                }
                 SelectObject(dc, old);
             }
 
@@ -934,6 +1009,22 @@ void PaintAll(HDC dc) {
 
 bool PointIn(const RECT& r, POINT p) { return PtInRect(&r, p) != FALSE; }
 
+// Возвращает индекс карточки мода под курсором (с учётом скролла) или -1.
+int CardIndexAt(POINT pt) {
+    Layout l = ComputeLayout(g_clientW, g_clientH);
+    if (pt.y < l.list.top || pt.y > l.list.bottom) return -1;
+    int listH = l.list.bottom - l.list.top;
+    int totalH = static_cast<int>(g_mods.size()) * kCardStep;
+    int cardW = (l.list.right - l.list.left) - (totalH > listH ? (kScrollW + 8) : 0);
+    int yPos = l.list.top + 4 - g_scroll;
+    for (size_t i = 0; i < g_mods.size(); ++i) {
+        RECT rcCard = { l.list.left, yPos, l.list.left + cardW, yPos + kCardH };
+        if (PointIn(rcCard, pt)) return static_cast<int>(i);
+        yPos += kCardStep;
+    }
+    return -1;
+}
+
 POINT CursorInClient() {
     POINT p;
     GetCursorPos(&p);
@@ -948,29 +1039,21 @@ void OnLeftDown(POINT pt) {
         InvalidateRect(g_hwnd, nullptr, TRUE);
         return;
     }
-    if (g_launching) return; // disable clicks while launching
+    if (g_launching || g_injecting) return; // disable clicks while busy
     if (PointIn(g_rcLaunch, pt)) { DoLaunchGame(); return; }
     if (PointIn(g_rcInject, pt)) { DoInjectAttach(); return; }
     if (PointIn(g_rcSave, pt)) { SaveMods(); return; }
 
-    Layout l = ComputeLayout(g_clientW, g_clientH);
-    int listH = l.list.bottom - l.list.top;
-    int totalH = static_cast<int>(g_mods.size()) * kCardStep;
-    int cardW = (l.list.right - l.list.left) - (totalH > listH ? (kScrollW + 8) : 0);
-    int yPos = l.list.top + 4 - g_scroll;
-    for (size_t i = 0; i < g_mods.size(); ++i) {
-        auto& m = g_mods[i];
-        if (yPos > l.list.bottom + kCardH) break;
-        if (yPos + kCardH < l.list.top) { yPos += kCardStep; continue; }
-        RECT rcCard = { l.list.left, yPos, l.list.left + cardW, yPos + kCardH };
-        RECT box{ rcCard.left + 12, yPos + 16, rcCard.left + 32, yPos + 36 };
-        if (PointIn(box, pt) || PointIn(rcCard, pt)) {
-            m.enabled = !m.enabled;
-            g_dirty = true;
-            InvalidateRect(g_hwnd, nullptr, TRUE);
-            return;
-        }
-        yPos += kCardStep;
+    // Клик по карточке: держим захват мыши, чтобы отличить обычный клик (тоггл чекбокса)
+    // от перетаскивания (сдвиг > 6px) в WM_MOUSEMOVE.
+    int idx = CardIndexAt(pt);
+    if (idx >= 0) {
+        g_dragState.pendingClick = true;
+        g_dragState.pendingIndex = idx;
+        g_dragState.downPos = pt;
+        g_dragState.dragging = false;
+        g_dragState.dragIndex = -1;
+        SetCapture(g_hwnd);
     }
 }
 
@@ -1012,9 +1095,38 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         return 0;
     case WM_MOUSEMOVE: {
         POINT pt{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
-        bool hL = (!g_launching) && PointIn(g_rcLaunch, pt);
-        bool hI = (!g_launching) && PointIn(g_rcInject, pt);
-        bool hS = (!g_launching) && PointIn(g_rcSave, pt);
+        // ---- Drag-and-drop reorder of mod cards ----
+        if (g_dragState.pendingClick || g_dragState.dragging) {
+            if (g_dragState.pendingClick) {
+                long adx = pt.x - g_dragState.downPos.x; adx = adx < 0 ? -adx : adx;
+                long ady = pt.y - g_dragState.downPos.y; ady = ady < 0 ? -ady : ady;
+                if (adx > 6 || ady > 6) {
+                    g_dragState.dragging = true;
+                    g_dragState.pendingClick = false;
+                    g_dragState.dragIndex = g_dragState.pendingIndex;
+                    g_dragState.dragAnchorY = pt.y;
+                    InvalidateRect(hwnd, nullptr, TRUE);
+                }
+            }
+            if (g_dragState.dragging) {
+                int dy = pt.y - g_dragState.dragAnchorY;
+                if (dy >= kCardStep / 2 && g_dragState.dragIndex + 1 < static_cast<int>(g_mods.size())) {
+                    std::swap(g_mods[g_dragState.dragIndex], g_mods[g_dragState.dragIndex + 1]);
+                    g_dragState.dragIndex += 1;
+                    g_dragState.dragAnchorY += kCardStep;
+                    InvalidateRect(hwnd, nullptr, TRUE);
+                } else if (dy <= -kCardStep / 2 && g_dragState.dragIndex - 1 >= 0) {
+                    std::swap(g_mods[g_dragState.dragIndex], g_mods[g_dragState.dragIndex - 1]);
+                    g_dragState.dragIndex -= 1;
+                    g_dragState.dragAnchorY -= kCardStep;
+                    InvalidateRect(hwnd, nullptr, TRUE);
+                }
+            }
+            return 0;
+        }
+        bool hL = (!g_launching && !g_injecting) && PointIn(g_rcLaunch, pt);
+        bool hI = (!g_launching && !g_injecting) && PointIn(g_rcInject, pt);
+        bool hS = (!g_launching && !g_injecting) && PointIn(g_rcSave, pt);
         bool hG = PointIn(g_rcLang, pt);
         bool overList = false;
         // Only invalidate overList if it changes hover state of cards - throttle
@@ -1058,11 +1170,32 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         return 0;
     }
     case WM_LBUTTONDOWN: {
-        SetCapture(hwnd);
         OnLeftDown(POINT{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) });
-        ReleaseCapture();
         return 0;
     }
+    case WM_LBUTTONUP: {
+        bool pending = g_dragState.pendingClick;
+        bool dragging = g_dragState.dragging;
+        if (pending && !dragging) {
+            int idx = g_dragState.pendingIndex;
+            if (idx >= 0 && idx < static_cast<int>(g_mods.size())) {
+                g_mods[idx].enabled = !g_mods[idx].enabled;
+                g_dirty = true;
+            }
+        }
+        if (dragging) {
+            g_dirty = true; // произошёл реордер — помечаем к сохранению
+        }
+        g_dragState = DragState{};
+        ReleaseCapture();
+        InvalidateRect(hwnd, nullptr, TRUE);
+        return 0;
+    }
+    case WM_CAPTURECHANGED:
+        if (reinterpret_cast<HWND>(lParam) != hwnd) {
+            g_dragState = DragState{};
+        }
+        return 0;
     case WM_ERASEBKGND:
         return 1; // all painting is double-buffered; kill resize flicker
     case WM_PAINT: {
@@ -1106,6 +1239,27 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             g_gamePid = pid; g_appState = AppState::StatusError; SetStatusKey(StatusKey::InjectFail);
         } else {
             g_appState = AppState::StatusError; SetStatusKey(StatusKey::NotFound);
+        }
+        InvalidateRect(hwnd, nullptr, TRUE);
+        return 0;
+    }
+    case WM_APP_INJECT_DONE: {
+        g_injecting = false;
+        auto* res = reinterpret_cast<InjectResult*>(lParam);
+        bool ok = res ? res->ok : false;
+        DWORD pid = res ? res->pid : 0;
+        std::wstring err = res ? res->error : L"";
+        delete res;
+        if (ok && pid) {
+            g_gamePid = pid; g_gameName = kGameProcess;
+            g_appState = AppState::Injected; SetStatusKey(StatusKey::Injected);
+            MessageBoxW(hwnd,
+                        L"LuaAPI.dll \u0443\u0441\u043F\u0435\u0448\u043D\u043E \u0432\u043D\u0435\u0434\u0440\u0435\u043D \u0432 \u0438\u0433\u0440\u0443!",
+                        L"\u0423\u0441\u043F\u0435\u0445", MB_ICONINFORMATION | MB_OK);
+        } else {
+            g_appState = AppState::StatusError; SetStatusKey(StatusKey::InjectFail);
+            MessageBoxW(hwnd, (L"\u0412\u043D\u0435\u0434\u0440\u0435\u043D\u0438\u0435 \u043D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C:\n" + err).c_str(),
+                        L"\u041E\u0448\u0438\u0431\u043A\u0430", MB_ICONERROR | MB_OK);
         }
         InvalidateRect(hwnd, nullptr, TRUE);
         return 0;
