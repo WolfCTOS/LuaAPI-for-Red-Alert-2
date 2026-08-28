@@ -4,6 +4,9 @@
 #include <LuaAPI/logger.hpp>
 #include <MinHook.h>
 
+#include <cstring>
+#include <cstdio>
+
 namespace LuaAPI {
 namespace EventHook {
 
@@ -105,8 +108,14 @@ static const char* RttiName(int what) {
 bool IsSpawnerShip(TechnoClass* pTechno) {
     if (!IsLiveTechno(pTechno)) return false;
     __try {
-        // Дредноут (DMISL) / Авианосец (HORNET) — команда спавна ракет.
-        return pTechno->SpawnManager != nullptr;
+        // Дредноут (DMISL) / Авианосец (HORNET) — определение по типу юнита,
+        // а не по SpawnManager (он может отсутствовать или быть неинициализирован).
+        const char* id = pTechno->GetType()->get_ID();
+        if (!id) return false;
+        if (strcmp(id, "DMISL") == 0 || strcmp(id, "HORNET") == 0) {
+            return true;
+        }
+        return false;
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return false;
     }
