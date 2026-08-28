@@ -108,11 +108,12 @@ static const char* RttiName(int what) {
 bool IsSpawnerShip(TechnoClass* pTechno) {
     if (!IsLiveTechno(pTechno)) return false;
     __try {
-        // Дредноут (DMISL) / Авианосец (HORNET) — определение по типу юнита,
-        // а не по SpawnManager (он может отсутствовать или быть неинициализирован).
+        // Дредноут (DREAD, он же DMISL в логе) / Авианосец (HORNET) — определение
+        // по типу юнита, а не по SpawnManager (он может отсутствовать или быть
+        // неинициализирован). DREAD — реальный TypeID Дредноута в RA2/YR.
         const char* id = pTechno->GetType()->get_ID();
         if (!id) return false;
-        if (strcmp(id, "DMISL") == 0 || strcmp(id, "HORNET") == 0) {
+        if (strcmp(id, "DREAD") == 0 || strcmp(id, "DMISL") == 0 || strcmp(id, "HORNET") == 0) {
             return true;
         }
         return false;
@@ -150,6 +151,21 @@ void __fastcall Hooked_ActiveClickWith(FootClass* pThis, void* /*edx*/, int acti
     if (actionU == static_cast<unsigned int>(kActionAttack)) {
         TechnoClass* pShip = static_cast<TechnoClass*>(pThis);
         TechnoClass* pTargetTechno = ObjectToTechno(pTarget);
+
+        // ==== ДИАГНОСТИКА: реальный TypeID юнита ====
+        // Перед вызовом IsSpawnerShip логируем реальный ID, чтобы подтвердить,
+        // что Дредноут — это "DREAD", а не "DMISL"/"HORNET".
+        __try {
+            if (pShip && pShip->WhatAmI() == AbstractType::Unit) {
+                auto* pType = pShip->GetType();
+                if (pType) {
+                    LUA_LOG_CRITICAL("ActiveClickWith: unit TypeID='{}'", pType->get_ID());
+                }
+            }
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            LUA_LOG_CRITICAL("ActiveClickWith: failed to read TypeID (SEH)");
+        }
+        // ==========================================
 
         // ==== ДИАГНОСТИКА КЭШИРОВАНИЯ ====
         // Логируем результат обоих фильтров, чтобы понять, почему кэш не заполняется.
