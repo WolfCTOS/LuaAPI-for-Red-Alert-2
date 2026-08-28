@@ -4,8 +4,6 @@
 #include <LuaAPI/logger.hpp>
 #include <MinHook.h>
 
-#include <set>
-
 namespace LuaAPI {
 namespace EventHook {
 
@@ -19,33 +17,17 @@ static TechnoClass* TargetClassToTechno(TargetClass t) {
 }
 
 // ---------------------------------------------------------------------------
-// Константы (подтверждены в PROJECT/EventClass_MEGAMISSION_findings.md).
-// EventClass (#pragma pack(1)):  Type(u8)@+0, IsExecuted(u8)@+1, HouseIndex(i8)@+2,
-// Frame(u32)@+3, DataBuffer[104]@+7  (sizeof==111).
-// MEGAMISSION: Whom(TargetClass)@+7, Mission(u8)@+12, Target(TargetClass)@+14.
+// Константы (подтверждённый адрес UnitClass::Active_Click_With для 1.001).
 // ---------------------------------------------------------------------------
-constexpr uintptr_t kExecuteDoListAddr = 0x0064CC68;
+constexpr uintptr_t kActiveClickWithAddr = 0x00738890; // UnitClass::Active_Click_With
 
-constexpr unsigned char kEventTypeMegaMission = 0x04; // EventType::MegaMission
-constexpr unsigned char kOff_Type    = 0;
-constexpr unsigned char kOff_Whom    = 7;
-constexpr unsigned char kOff_Mission = 12;
-constexpr unsigned char kOff_Target  = 14;
-constexpr unsigned char kMissionAttack = 1;           // Mission::Attack
+// ActionType. Значение Attack=0x0E из переписки; если оно окажется неверным,
+// безусловный диагностический лог в Hooked_ActiveClickWith покажет реальное число.
+constexpr int kActionAttack = 0x0E;
 
-using ExecuteDoList_t = void(__fastcall*)(void*);
-ExecuteDoList_t g_pOriginalExecuteDoList = nullptr;
+using ActiveClickWith_t = void(__fastcall*)(void*, int, void*);
+ActiveClickWith_t g_pOriginalActiveClickWith = nullptr;
 bool g_installed = false;
-
-// EventClass(int houseIndex, EventType eventType) @ 0x4C66C0 — this в ECX.
-// Детур и оригинал объявлены __fastcall (this -> ECX на x86), т.к. __thiscall
-// недоступен для свободных функций на MSVC (C3865). eventType принимаем как int
-// (стек-слот 4 байта) и маскируем до байта — так надёжнее по ABI.
-using EventClassCtor_t = void(__fastcall*)(void*, int, int);
-EventClassCtor_t g_pOriginalEventCtor = nullptr;
-bool g_ctorInstalled = false;
-
-constexpr uintptr_t kEventClassCtorAddr = 0x004C66C0;
 
 std::unordered_map<TechnoClass*, TargetClass> g_PlayerTargetOverride;
 
@@ -86,24 +68,24 @@ static const char* SafeTechnoName(TechnoClass* p) {
     }
 }
 
-// Чтение события MegaMission из 'this' с SEH. Тип проверяется по байту @+0.
-// Возвращает false, если это не MegaMission, или SEH поймал исключение.
-// ВАЖНО: вызывает только ЗАЩИЩЁННЫЕ чтения — никогда не трогает `this` вне __try,
-// поэтому повторно критично для хук-функции (см. комментарий в Hooked_ExecuteDoList).
-static bool ReadMegaMission(void* pEvent, unsigned char* outMission,
-                            TargetClass* outWhom, TargetClass* outTarget) {
-    if (!pEvent || !outMission || !outWhom || !outTarget) return false;
+// Приводит ObjectClass* клика к TechnoClass*, если это техно. Резолвит только RTTI
+// и ничего не разыменовывает за пределами SEH.
+static TechnoClass* ObjectToTechno(void* pObject) {
+    if (!pObject) return nullptr;
+    TechnoClass* pTech = nullptr;
     __try {
-        unsigned char* base = static_cast<unsigned char*>(pEvent);
-        if (base[kOff_Type] != kEventTypeMegaMission) return false;
-        // Whom и Target — смежные 5-байтные TargetClass в датабуфере (pack(1)).
-        memcpy(outWhom, base + kOff_Whom, sizeof(TargetClass));
-        memcpy(outTarget, base + kOff_Target, sizeof(TargetClass));
-        *outMission = base[kOff_Mission];
-        return true;
+        auto* pAbs = static_cast<AbstractClass*>(pObject);
+        int what = static_cast<int>(pAbs->WhatAmI());
+        if (what == static_cast<int>(AbstractType::Building) ||
+            what == static_cast<int>(AbstractType::Unit) ||
+            what == static_cast<int>(AbstractType::Infantry) ||
+            what == static_cast<int>(AbstractType::Aircraft)) {
+            pTech = static_cast<TechnoClass*>(pAbs);
+        }
     } __except (EXCEPTION_EXECUTE_HANDLER) {
-        return false;
+        pTech = nullptr;
     }
+    return pTech;
 }
 
 bool IsSpawnerShip(TechnoClass* pTechno) {
@@ -116,150 +98,79 @@ bool IsSpawnerShip(TechnoClass* pTechno) {
     }
 }
 
-// Отдельная НЕ-SEH функция для набора увиденных типов: std::set не должен
-// находиться в функции с __try (C2712), поэтому живёт здесь.
-// Логирует первый вызов и каждое НОВОЕ значение, чтобы не завалить лог при
-// покадровом вызове. Ключ — сочетание имени источника (tag) и значения.
-static void ReportTypeOnce(const char* tag, unsigned int value) {
-    static std::set<std::pair<const char*, unsigned int>> s_seen;
-    if (s_seen.emplace(tag, value).second) {
-        LUA_LOG_INFO("[EventHook] {} type=0x{:X}", tag, value);
-    }
-}
-
 // ---------------------------------------------------------------------------
-// Хук на конструктор EventClass(int houseIndex, EventType eventType) @ 0x4C66C0.
-// ВАЖНО: срабатывает ПРИ СОЗДАНИИ события, т.е. ВСЕГДА, и даёт тип до того, как
-// приказ будет исполнен. Именно здесь надёжнее всего отличить приказ игрока.
-// __thiscall недоступен для свободных функций (C3865) -> детур объявлен __fastcall:
-// на x86 this приходит в ECX, что совпадает с __thiscall.
+// Хук: UnitClass::Active_Click_With(ActionType action, ObjectClass* pTarget).
+// Срабатывает при ЛЮБОМ клике игрока по юниту (движение/атака/захват и т.д.).
 // ---------------------------------------------------------------------------
-void __fastcall Hooked_EventClassCtor(void* ecx_this, int houseIndex, int eventTypeArg) {
-    // Диагностика: какие типы событий вообще создаются.
-    ReportTypeOnce("EventClassCtor", static_cast<unsigned int>(eventTypeArg) & 0xFFu);
-
-    // Вызываем оригинальный конструктор, чтобы объект корректно инициализировался.
-    if (g_pOriginalEventCtor) {
-        g_pOriginalEventCtor(ecx_this, houseIndex, eventTypeArg);
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Хук: перехватываем событие ДО обработки движком.
-// ---------------------------------------------------------------------------
-void __fastcall Hooked_ExecuteDoList(void* ecx_this, void* /*edx*/) {
+void __fastcall Hooked_ActiveClickWith(void* pThis, void* /*edx*/, int action, void* pTarget) {
     // ==== ДИАГНОСТИКА СРАБАТЫВАНИЯ ХУКА ====
-    // Логируем первый вызов и каждый уникальный тип события, чтобы не завалить лог
-    // (Execute_DoList может вызываться каждый кадр). Это же докажет, что хук стоит.
-    unsigned char type = 0;
-    bool readType = false;
-    __try {
-        type = *static_cast<unsigned char*>(ecx_this) + 0; // Type @ +0
-        readType = true;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        readType = false;
-    }
-    if (readType) {
-        ReportTypeOnce("ExecuteDoList", static_cast<unsigned int>(type));
-    }
-    // ======================================
+    // Безусловный лог: каждый клик по юниту Должен дать строку здесь.
+    // Если её нет — адрес 0x738890 неверный для этой сборки (см. шаг 7: FootClass 0x4D74E0).
+    unsigned int actionU = static_cast<unsigned int>(action);
+    LUA_LOG_INFO("[EventHook] ActiveClickWith called, action=0x{:X}", actionU);
+    // =======================================
 
-    unsigned char mission = 0;
-    TargetClass whom{};
-    TargetClass target{};
+    // Приказ атаки: action == Attack(0x0E), цель — живое техно, корабль — спаунер.
+    if (actionU == static_cast<unsigned int>(kActionAttack)) {
+        UnitClass* pUnit = static_cast<UnitClass*>(pThis); // Дредноут/Авианосец — UnitClass
+        TechnoClass* pShip = static_cast<TechnoClass*>(pUnit);
+        TechnoClass* pTargetTechno = ObjectToTechno(pTarget);
 
-    // ReadMegaMission безопасно вызывается ТОЛЬКО здесь (внутри себя держит __try).
-    // Нельзя вызывать её повторно вне guard — самодельный второй вызов в старом
-    // диаге вело к двойному чтению и потере отладочной ветки.
-    if (ReadMegaMission(ecx_this, &mission, &whom, &target)) {
-        if (mission == kMissionAttack) {
-            TechnoClass* pShip = TargetClassToTechno(whom);
-            TechnoClass* pTarget = TargetClassToTechno(target);
-
-            if (IsSpawnerShip(pShip) && IsLiveTechno(pTarget)) {
-                g_PlayerTargetOverride[pShip] = target;
-                LUA_LOG_INFO("[EventHook] player Attack order: '{}' -> '{}' cached",
-                             SafeTechnoName(pShip), SafeTechnoName(pTarget));
-            }
-        } else {
-            // Тип MegaMission, но Mission не Attack — выясняем реальное значение.
-            LUA_LOG_INFO("[EventHook] MegaMission(0x4) but mission=0x{:X} != Attack(0x1)",
-                         static_cast<unsigned int>(mission));
+        if (IsSpawnerShip(pShip) && IsLiveTechno(pTargetTechno)) {
+            g_PlayerTargetOverride[pShip] = TargetClass(static_cast<AbstractClass*>(pTarget));
+            LUA_LOG_INFO("[EventHook] player Attack order via ActiveClickWith: '{}' -> '{}' cached",
+                         SafeTechnoName(pShip), SafeTechnoName(pTargetTechno));
         }
-    } else if (readType && type == kEventTypeMegaMission) {
-        // Тип 0x04 читался, но ReadMegaMission не прошёл — значит наш разбор смещений
-        // (Whom/Target/Mission) ошибочен для этой сборки.
-        LUA_LOG_INFO("[EventHook] type==0x4 (MegaMission) but ReadMegaMission FAILED - offsets wrong");
+    } else {
+        // Двигаемся / другой приказ — не атака. Логируем только для понятности, без спама.
     }
 
-    // Событие движком обрабатывается всегда, независимо от нашего перехвата.
-    if (g_pOriginalExecuteDoList) {
-        g_pOriginalExecuteDoList(ecx_this);
+    // Всегда вызываем оригинал — клик обрабатывается движком как обычно.
+    if (g_pOriginalActiveClickWith) {
+        g_pOriginalActiveClickWith(pThis, action, pTarget);
     }
 }
 
 bool Install() {
-    bool allOk = true;
+    if (g_installed || g_pOriginalActiveClickWith) return true;
 
-    // --- Хук 1: конструктор EventClass @ 0x4C66C0 (надёжный, при создании) ---
-    if (!g_ctorInstalled && !g_pOriginalEventCtor) {
-        MH_STATUS st = MH_CreateHook(
-            reinterpret_cast<LPVOID>(kEventClassCtorAddr),
-            reinterpret_cast<LPVOID>(&Hooked_EventClassCtor),
-            reinterpret_cast<LPVOID*>(&g_pOriginalEventCtor));
-        if (st != MH_OK) {
-            LUA_LOG_WARN("[EventHook] MH_CreateHook(EventClassCtor 0x{:X}) -> {}",
-                         kEventClassCtorAddr, static_cast<int>(st));
-            allOk = false;
-        } else {
-            st = MH_EnableHook(reinterpret_cast<LPVOID>(kEventClassCtorAddr));
-            if (st != MH_OK) {
-                LUA_LOG_WARN("[EventHook] MH_EnableHook(EventClassCtor 0x{:X}) -> {}",
-                             kEventClassCtorAddr, static_cast<int>(st));
-                allOk = false;
-            } else {
-                g_ctorInstalled = true;
-                LUA_LOG_INFO("[EventHook] installed on EventClass::EventClass @ 0x{:X}",
-                             kEventClassCtorAddr);
-            }
-        }
+    // Протекция страницы не обязательна: MinHook сам обрабатывает RWX при патче,
+    // но добавим PAGE_EXECUTE_READWRITE для надёжности (как в других хуках проекта).
+    DWORD oldProtect = 0;
+    if (!VirtualProtect(reinterpret_cast<LPVOID>(kActiveClickWithAddr), 64,
+                        PAGE_EXECUTE_READWRITE, &oldProtect)) {
+        LUA_LOG_WARN("[EventHook] VirtualProtect(ActiveClickWith 0x{:X}) failed (error {})",
+                     kActiveClickWithAddr, GetLastError());
     }
 
-    // --- Хук 2: Execute_DoList @ 0x64CC68 (запасной, если вызывается) ---
-    if (!g_installed && !g_pOriginalExecuteDoList) {
-        MH_STATUS st = MH_CreateHook(
-            reinterpret_cast<LPVOID>(kExecuteDoListAddr),
-            reinterpret_cast<LPVOID>(&Hooked_ExecuteDoList),
-            reinterpret_cast<LPVOID*>(&g_pOriginalExecuteDoList));
-        if (st != MH_OK) {
-            LUA_LOG_WARN("[EventHook] MH_CreateHook(0x{:X}) -> {}", kExecuteDoListAddr, static_cast<int>(st));
-            allOk = false;
-        } else {
-            st = MH_EnableHook(reinterpret_cast<LPVOID>(kExecuteDoListAddr));
-            if (st != MH_OK) {
-                LUA_LOG_WARN("[EventHook] MH_EnableHook(0x{:X}) -> {}", kExecuteDoListAddr, static_cast<int>(st));
-                allOk = false;
-            } else {
-                g_installed = true;
-                LUA_LOG_INFO("[EventHook] installed on EventClass::Execute_DoList @ 0x{:X}", kExecuteDoListAddr);
-            }
-        }
+    MH_STATUS st = MH_CreateHook(
+        reinterpret_cast<LPVOID>(kActiveClickWithAddr),
+        reinterpret_cast<LPVOID>(&Hooked_ActiveClickWith),
+        reinterpret_cast<LPVOID*>(&g_pOriginalActiveClickWith));
+    if (st != MH_OK) {
+        LUA_LOG_WARN("[EventHook] MH_CreateHook(ActiveClickWith 0x{:X}) -> {}",
+                     kActiveClickWithAddr, static_cast<int>(st));
+        return false;
     }
 
-    return allOk;
+    st = MH_EnableHook(reinterpret_cast<LPVOID>(kActiveClickWithAddr));
+    if (st != MH_OK) {
+        LUA_LOG_WARN("[EventHook] MH_EnableHook(ActiveClickWith 0x{:X}) -> {}",
+                     kActiveClickWithAddr, static_cast<int>(st));
+        return false;
+    }
+
+    g_installed = true;
+    LUA_LOG_INFO("[EventHook] installed on UnitClass::Active_Click_With @ 0x{:X}",
+                 kActiveClickWithAddr);
+    return true;
 }
 
 void Uninstall() {
-    if (g_ctorInstalled) {
-        MH_DisableHook(reinterpret_cast<LPVOID>(kEventClassCtorAddr));
-        MH_RemoveHook(reinterpret_cast<LPVOID>(kEventClassCtorAddr));
-        g_ctorInstalled = false;
-    }
-    if (g_installed) {
-        MH_DisableHook(reinterpret_cast<LPVOID>(kExecuteDoListAddr));
-        MH_RemoveHook(reinterpret_cast<LPVOID>(kExecuteDoListAddr));
-        g_installed = false;
-    }
+    if (!g_installed) return;
+    MH_DisableHook(reinterpret_cast<LPVOID>(kActiveClickWithAddr));
+    MH_RemoveHook(reinterpret_cast<LPVOID>(kActiveClickWithAddr));
+    g_installed = false;
     g_PlayerTargetOverride.clear();
 }
 
