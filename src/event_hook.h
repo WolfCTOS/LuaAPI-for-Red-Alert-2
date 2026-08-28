@@ -5,11 +5,12 @@
 
 namespace LuaAPI {
 
-// Хук на UnitClass::Active_Click_With (gamemd 1.001 @ 0x738890).
+// Хук на FootClass::Active_Click_With (gamemd 1.001 @ 0x4D74E0).
 //
 // Назначение: перехватить ЯВНЫЙ клик атаки игрока по кораблю-спаунеру
-// (Дредноут/Авианосец — это UnitClass) и принудительно удерживать его на цели,
-// которую выбрал игрок, пока движок не попытается перецелиться в окне Rearm/Guard.
+// (Дредноут/Авианосец наследуются от FootClass) и принудительно удерживать его на
+// цели, которую выбрал игрок, пока движок не попытается перецелиться в окне
+// Rearm/Guard.
 //
 // Модуль изолирован от SubTurretManager::ManagePrimaryAttackTarget — у каждого
 // своя логика и свой кэш, делаем только общий перехват окна Rearm/Guard.
@@ -22,10 +23,10 @@ bool Install();
 // Снимает хук (MH_DisableHook + MH_RemoveHook). Для полноты.
 void Uninstall();
 
-// Обработчик UnitClass::Active_Click_With(ActionType, ObjectClass*).
+// Обработчик FootClass::Active_Click_With(ActionType, ObjectClass*).
 // Срабатывает при КЛИКЕ игрока по юниту (в т.ч. атака). Детур объявлен __fastcall:
 // на x86 this приходит в ECX, что совпадает с __thiscall оригинала.
-void __fastcall Hooked_ActiveClickWith(void* pThis, void* /*edx*/,
+void __fastcall Hooked_ActiveClickWith(FootClass* pThis, void* /*edx*/,
                                        int action, void* pTarget);
 
 // Вызывается каждый кадр из OnGameFrame. Итерация кэша переопределений.

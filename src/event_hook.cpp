@@ -17,15 +17,17 @@ static TechnoClass* TargetClassToTechno(TargetClass t) {
 }
 
 // ---------------------------------------------------------------------------
-// Константы (подтверждённый адрес UnitClass::Active_Click_With для 1.001).
+// Константы (адрес FootClass::Active_Click_With для 1.001).
+// Дредноут/Авианосец наследуются от FootClass (движимые юниты), поэтому этот
+// перехват срабатывает на кликах по ним.
 // ---------------------------------------------------------------------------
-constexpr uintptr_t kActiveClickWithAddr = 0x00738890; // UnitClass::Active_Click_With
+constexpr uintptr_t kActiveClickWithAddr = 0x004D74E0; // FootClass::Active_Click_With
 
 // ActionType. Значение Attack=0x0E из переписки; если оно окажется неверным,
 // безусловный диагностический лог в Hooked_ActiveClickWith покажет реальное число.
 constexpr int kActionAttack = 0x0E;
 
-using ActiveClickWith_t = void(__fastcall*)(void*, int, void*);
+using ActiveClickWith_t = void(__fastcall*)(FootClass*, int, void*);
 ActiveClickWith_t g_pOriginalActiveClickWith = nullptr;
 bool g_installed = false;
 
@@ -88,6 +90,18 @@ static TechnoClass* ObjectToTechno(void* pObject) {
     return pTech;
 }
 
+// Возвращает имя RTTI-класса по WhatAmI() (безопасно, только дефолтные значения).
+static const char* RttiName(int what) {
+    switch (what) {
+    case static_cast<int>(AbstractType::Building): return "Building";
+    case static_cast<int>(AbstractType::Unit):     return "Unit";
+    case static_cast<int>(AbstractType::Infantry): return "Infantry";
+    case static_cast<int>(AbstractType::Aircraft): return "Aircraft";
+    case static_cast<int>(AbstractType::Cell):     return "Cell";
+    default:                                       return "Other";
+    }
+}
+
 bool IsSpawnerShip(TechnoClass* pTechno) {
     if (!IsLiveTechno(pTechno)) return false;
     __try {
@@ -99,21 +113,30 @@ bool IsSpawnerShip(TechnoClass* pTechno) {
 }
 
 // ---------------------------------------------------------------------------
-// Хук: UnitClass::Active_Click_With(ActionType action, ObjectClass* pTarget).
+// Хук: FootClass::Active_Click_With(ActionType action, ObjectClass* pTarget).
 // Срабатывает при ЛЮБОМ клике игрока по юниту (движение/атака/захват и т.д.).
 // ---------------------------------------------------------------------------
-void __fastcall Hooked_ActiveClickWith(void* pThis, void* /*edx*/, int action, void* pTarget) {
+void __fastcall Hooked_ActiveClickWith(FootClass* pThis, void* /*edx*/, int action, void* pTarget) {
     // ==== ДИАГНОСТИКА СРАБАТЫВАНИЯ ХУКА ====
     // Безусловный лог: каждый клик по юниту Должен дать строку здесь.
-    // Если её нет — адрес 0x738890 неверный для этой сборки (см. шаг 7: FootClass 0x4D74E0).
+    // Если её нет — адрес 0x4D74E0 неверный для этой сборки (см. шаг 6: DisplayClass 0x4AE750).
     unsigned int actionU = static_cast<unsigned int>(action);
-    LUA_LOG_INFO("[EventHook] ActiveClickWith called, action=0x{:X}", actionU);
+    int thisRtti = -1;
+    const char* thisClass = "?";
+    __try {
+        thisRtti = static_cast<int>(pThis->WhatAmI());
+        thisClass = RttiName(thisRtti);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        thisRtti = -1;
+        thisClass = "?";
+    }
+    LUA_LOG_INFO("[EventHook] ActiveClickWith called, this=0x{:X} [{}], action=0x{:X}",
+                 reinterpret_cast<uintptr_t>(pThis), thisClass, actionU);
     // =======================================
 
     // Приказ атаки: action == Attack(0x0E), цель — живое техно, корабль — спаунер.
     if (actionU == static_cast<unsigned int>(kActionAttack)) {
-        UnitClass* pUnit = static_cast<UnitClass*>(pThis); // Дредноут/Авианосец — UnitClass
-        TechnoClass* pShip = static_cast<TechnoClass*>(pUnit);
+        TechnoClass* pShip = static_cast<TechnoClass*>(pThis);
         TechnoClass* pTargetTechno = ObjectToTechno(pTarget);
 
         if (IsSpawnerShip(pShip) && IsLiveTechno(pTargetTechno)) {
@@ -121,8 +144,6 @@ void __fastcall Hooked_ActiveClickWith(void* pThis, void* /*edx*/, int action, v
             LUA_LOG_INFO("[EventHook] player Attack order via ActiveClickWith: '{}' -> '{}' cached",
                          SafeTechnoName(pShip), SafeTechnoName(pTargetTechno));
         }
-    } else {
-        // Двигаемся / другой приказ — не атака. Логируем только для понятности, без спама.
     }
 
     // Всегда вызываем оригинал — клик обрабатывается движком как обычно.
