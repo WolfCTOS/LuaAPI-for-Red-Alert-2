@@ -4,6 +4,8 @@
 #include <LuaAPI/logger.hpp>
 #include <MinHook.h>
 
+#include <set>
+
 namespace LuaAPI {
 namespace EventHook {
 
@@ -75,6 +77,9 @@ static const char* SafeTechnoName(TechnoClass* p) {
 }
 
 // Чтение события MegaMission из 'this' с SEH. Тип проверяется по байту @+0.
+// Возвращает false, если это не MegaMission, или SEH поймал исключение.
+// ВАЖНО: вызывает только ЗАЩИЩЁННЫЕ чтения — никогда не трогает `this` вне __try,
+// поэтому повторно критично для хук-функции (см. комментарий в Hooked_ExecuteDoList).
 static bool ReadMegaMission(void* pEvent, unsigned char* outMission,
                             TargetClass* outWhom, TargetClass* outTarget) {
     if (!pEvent || !outMission || !outWhom || !outTarget) return false;
@@ -101,23 +106,64 @@ bool IsSpawnerShip(TechnoClass* pTechno) {
     }
 }
 
+// Отдельная НЕ-SEH функция для набора увиденных типов: std::set не должен
+// находиться в функции с __try (C2712), поэтому живёт здесь.
+static bool ReportEventTypeOnce(unsigned char type) {
+    static std::set<unsigned char> s_seenTypes;
+    const bool firstCall = s_seenTypes.empty();
+    const bool newType = s_seenTypes.insert(type).second;
+    if (firstCall || newType) {
+        LUA_LOG_INFO("[EventHook] ExecuteDoList called, type=0x{:X}", type);
+    }
+    return firstCall || newType;
+}
+
 // ---------------------------------------------------------------------------
 // Хук: перехватываем событие ДО обработки движком.
 // ---------------------------------------------------------------------------
 void __fastcall Hooked_ExecuteDoList(void* ecx_this, void* /*edx*/) {
+    // ==== ДИАГНОСТИКА СРАБАТЫВАНИЯ ХУКА ====
+    // Логируем первый вызов и каждый уникальный тип события, чтобы не завалить лог
+    // (Execute_DoList может вызываться каждый кадр). Это же докажет, что хук стоит.
+    unsigned char type = 0;
+    bool readType = false;
+    __try {
+        type = *static_cast<unsigned char*>(ecx_this) + 0; // Type @ +0
+        readType = true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        readType = false;
+    }
+    if (readType) {
+        ReportEventTypeOnce(type); // логирует первый вызов + новые типы
+    }
+    // ======================================
+
     unsigned char mission = 0;
     TargetClass whom{};
     TargetClass target{};
 
-    if (ReadMegaMission(ecx_this, &mission, &whom, &target) && mission == kMissionAttack) {
-        TechnoClass* pShip = TargetClassToTechno(whom);
-        TechnoClass* pTarget = TargetClassToTechno(target);
+    // ReadMegaMission безопасно вызывается ТОЛЬКО здесь (внутри себя держит __try).
+    // Нельзя вызывать её повторно вне guard — самодельный второй вызов в старом
+    // диаге вело к двойному чтению и потере отладочной ветки.
+    if (ReadMegaMission(ecx_this, &mission, &whom, &target)) {
+        if (mission == kMissionAttack) {
+            TechnoClass* pShip = TargetClassToTechno(whom);
+            TechnoClass* pTarget = TargetClassToTechno(target);
 
-        if (IsSpawnerShip(pShip) && IsLiveTechno(pTarget)) {
-            g_PlayerTargetOverride[pShip] = target;
-            LUA_LOG_INFO("[EventHook] player Attack order: '{}' -> '{}' cached",
-                         SafeTechnoName(pShip), SafeTechnoName(pTarget));
+            if (IsSpawnerShip(pShip) && IsLiveTechno(pTarget)) {
+                g_PlayerTargetOverride[pShip] = target;
+                LUA_LOG_INFO("[EventHook] player Attack order: '{}' -> '{}' cached",
+                             SafeTechnoName(pShip), SafeTechnoName(pTarget));
+            }
+        } else {
+            // Тип MegaMission, но Mission не Attack — выясняем реальное значение.
+            LUA_LOG_INFO("[EventHook] MegaMission(0x4) but mission=0x{:X} != Attack(0x1)",
+                         static_cast<unsigned int>(mission));
         }
+    } else if (readType && type == kEventTypeMegaMission) {
+        // Тип 0x04 читался, но ReadMegaMission не прошёл — значит наш разбор смещений
+        // (Whom/Target/Mission) ошибочен для этой сборки.
+        LUA_LOG_INFO("[EventHook] type==0x4 (MegaMission) but ReadMegaMission FAILED - offsets wrong");
     }
 
     // Событие движком обрабатывается всегда, независимо от нашего перехвата.
