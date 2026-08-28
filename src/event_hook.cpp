@@ -129,10 +129,6 @@ bool IsSpawnerShip(TechnoClass* pTechno) {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Хук: FootClass::Active_Click_With(ActionType action, ObjectClass* pTarget).
-// Срабатывает при ЛЮБОМ клике игрока по юниту (движение/атака/захват и т.д.).
-// ---------------------------------------------------------------------------
 void __fastcall Hooked_ActiveClickWith(FootClass* pThis, void* /*edx*/, int action, void* pTarget) {
     // ==== ДИАГНОСТИКА СРАБАТЫВАНИЯ ХУКА ====
     unsigned int actionU = static_cast<unsigned int>(action);
@@ -179,10 +175,10 @@ void __fastcall Hooked_ActiveClickWith(FootClass* pThis, void* /*edx*/, int acti
         }
     }
 
-    // Вызов оригинала для нормальной обработки приказа
-    if (g_pOriginalActiveClickWith) {
-        g_pOriginalActiveClickWith(pThis, action, pTarget);
-    }
+    // ДИАГНОСТИКА: временно отключаем оригинал, чтобы найти источник краша
+    // if (g_pOriginalActiveClickWith) {
+    //     g_pOriginalActiveClickWith(pThis, action, pTarget);
+    // }
 }
 
 bool Install() {
