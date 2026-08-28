@@ -23,9 +23,9 @@ static TechnoClass* TargetClassToTechno(TargetClass t) {
 // ---------------------------------------------------------------------------
 constexpr uintptr_t kActiveClickWithAddr = 0x004D74E0; // FootClass::Active_Click_With
 
-// ActionType. Значение Attack=0x0E из переписки; если оно окажется неверным,
-// безусловный диагностический лог в Hooked_ActiveClickWith покажет реальное число.
-constexpr int kActionAttack = 0x0E;
+// ActionType. Значение Attack подтверждено логом: при клике атаки приходит action=0x5.
+// (0x0E из переписки оказалось неверным.)
+constexpr int kActionAttack = 0x5;
 
 using ActiveClickWith_t = void(__fastcall*)(FootClass*, int, void*);
 ActiveClickWith_t g_pOriginalActiveClickWith = nullptr;
