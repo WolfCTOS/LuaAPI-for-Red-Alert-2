@@ -37,7 +37,7 @@ bool g_installed = false;
 std::unordered_map<TechnoClass*, TargetClass> g_PlayerTargetOverride;
 
 // ---------------------------------------------------------------------------
-// SEH-защищённая валидация техно-объекта (жив, валидный RTTI, не в лимбе).
+// СЕХ-защищённая валидация техно-объекта (жив, валидный RTTI, не в лимбе).
 // ---------------------------------------------------------------------------
 static bool IsLiveTechno(TechnoClass* p) {
     if (!p) return false;
@@ -56,17 +56,24 @@ static bool IsLiveTechno(TechnoClass* p) {
 }
 
 // Безопасное строковое имя техно-объекта для логов (никогда не трогает vtable
-// вне SEH). Возвращает статический буфер, валидный до следующего вызова.
+// вне SEH). Возвращает указатель на буфер, валидный до следующего вызова.
+// Используется РОТАЦИЯ из 4 буферов, чтобы два вызова в одном выражении
+// (например "->" -> " -> ") возвращали РАЗНЫЕ строки, а не один общий буфер:
+// иначе в LUA_LOG_INFO оба '{}' показывают одно и то же значение ("DRED -> DRED").
 static const char* SafeTechnoName(TechnoClass* p) {
-    static thread_local char buf[64];
+    static thread_local char bufs[4][64];
+    static thread_local int idx = 0;
+    char* buf = bufs[idx];
+    idx = (idx + 1) & 3;
+
     if (!p) return "nil";
     __try {
         __try {
             const char* id = p->GetType()->get_ID();
-            if (id) { snprintf(buf, sizeof(buf), "%s", id); return buf; }
+            if (id) { snprintf(buf, 64, "%s", id); return buf; }
         } __except (EXCEPTION_EXECUTE_HANDLER) { }
-        __try { snprintf(buf, sizeof(buf), "RTTI=%d", static_cast<int>(p->WhatAmI())); }
-        __except (EXCEPTION_EXECUTE_HANDLER) { snprintf(buf, sizeof(buf), "?"); }
+        __try { snprintf(buf, 64, "RTTI=%d", static_cast<int>(p->WhatAmI())); }
+        __except (EXCEPTION_EXECUTE_HANDLER) { snprintf(buf, 64, "?"); }
         return buf;
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return "?";
@@ -113,7 +120,7 @@ bool IsSpawnerShip(TechnoClass* pTechno) {
         // неинициализирован). DREAD — реальный TypeID Дредноута в RA2/YR.
         const char* id = pTechno->GetType()->get_ID();
         if (!id) return false;
-        if (strcmp(id, "DREAD") == 0 || strcmp(id, "DMISL") == 0 || strcmp(id, "HORNET") == 0) {
+        if (strcmp(id, "DRED") == 0 || strcmp(id, "DMISL") == 0 || strcmp(id, "HORNET") == 0) {
             return true;
         }
         return false;
@@ -128,8 +135,6 @@ bool IsSpawnerShip(TechnoClass* pTechno) {
 // ---------------------------------------------------------------------------
 void __fastcall Hooked_ActiveClickWith(FootClass* pThis, void* /*edx*/, int action, void* pTarget) {
     // ==== ДИАГНОСТИКА СРАБАТЫВАНИЯ ХУКА ====
-    // Безусловный лог: каждый клик по юниту Должен дать строку здесь.
-    // Если её нет — адрес 0x4D74E0 неверный для этой сборки (см. шаг 6: DisplayClass 0x4AE750).
     unsigned int actionU = static_cast<unsigned int>(action);
     int thisRtti = -1;
     const char* thisClass = "?";
@@ -142,10 +147,6 @@ void __fastcall Hooked_ActiveClickWith(FootClass* pThis, void* /*edx*/, int acti
     }
     LUA_LOG_INFO("[EventHook] ActiveClickWith called, this=0x{:X} [{}], action=0x{:X}",
                  reinterpret_cast<uintptr_t>(pThis), thisClass, actionU);
-    // ==== ДИАГНОСТИКА КРАША (шаг 1) ====
-    // ПРОВЕРКА: не вызываем оригинал, чтобы понять, крашится ли игра из-за него.
-    LUA_LOG_CRITICAL("ActiveClickWith: will NOT call original, this=0x{:X}, action=0x{:X}",
-                     reinterpret_cast<uintptr_t>(pThis), actionU);
 
     // Приказ атаки: action == Attack(0x5), цель — живое техно, корабль — спаунер.
     if (actionU == static_cast<unsigned int>(kActionAttack)) {
@@ -153,8 +154,6 @@ void __fastcall Hooked_ActiveClickWith(FootClass* pThis, void* /*edx*/, int acti
         TechnoClass* pTargetTechno = ObjectToTechno(pTarget);
 
         // ==== ДИАГНОСТИКА: реальный TypeID юнита ====
-        // Перед вызовом IsSpawnerShip логируем реальный ID, чтобы подтвердить,
-        // что Дредноут — это "DREAD", а не "DMISL"/"HORNET".
         __try {
             if (pShip && pShip->WhatAmI() == AbstractType::Unit) {
                 auto* pType = pShip->GetType();
@@ -165,16 +164,13 @@ void __fastcall Hooked_ActiveClickWith(FootClass* pThis, void* /*edx*/, int acti
         } __except (EXCEPTION_EXECUTE_HANDLER) {
             LUA_LOG_CRITICAL("ActiveClickWith: failed to read TypeID (SEH)");
         }
-        // ==========================================
 
         // ==== ДИАГНОСТИКА КЭШИРОВАНИЯ ====
-        // Логируем результат обоих фильтров, чтобы понять, почему кэш не заполняется.
         LUA_LOG_CRITICAL("ActiveClickWith: action==Attack, pShip=0x{:X}, isSpawner={}, pTarget=0x{:X}, isLive={}",
                          reinterpret_cast<uintptr_t>(pShip),
                          IsSpawnerShip(pShip) ? 1 : 0,
                          reinterpret_cast<uintptr_t>(pTargetTechno),
                          IsLiveTechno(pTargetTechno) ? 1 : 0);
-        // ====================================
 
         if (IsSpawnerShip(pShip) && IsLiveTechno(pTargetTechno)) {
             g_PlayerTargetOverride[pShip] = TargetClass(static_cast<AbstractClass*>(pTarget));
@@ -183,18 +179,15 @@ void __fastcall Hooked_ActiveClickWith(FootClass* pThis, void* /*edx*/, int acti
         }
     }
 
-    // ВЫЗОВ ОРИГИНАЛА ЗАКОММЕНТИРОВАН (диагностика). Если краш уйдёт — проблема в оригинале.
-    // if (g_pOriginalActiveClickWith) {
-    //     g_pOriginalActiveClickWith(pThis, action, pTarget);
-    // }
-    LUA_LOG_CRITICAL("ActiveClickWith: original skipped");
+    // Вызов оригинала для нормальной обработки приказа
+    if (g_pOriginalActiveClickWith) {
+        g_pOriginalActiveClickWith(pThis, action, pTarget);
+    }
 }
 
 bool Install() {
     if (g_installed || g_pOriginalActiveClickWith) return true;
 
-    // Протекция страницы не обязательна: MinHook сам обрабатывает RWX при патче,
-    // но добавим PAGE_EXECUTE_READWRITE для надёжности (как в других хуках проекта).
     DWORD oldProtect = 0;
     if (!VirtualProtect(reinterpret_cast<LPVOID>(kActiveClickWithAddr), 64,
                         PAGE_EXECUTE_READWRITE, &oldProtect)) {
