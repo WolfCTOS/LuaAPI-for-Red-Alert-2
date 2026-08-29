@@ -136,7 +136,6 @@ void __fastcall Hooked_ActiveClickWith(FootClass* pThis, void* /*edx*/, int acti
                  reinterpret_cast<uintptr_t>(pThis), thisClass, actionU);
 
     // Приказ атаки: action == Attack(0x5), цель — живое техно, корабль — спаунер.
-    bool blockOriginal = false;
     if (actionU == static_cast<unsigned int>(kActionAttack)) {
         TechnoClass* pShip = static_cast<TechnoClass*>(pThis);
         TechnoClass* pTargetTechno = ObjectToTechno(pTarget);
@@ -160,23 +159,20 @@ void __fastcall Hooked_ActiveClickWith(FootClass* pThis, void* /*edx*/, int acti
                          reinterpret_cast<uintptr_t>(pTargetTechno),
                          IsLiveTechno(pTargetTechno) ? 1 : 0);
 
-        // Спауэр-атака: блокируем оригинал, чтобы движок не перецеливал корабль.
+        // Спауэр-атака: кэшируем цель (позже используем для перенаправления ракет)
+        // и сразу фиксируем её на корабле, чтобы движок не крашился на следующем тике.
+        // Оригинал при этом НЕ блокируем — приказ обрабатывается как обычно.
         if (IsSpawnerShip(pShip) && IsLiveTechno(pTargetTechno)) {
-            blockOriginal = true;
             g_PlayerTargetOverride[pShip] = static_cast<AbstractClass*>(pTarget);
-            pShip->Target = pTargetTechno;  // <-- ДОБАВИТЬ ЭТУ СТРОКУ
+            pShip->Target = pTargetTechno;
             LUA_LOG_INFO("[EventHook] player Attack order via ActiveClickWith: '{}' -> '{}' cached",
                          SafeTechnoName(pShip), SafeTechnoName(pTargetTechno));
         }
     }
 
-    // Оригинальная обработка: вызываем, только если это НЕ спауэр-атака.
-    if (!blockOriginal && g_pOriginalActiveClickWith) {
-        LUA_LOG_CRITICAL("Calling original ActiveClickWith");
+    // Оригинальная обработка приказа — вызываем для ВСЕХ случаев.
+    if (g_pOriginalActiveClickWith) {
         g_pOriginalActiveClickWith(pThis, action, pTarget);
-        LUA_LOG_CRITICAL("Original ActiveClickWith returned");
-    } else if (blockOriginal) {
-        LUA_LOG_WARN("[EventHook] original ActiveClickWith blocked for spawner attack");
     }
 }
 
