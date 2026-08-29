@@ -88,3 +88,8 @@ private:
         ::LuaAPI::Logger::instance().log(spdlog::level::critical, __FILE__, __LINE__, __VA_ARGS__); \
         ::LuaAPI::Logger::instance().FlushLog(); \
     } while (0)
+
+// LUA_FLUSH_LOG: принудительный сброс буфера лога на диск (без записи сообщения).
+// Используется перед потенциально опасной операцией, чтобы последние логи не
+// потерялись, если операция упадёт (краш/SpawnManager и т.п.).
+#define LUA_FLUSH_LOG() ::LuaAPI::Logger::instance().FlushLog()

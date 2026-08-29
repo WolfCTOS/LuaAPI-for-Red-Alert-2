@@ -168,25 +168,26 @@ void __fastcall Hooked_ActiveClickWith(FootClass* pThis, void* /*edx*/, int acti
             } __except (EXCEPTION_EXECUTE_HANDLER) {}
         }
 
-        // Спауэр-атака: кэшируем цель (позже используем для перенаправления ракет)
-        // и сразу фиксируем её на корабле, чтобы движок не крашился на следующем тике.
+        // Спауэр-атака: кэшируем цель (позже используем для перенаправления ракет).
         if (IsSpawnerShip(pShip) && IsLiveTechno(pTargetTechno)) {
             g_PlayerTargetOverride[pShip] = static_cast<AbstractClass*>(pTarget);
-            pShip->Target = pTargetTechno;
 
             if (isBuildingTarget) {
-                // Spawner + здание: блокируем оригинал (крашит в нативной логике)
-                LUA_LOG_WARN("[EventHook] original ActiveClickWith blocked for spawner+building attack");
-                return;  // НЕ вызываем оригинал
+                // НЕ устанавливаем pShip->Target (проверка гипотезы A)
+                LUA_LOG_WARN("[EventHook] original ActiveClickWith blocked for spawner+building attack (no target set)");
+                LUA_FLUSH_LOG();  // принудительный flush перед return
+                return;
             }
 
+            // Для не-зданий: кэш + установка Target + вызов оригинала
+            pShip->Target = pTargetTechno;
             LUA_LOG_INFO("[EventHook] player Attack order via ActiveClickWith: '{}' -> '{}' cached",
                          SafeTechnoName(pShip), SafeTechnoName(pTargetTechno));
         }
     }
 
-    // Для остальных случаев вызываем оригинал
     if (g_pOriginalActiveClickWith) {
+        LUA_FLUSH_LOG();
         g_pOriginalActiveClickWith(pThis, action, pTarget);
     }
 }

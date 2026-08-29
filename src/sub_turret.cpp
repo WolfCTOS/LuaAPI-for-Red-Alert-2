@@ -458,6 +458,7 @@ void SubTurretManager::UpdateAll() {
 
         // Удерживаем цель на корабле (SEH-защищено в отдельной функции —
         // UpdateAll содержит std::vector, а __try в ней недопустим по C2712).
+        LUA_FLUSH_LOG();  // flush перед потенциально опасной операцией
         SafeHoldTarget(pShip, pCachedTarget);
 
         // Пока не наносим урон (следующий шаг)
