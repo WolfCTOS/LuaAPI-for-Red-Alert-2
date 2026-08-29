@@ -173,15 +173,11 @@ void __fastcall Hooked_ActiveClickWith(FootClass* pThis, void* /*edx*/, int acti
             g_PlayerTargetOverride[pShip] = static_cast<AbstractClass*>(pTarget);
 
             if (isBuildingTarget) {
-                LUA_LOG_WARN("[EventHook] spawner+building attack: calling original ONCE (no manual target set)");
+                // Полностью блокируем оригинал для spawner+building — он крашится в нативной логике.
+                // Ракеты будем создавать вручную в UpdateAll через ObjectTypeClass::CreateObject.
+                LUA_LOG_WARN("[EventHook] spawner+building attack: original BLOCKED, will spawn missiles manually");
                 LUA_FLUSH_LOG();
-                // Вызываем оригинал ОДИН раз для инициализации SpawnManager
-                if (g_pOriginalActiveClickWith) {
-                    g_pOriginalActiveClickWith(pThis, action, pTarget);
-                }
-                LUA_LOG_WARN("[EventHook] original returned, target will be held via UpdateAll");
-                LUA_FLUSH_LOG();
-                return;  // НЕ вызываем оригинал второй раз
+                return;  // НЕ вызываем оригинал вообще
             }
 
             // Для не-зданий: кэш + установка Target + вызов оригинала
