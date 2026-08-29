@@ -173,8 +173,7 @@ void __fastcall Hooked_ActiveClickWith(FootClass* pThis, void* /*edx*/, int acti
             g_PlayerTargetOverride[pShip] = static_cast<AbstractClass*>(pTarget);
 
             if (isBuildingTarget) {
-                LUA_LOG_WARN("[EventHook] spawner+building attack: setting target and calling original ONCE");
-                pShip->Target = pTargetTechno;  // Устанавливаем Target ПЕРЕД вызовом оригинала
+                LUA_LOG_WARN("[EventHook] spawner+building attack: calling original ONCE (no manual target set)");
                 LUA_FLUSH_LOG();
                 // Вызываем оригинал ОДИН раз для инициализации SpawnManager
                 if (g_pOriginalActiveClickWith) {
