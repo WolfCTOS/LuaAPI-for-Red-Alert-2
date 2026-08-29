@@ -223,3 +223,102 @@ if (g_pOriginalActiveClickWith) {
     g_pOriginalActiveClickWith(pThis, action, pTarget);
 }
 ```
+
+---
+
+## 9. Manual Missile Spawning: Exhausting All ActiveClickWith Hook Approaches
+
+### The problem persists
+
+After implementing the "manual target setting" approach from section 8, the crash pattern remains unchanged. Regardless of what we do in the hook, the game crashes immediately after `ActiveClickWith` returns — never producing a single `Update` tick in the log.
+
+### All five attempts through the hook (and why each failed)
+
+1. **Block original, no manual `pShip->Target` set**
+   - Result: crash immediately after `return` (zero `Update` ticks)
+   - Cause: `SpawnManager` uninitialized, engine crashes reading `Owner->Target`
+
+2. **Call original for all cases**
+   - Result: crash inside original or immediately after return
+   - Cause: native `QueueMission(Attack)` logic fails for spawner+building
+
+3. **Manually set `pShip->Target` before calling original**
+   - Result: crash inside original
+   - Cause: issue not with `pShip->Target`, but with `QueueMission` logic itself
+
+4. **Call original once to initialize `SpawnManager`**
+   - Result: original returns successfully, but crash immediately after
+   - Cause: problem not in original call, but in subsequent engine expectations
+
+5. **Block original completely (no actions at all)**
+   - Result: crash immediately after `return` (zero `Update` ticks)
+   - Cause: engine expects initialization from `ActiveClickWith`; without it, the engine crashes
+
+### The root cause
+
+The RA2/YR 1.001 engine **cannot correctly handle** attack-building orders for spawner units through `ActiveClickWith`. This is a fundamental issue in the native engine logic, not our code. The hook cannot work around it because the crash doesn't occur in the hook itself, but in the engine's expectations after the hook returns.
+
+### Solution: Manual missile creation
+
+For spawner attacks on buildings, we must **completely bypass** `ActiveClickWith`:
+
+1. **In the hook**: block original, write target to `g_PlayerTargetOverride` cache, `return`
+2. **In `UpdateAll`**: for each ship in cache, check if it has `SpawnManager` and target is building
+3. **Create missiles manually** via `ObjectTypeClass::CreateObject` or `BulletClass::Create`
+4. **Attach missiles to target** via `pMissile->SetTarget`
+5. **Launch missiles** via `pMissile->QueueMission(Mission::Attack, false)` + `NextMission()`
+
+### Planned code example
+
+```cpp
+// In UpdateAll after processing sub-turrets:
+for (auto it = g_PlayerTargetOverride.begin(); it != g_PlayerTargetOverride.end();) {
+    TechnoClass* pShip = it->first;
+    AbstractClass* pCachedTarget = it->second;
+
+    if (!IsValidTechno(pShip) || !IsValidTechno(static_cast<TechnoClass*>(pCachedTarget))) {
+        it = g_PlayerTargetOverride.erase(it);
+        continue;
+    }
+
+    SafeHoldTarget(pShip, pCachedTarget);
+
+    __try {
+        if (pShip->SpawnManager && pCachedTarget->WhatAmI() == AbstractType::Building) {
+            BulletTypeClass* pBulletType = BulletTypeClass::Find("DMISL");
+            if (pBulletType) {
+                CoordStruct shipPos = pShip->GetCoords();
+                CoordStruct targetPos = static_cast<TechnoClass*>(pCachedTarget)->GetCoords();
+
+                ObjectClass* pMissileObj = ObjectTypeClass::CreateObject(
+                    pBulletType, shipPos, pShip->Owner);
+
+                if (pMissileObj) {
+                    TechnoClass* pMissile = static_cast<TechnoClass*>(pMissileObj);
+                    pMissile->SetTarget(pCachedTarget);
+                    pMissile->QueueMission(Mission::Attack, false);
+                    pMissile->NextMission();
+
+                    LUA_LOG_INFO("[ManualSpawn] Missile created for '{}' -> '{}'",
+                                 SafeTechnoId(pShip), SafeTechnoId(pCachedTarget));
+                }
+            }
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {}
+
+    ++it;
+}
+```
+
+### Related lessons
+
+- Section 8: Spawner Attack Orders: The ActiveClickWith Crash for Buildings (initial diagnosis)
+- Trap #4 (AI_CONTEXT.md): SpawnManager umbilical cord lock — native SpawnManagerClass::AI() overwrites missile target every frame; must decouple via pMissile->SpawnOwner = nullptr
+- Trap #8 (AI_CONTEXT.md): RocketLocomotor pre-computed ballistic spline — RocketLocomotor computes trajectory at creation; use Force_Immediate_Destination for in-flight redirection
+
+### Next steps
+
+1. Find `ObjectTypeClass::CreateObject` or `BulletClass::Create` signature in YRpp headers
+2. Implement manual missile spawning in `UpdateAll`
+3. Test: game should not crash, missiles should fly to target
+4. Add interception in `ProcessSpawnedMissiles` for redirection if needed
