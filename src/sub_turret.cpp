@@ -4,6 +4,9 @@
 #include <LuaAPI/logger.hpp>
 #include <SpawnManagerClass.h>
 #include <AircraftClass.h>
+#include <BulletClass.h>
+#include <BulletTypeClass.h>
+#include <cmath>
 
 namespace LuaAPI {
 
@@ -407,7 +410,10 @@ void SubTurretManager::UpdateAll() {
 
     for (TechnoClass* pTechno : activeUnits) {
         if (!IsValidTechno(pTechno)) {
-            m_primaryAttackTarget.erase(pTechno);   // корабль уничтожен — чистим кэш
+            // Корабль уничтожен — чистим кэш и, так как m_isUpdating == true,
+            // откладываем удаление записи из m_turrets (утечка Gate 10.1).
+            m_primaryAttackTarget.erase(pTechno);
+            m_pendingRemovals.push_back(pTechno);
             continue;
         }
 
@@ -505,6 +511,109 @@ void SubTurretManager::UpdateAll() {
 void SubTurretManager::DrawSubTurrets(TechnoClass* pTechno, Point2D* pLocation, RectangleStruct* pBounds) {
 }
 
+// Возвращает точку вылета снаряда: позиция корабля + повёрнутый на facing оффсет башни.
+// facing 0..255 (0 = восток, по часовой). Точка в лептонах.
+static bool ComputeMuzzle(TechnoClass* pShip, const SubTurretData& turret, CoordStruct* out) {
+    if (!pShip || !out) return false;
+    __try {
+        CoordStruct shipPos = pShip->GetCoords();
+        double angle = static_cast<double>(turret.facing) * (2.0 * 3.141592653589793 / 256.0);
+        double cosA = std::cos(angle);
+        double sinA = std::sin(angle);
+        out->X = shipPos.X + static_cast<int>(static_cast<double>(turret.offset.X) * cosA
+                                            - static_cast<double>(turret.offset.Y) * sinA);
+        out->Y = shipPos.Y + static_cast<int>(static_cast<double>(turret.offset.X) * sinA
+                                            + static_cast<double>(turret.offset.Y) * cosA);
+        out->Z = shipPos.Z + turret.offset.Z;
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+// Находит быстрый видимый тип снаряда из rules; фолбэк на первый элемент Array.
+static BulletTypeClass* FindVisibleBulletType() {
+    BulletTypeClass* pType = nullptr;
+    __try {
+        pType = BulletTypeClass::Find("DRAGON");   // быстрый, видимый
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        pType = nullptr;
+    }
+    if (!pType) {
+        __try { pType = BulletTypeClass::Find("ZSUFO"); }
+        __except (EXCEPTION_EXECUTE_HANDLER) { pType = nullptr; }
+    }
+    if (!pType) {
+        __try {
+            if (BulletTypeClass::Array.Count > 0)
+                pType = BulletTypeClass::Array.GetItem(0);
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            pType = nullptr;
+        }
+    }
+    return pType;
+}
+
+// Спавн реального видимого снаряда через BulletClass, урон наносится нативно при
+// попадании (warhead снаряда). Возвращает true при успешном запуске.
+static bool SpawnTracerBullet(TechnoClass* pTechno, SubTurretData& turret, TechnoClass* pTarget) {
+    if (!pTechno || !pTarget) return false;
+
+    BulletTypeClass* pType = FindVisibleBulletType();
+    if (!pType) return false;
+
+    CoordStruct muzzle{};
+    if (!ComputeMuzzle(pTechno, turret, &muzzle)) return false;
+
+    // Warhead берём из основного оружия корабля (Weapon[0]), с фолбэком на
+    // RulesClass::C4Warhead и WarheadTypeClass::Find("AP"), как в прежней реализации.
+    WarheadTypeClass* pWH = nullptr;
+    __try {
+        // ObjectClass::GetType() возвращает базовый ObjectTypeClass*; поле Weapon
+        // есть только у TechnoTypeClass, поэтому приводим явно.
+        auto* pTechType = static_cast<TechnoTypeClass*>(pTechno->GetType());
+        if (pTechType && pTechType->Weapon[0].WeaponType && pTechType->Weapon[0].WeaponType->Warhead)
+            pWH = pTechType->Weapon[0].WeaponType->Warhead;
+    } __except (EXCEPTION_EXECUTE_HANDLER) { pWH = nullptr; }
+    if (!pWH) {
+        __try {
+            if (RulesClass::Instance && RulesClass::Instance->C4Warhead)
+                pWH = RulesClass::Instance->C4Warhead;
+        } __except (EXCEPTION_EXECUTE_HANDLER) { pWH = nullptr; }
+    }
+    if (!pWH) {
+        __try { pWH = WarheadTypeClass::Find("AP"); }
+        __except (EXCEPTION_EXECUTE_HANDLER) { pWH = nullptr; }
+    }
+    if (!pWH) return false;
+
+    int damage = 50;
+
+    __try {
+        // Создаём и конфигурируем снаряд (CreateBullet сам вызывает Construct).
+        BulletClass* pBullet = pType->CreateBullet(pTarget, pTechno, damage, pWH, 40, true);
+        if (!pBullet) return false;
+
+        // Прицеливаем на цель и двигаем к точке вылета (MoveTo).
+        pBullet->SetTarget(pTarget);
+
+        CoordStruct targetCoords = pTarget->GetCoords();
+        double dx = static_cast<double>(targetCoords.X - muzzle.X);
+        double dy = static_cast<double>(targetCoords.Y - muzzle.Y);
+        double dz = static_cast<double>(targetCoords.Z - muzzle.Z);
+        double len = std::sqrt(dx * dx + dy * dy + dz * dz);
+        if (len < 1.0) len = 1.0;
+        double speed = 40.0; // лептон/кадр, видимый трассер
+        BulletVelocity vel{ dx / len * speed, dy / len * speed, dz / len * speed };
+        bool moved = pBullet->MoveTo(muzzle, vel);
+        if (!moved) return false;
+
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
 bool SubTurretManager::FireTurret(TechnoClass* pTechno, size_t turretIndex, TechnoClass* pTarget) {
     if (!IsValidTechno(pTechno) || !IsValidTechno(pTarget)) return false;
 
@@ -516,39 +625,14 @@ bool SubTurretManager::FireTurret(TechnoClass* pTechno, size_t turretIndex, Tech
 
     turret.rofTimer = turret.baseRof;
 
-    // Корабль с ракетным спавном (Дредноут/Авианосец): НЕ вызываем ReceiveDamage и не
-    // наносим мгновенный урон вручную — иначе получим ДВОЙНОЙ урон (double damage).
-    // Урон наносят только сами летающие ракеты (DMISL/HORNET) при физическом падении
-    // на цель. Здесь лишь выставляем кулдаун; нативный боевой приказ выдаёт
-    // FireSplitSalvo(), а перехват разделения ракет делает ProcessSpawnedMissiles().
-    if (pTechno->SpawnManager) {
+    // Спавн видимого снаряда. Урон наносится нативно при попадании (warhead),
+    // поэтому мгновенный ReceiveDamage из прежней реализации убран (нет двойного урона).
+    if (SpawnTracerBullet(pTechno, turret, pTarget)) {
+        LUA_LOG_INFO("[SubTurret] tracer fired from turret {} at '{}'",
+                     turretIndex, SafeTechnoId(pTarget));
         return true;
     }
-
-    // Обычная башня без ракетного спавна: мгновенный урон по готовности.
-    WarheadTypeClass* pWH = WarheadTypeClass::Find("AP");
-    if (!pWH && WarheadTypeClass::Array.Count > 0) {
-        pWH = WarheadTypeClass::Array.GetItem(0);
-    }
-    if (!pWH) return false;
-
-    int damage = 50;
-
-    __try {
-        // Проверяем результат выстрела: если цель погибла (NowDead/Dead) — МГНОВЕННЫЙ BAIL!
-        DamageState result = pTarget->ReceiveDamage(&damage, 0, pWH, pTechno, false, false, pTechno->Owner);
-
-        // Если цель уничтожена (Health <= 0 или DamageState == Dead) — мгновенно инвалидируем её у ВСЕХ турелей!
-        if (result == DamageState::NowDead || !IsValidTechno(pTarget)) {
-            InvalidateTargetGlobally(pTarget);
-            return true; // Мгновенный выход, не трогаем память!
-        }
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        InvalidateTargetGlobally(pTarget);
-        return false;
-    }
-
-    return true;
+    return false;
 }
 
 bool SubTurretManager::AssignSplitTargets(TechnoClass* pTechno, const std::vector<TechnoClass*>& targets) {
@@ -620,10 +704,19 @@ bool SubTurretManager::FireSplitSalvo(TechnoClass* pTechno) {
             pTechno->SetTarget(validTarget);
             pTechno->SetDestination(validTarget, true);
             pTechno->QueueMission(Mission::Attack, true);
-            return true;
         } __except (EXCEPTION_EXECUTE_HANDLER) {
-            return false;
         }
+
+        // Суб-турели Дредноута/Авианосца: после нативного приказа атаки запускаем
+        // видимые трассеры из каждой башни (та же FireTurret, что и обычные башни),
+        // чтобы суб-турели были видимы + работал кулдаун.
+        for (size_t i = 0; i < turrets->size(); ++i) {
+            auto& turret = (*turrets)[i];
+            if (turret.target && IsValidTechno(turret.target)) {
+                FireTurret(pTechno, i, turret.target);
+            }
+        }
+        return true;
     }
 
     // Обычные башни без ракетного спавна: принудительный пуск по назначенным целям.
