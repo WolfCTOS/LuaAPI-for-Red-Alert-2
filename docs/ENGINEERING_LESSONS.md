@@ -170,3 +170,56 @@ Frozen C++ host, hot-swappable pure-Lua gameplay, `pcall` isolation between
 mods, and liveness-checked bindings as the only bridge between the two worlds.
 Everything above exists because something crashed, silently did nothing, or
 dealt zero damage first. Keep the lessons, skip the crashes.
+
+---
+
+## 8. Spawner Attack Orders: The ActiveClickWith Crash for Buildings
+
+### Проблема
+
+При хуке `UnitClass::Active_Click_With` для управления целью spawner-юнитов (Dreadnought, Aircraft Carrier) игра крашится при атаке зданий. Краш происходит внутри оригинального `ActiveClickWith` или сразу после его возврата.
+
+### Что мы пробовали
+
+1. **Блокировать оригинальный ActiveClickWith** → игра крашится, потому что `SpawnManager` не инициализируется, и на следующем тике движок падает при попытке прочитать `Owner->Target` (который `nullptr`).
+
+2. **Вызывать оригинал для всех случаев** → игра крашится при атаке зданий (но работает для юнитов). Нативная логика `QueueMission(Attack)` падает внутри движка.
+
+3. **Вручную устанавливать `pShip->Target` перед вызовом оригинала** → всё равно крашится. Проблема не в `nullptr`, а в самой логике `QueueMission`.
+
+4. **Отключать `QueueMission(Attack)` в `ManagePrimaryAttackTarget` для spawner-юнитов** → краш всё равно происходит, потому что оригинальный `ActiveClickWith` сам вызывает `QueueMission` внутри.
+
+### Корень проблемы
+
+Движок RA2/YR 1.001 не может корректно обработать приказ атаки здания для spawner-юнитов через `ActiveClickWith`. Это фундаментальная проблема нативной логики, а не нашего кода.
+
+### Решение: Ручной ракетный залп
+
+Для spawner-атак по зданиям мы **не вызываем** оригинальный `ActiveClickWith`. Вместо этого:
+
+1. **Блокируем оригинал** в хуке для spawner-юнитов при атаке зданий
+2. **Устанавливаем `pShip->Target`** вручную (без `QueueMission`)
+3. **Создаём ракеты вручную** через `BulletClass::Create` или через прямой вызов спавна с правильными параметрами
+4. **Перехватываем ракеты** в `ProcessSpawnedMissiles` (уже реализовано) и перенаправляем их на кэшированную цель
+
+Этот подход обходит нативную логику `ActiveClickWith` и `QueueMission`, которые крашатся для spawner-атак по зданиям.
+
+### Пример кода
+
+```cpp
+// В хуке ActiveClickWith для spawner-атак по зданиям:
+if (isSpawner && IsBuilding(pTargetTechno)) {
+    // НЕ вызываем оригинал
+    pShip->Target = pTargetTechno;  // только удерживаем цель
+    g_PlayerTargetOverride[pShip] = static_cast<AbstractClass*>(pTarget);
+    
+    // Создаём ракеты вручную (следующий шаг)
+    // BulletClass::Create(...);
+    return;
+}
+
+// Для обычных юнитов и spawner-атак по юнитам — вызываем оригинал
+if (g_pOriginalActiveClickWith) {
+    g_pOriginalActiveClickWith(pThis, action, pTarget);
+}
+```
