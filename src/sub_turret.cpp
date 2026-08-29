@@ -1,4 +1,5 @@
 #include "sub_turret.h"
+#include "event_hook.h"
 
 #include <LuaAPI/logger.hpp>
 #include <SpawnManagerClass.h>
@@ -23,6 +24,16 @@ static bool IsValidTechno(TechnoClass* ptr) {
         return true;
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return false;
+    }
+}
+
+// SEH-защищённая установка цели корабля. Вынесена в отдельную функцию: __try
+// недопустим в UpdateAll() (там есть std::vector -> C2712).
+static void SafeHoldTarget(TechnoClass* pShip, AbstractClass* pTarget) {
+    if (!pShip || !pTarget) return;
+    __try {
+        pShip->Target = pTarget;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
     }
 }
 
@@ -429,6 +440,28 @@ void SubTurretManager::UpdateAll() {
         if (pObj && IsValidTechno(pObj) && pObj->SpawnManager) {
             ProcessSpawnedMissiles(pObj);
         }
+    }
+
+    // 3. Обработка spawner-атак по зданиям из кэша g_PlayerTargetOverride
+    //    (заполняется в Hooked_ActiveClickWith). Пока только удерживаем цель,
+    //    урон наносится следующим шагом.
+    for (auto it = LuaAPI::EventHook::g_PlayerTargetOverride.begin();
+         it != LuaAPI::EventHook::g_PlayerTargetOverride.end();) {
+        TechnoClass* pShip = it->first;
+        AbstractClass* pCachedTarget = it->second;
+
+        if (!IsValidTechno(pShip) ||
+            !IsValidTechno(static_cast<TechnoClass*>(pCachedTarget))) {
+            it = LuaAPI::EventHook::g_PlayerTargetOverride.erase(it);
+            continue;
+        }
+
+        // Удерживаем цель на корабле (SEH-защищено в отдельной функции —
+        // UpdateAll содержит std::vector, а __try в ней недопустим по C2712).
+        SafeHoldTarget(pShip, pCachedTarget);
+
+        // Пока не наносим урон (следующий шаг)
+        ++it;
     }
 
     m_isUpdating = false;
