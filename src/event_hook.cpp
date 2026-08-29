@@ -121,6 +121,15 @@ bool IsSpawnerShip(TechnoClass* pTechno) {
 }
 
 void __fastcall Hooked_ActiveClickWith(FootClass* pThis, void* /*edx*/, int action, void* pTarget) {
+    // ==== ВРЕМЕННАЯ ДИАГНОСТИКА ====
+    // Если краш ТОЛЬКО при action==Attack (клик атаки) — разделяем два сценария.
+    if (action == 0x5) {  // Attack
+        LUA_LOG_WARN("[EventHook] ATTACK action detected, returning WITHOUT calling original");
+        LUA_FLUSH_LOG();
+        return;  // НЕ вызываем оригинал для атаки
+    }
+    // ================================
+
     // ==== ДИАГНОСТИКА СРАБАТЫВАНИЯ ХУКА ====
     unsigned int actionU = static_cast<unsigned int>(action);
     int thisRtti = -1;
