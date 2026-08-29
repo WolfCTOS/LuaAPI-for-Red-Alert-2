@@ -37,6 +37,21 @@ static void SafeHoldTarget(TechnoClass* pShip, AbstractClass* pTarget) {
     }
 }
 
+// SEH-защищённая проверка: корабль-спаунер и цель-здание. Возвращает false при
+// исключении (висячий указатель и т.п.), true при успешном определении флагов.
+// Вынесена из UpdateAll из-за C2712 (там есть std::vector).
+static bool CheckSpawnerBuildingState(TechnoClass* pShip, AbstractClass* pTarget,
+                                      bool* outSpawner, bool* outBuilding) {
+    if (!pShip || !pTarget || !outSpawner || !outBuilding) return false;
+    __try {
+        *outSpawner = (pShip->SpawnManager != nullptr);
+        *outBuilding = (pTarget->WhatAmI() == AbstractType::Building);
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
 // Безопасное получение строкового ID цели для подробного логирования.
 // Никогда не разыменовывает ненадёжные указатели за пределами __try.
 static const char* SafeTechnoId(AbstractClass* pObj) {
@@ -456,12 +471,24 @@ void SubTurretManager::UpdateAll() {
             continue;
         }
 
-        // Удерживаем цель на корабле (SEH-защищено в отдельной функции —
-        // UpdateAll содержит std::vector, а __try в ней недопустим по C2712).
-        LUA_FLUSH_LOG();  // flush перед потенциально опасной операцией
-        SafeHoldTarget(pShip, pCachedTarget);
+        bool isSpawner = false;
+        bool isBuilding = false;
+        // __try недопустим в UpdateAll() (там есть std::vector -> C2712),
+        // поэтому проверка вынесена в отдельную SEH-функцию.
+        if (!CheckSpawnerBuildingState(pShip, pCachedTarget, &isSpawner, &isBuilding)) {
+            it = LuaAPI::EventHook::g_PlayerTargetOverride.erase(it);
+            continue;
+        }
 
-        // Пока не наносим урон (следующий шаг)
+        if (isSpawner && isBuilding) {
+            // НЕ ставим pShip->Target (SafeHoldTarget) — это подозреваемый триггер краша.
+            // Цель удерживается только в кэше, ракеты будем создавать вручную.
+            LUA_LOG_INFO("[Override] spawner+building entry held in cache, no Target write");
+        } else {
+            LUA_FLUSH_LOG();  // flush перед потенциально опасной операцией
+            SafeHoldTarget(pShip, pCachedTarget);
+        }
+
         ++it;
     }
 
