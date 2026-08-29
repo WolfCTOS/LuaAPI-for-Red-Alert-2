@@ -399,6 +399,25 @@ int Techno_IsIdle(lua_State* L) {
     return 1;
 }
 
+// obj:IsAttacking() -> bool (CurrentMission == Mission::Attack)
+int Techno_IsAttacking(lua_State* L) {
+    auto* pTechno = CheckTechno(L, 1);
+    if (!ValidateTechno(pTechno)) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+
+    FootClass* pFoot = AsFoot(pTechno);
+    if (!pFoot) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+
+    Mission m = pFoot->CurrentMission;
+    lua_pushboolean(L, (m == Mission::Attack) ? 1 : 0);
+    return 1;
+}
+
 // techno:SetHealthRatio(ratio) -> nil
 // Sets the unit's health to ratio * maxHealth (0.0 - 1.0).
 int Techno_SetHealthRatio(lua_State* L) {
@@ -628,6 +647,7 @@ const luaL_Reg kTechnoMethods[] = {
     { "MoveTo",        Techno_MoveTo        },
     { "Hunt",          Techno_Hunt          },
     { "IsIdle",        Techno_IsIdle        },
+    { "IsAttacking",   Techno_IsAttacking   },
     { "TakeDamage",    Techno_TakeDamage    },
     { "Disable",       Techno_Disable       },
     { "SetHealthRatio", Techno_SetHealthRatio },
