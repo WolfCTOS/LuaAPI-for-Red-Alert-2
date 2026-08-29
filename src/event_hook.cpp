@@ -164,6 +164,7 @@ void __fastcall Hooked_ActiveClickWith(FootClass* pThis, void* /*edx*/, int acti
         if (IsSpawnerShip(pShip) && IsLiveTechno(pTargetTechno)) {
             blockOriginal = true;
             g_PlayerTargetOverride[pShip] = static_cast<AbstractClass*>(pTarget);
+            pShip->Target = pTargetTechno;  // <-- ДОБАВИТЬ ЭТУ СТРОКУ
             LUA_LOG_INFO("[EventHook] player Attack order via ActiveClickWith: '{}' -> '{}' cached",
                          SafeTechnoName(pShip), SafeTechnoName(pTargetTechno));
         }
