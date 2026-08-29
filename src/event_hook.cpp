@@ -135,10 +135,12 @@ void __fastcall Hooked_ActiveClickWith(FootClass* pThis, void* /*edx*/, int acti
     LUA_LOG_INFO("[EventHook] ActiveClickWith called, this=0x{:X} [{}], action=0x{:X}",
                  reinterpret_cast<uintptr_t>(pThis), thisClass, actionU);
 
-    // Приказ атаки: action == Attack(0x5), цель — живое техно, корабль — спаунер.
+    // Приказ атаки: action == Attack(0x5). Ниже — только диагностика.
     if (actionU == static_cast<unsigned int>(kActionAttack)) {
         TechnoClass* pShip = static_cast<TechnoClass*>(pThis);
         TechnoClass* pTargetTechno = ObjectToTechno(pTarget);
+        bool isSpawner = IsSpawnerShip(pShip);
+        bool isLive = IsLiveTechno(pTargetTechno);
 
         // ==== ДИАГНОСТИКА: реальный TypeID юнита ====
         __try {
@@ -152,41 +154,26 @@ void __fastcall Hooked_ActiveClickWith(FootClass* pThis, void* /*edx*/, int acti
             LUA_LOG_CRITICAL("ActiveClickWith: failed to read TypeID (SEH)");
         }
 
-        // ==== ДИАГНОСТИКА КЭШИРОВАНИЯ ====
+        // ==== ДИАГНОСТИКА ====
         LUA_LOG_CRITICAL("ActiveClickWith: action==Attack, pShip=0x{:X}, isSpawner={}, pTarget=0x{:X}, isLive={}",
                          reinterpret_cast<uintptr_t>(pShip),
-                         IsSpawnerShip(pShip) ? 1 : 0,
+                         isSpawner ? 1 : 0,
                          reinterpret_cast<uintptr_t>(pTargetTechno),
-                         IsLiveTechno(pTargetTechno) ? 1 : 0);
+                         isLive ? 1 : 0);
 
-        // Проверяем, является ли цель зданием (spawner-атака по зданию крашит движок).
-        bool isBuildingTarget = false;
-        if (pTargetTechno) {
-            __try {
-                auto what = pTargetTechno->WhatAmI();
-                isBuildingTarget = (what == AbstractType::Building);
-            } __except (EXCEPTION_EXECUTE_HANDLER) {}
-        }
-
-        // Спауэр-атака: кэшируем цель (позже используем для перенаправления ракет).
-        if (IsSpawnerShip(pShip) && IsLiveTechno(pTargetTechno)) {
-            g_PlayerTargetOverride[pShip] = static_cast<AbstractClass*>(pTarget);
-
-            if (isBuildingTarget) {
-                // Полностью блокируем оригинал для spawner+building — он крашится в нативной логике.
-                // Ракеты будем создавать вручную в UpdateAll через ObjectTypeClass::CreateObject.
-                LUA_LOG_WARN("[EventHook] spawner+building attack: original BLOCKED, will spawn missiles manually");
-                LUA_FLUSH_LOG();
-                return;  // НЕ вызываем оригинал вообще
+        if (isSpawner) {
+            // ЧИСТЫЙ PASSTHROUGH для spawner-юнитов: НЕ пишем в кэш, НЕ трогаем
+            // pShip->Target, НЕ блокируем оригинал. Вызываем оригинал один раз
+            // и возвращаемся, чтобы проверить работу НАТИВНОЙ атаки без вмешательства.
+            LUA_LOG_INFO("[EventHook] spawner unit: passthrough to original, no state change");
+            if (g_pOriginalActiveClickWith) {
+                g_pOriginalActiveClickWith(pThis, action, pTarget);
             }
-
-            // Для не-зданий: кэш + установка Target + вызов оригинала
-            pShip->Target = pTargetTechno;
-            LUA_LOG_INFO("[EventHook] player Attack order via ActiveClickWith: '{}' -> '{}' cached",
-                         SafeTechnoName(pShip), SafeTechnoName(pTargetTechno));
+            return;
         }
     }
 
+    // Не-spawner юниты и прочие клики: вызываем оригинал как обычно.
     if (g_pOriginalActiveClickWith) {
         LUA_FLUSH_LOG();
         g_pOriginalActiveClickWith(pThis, action, pTarget);
