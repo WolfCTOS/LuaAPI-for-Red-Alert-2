@@ -228,89 +228,30 @@ if (g_pOriginalActiveClickWith) {
 
 ## 9. Manual Missile Spawning: Bypassing Native ActiveClickWith for Spawner+Building Attacks
 
-### The problem
+### Final diagnosis (replaces "The problem persists")
 
-When hooking `UnitClass::Active_Click_With` to control the target of spawner units (Dreadnought, Aircraft Carrier), the game crashes when attacking buildings. The crash happens **regardless** of whether we call the original or not, and whether we set `pShip->Target` or not. The RA2/YR 1.001 engine expects a certain state from `ActiveClickWith` for spawner attacks on buildings; when we return without initializing that state, the engine crashes due to an inconsistent `SpawnManager` state.
+After exhaustive testing, the crash is NOT specific to buildings. The trigger is any attack order on a TechnoClass target (building OR unit) issued to a spawner unit (SpawnManager != nullptr). Attacking terrain (CellClass) works fine.
 
-### All attempts through the hook (and why each failed)
+Test matrix:
+- Spawner attacks terrain: works
+- Spawner attacks unit: crashes
+- Spawner attacks building: crashes
 
-1. **Block the original without setting `pShip->Target`**
-   - Result: crash immediately after `return` (without a single `Update` tick)
-   - Cause: `SpawnManager` is not initialized; the engine crashes when trying to read `Owner->Target`
-   - Note: the crash happens inside the engine, not in our `return`
+This means the RA2/YR 1.001 engine cannot process ANY TechnoClass combat order for spawner units through ActiveClickWith. The crash occurs immediately after the hook returns, before a single Update tick, regardless of whether we call the original, block it, or manipulate pShip->Target.
 
-2. **Call the original for all cases**
-   - Result: crash inside the original or immediately after it returns
-   - Cause: the native `QueueMission(Attack)` logic crashes for spawner+building
+### Why all six hook approaches failed
 
-3. **Set `pShip->Target` before calling the original**
-   - Result: crash inside the original
-   - Cause: the problem is not `pShip->Target`, but the `QueueMission` logic itself
+1. Block original, no Target set: crash after return (engine expects initialization)
+2. Call original for all cases: crash inside original or right after
+3. Set pShip->Target before original: crash inside original
+4. Call original once to init SpawnManager: original returns, crash on next tick
+5. Block original completely: crash after return
+6. Block original + skip SafeHoldTarget in UpdateAll: crash after return (UpdateAll never runs)
 
-4. **Call the original once to initialize `SpawnManager`**
-   - Result: the original returns successfully, but a crash follows immediately
-   - Cause: the problem is not calling the original, but the subsequent ticks
+Conclusion: the crash is not in our code. It is in the engine's expectation that ActiveClickWith for spawners performs internal initialization that our detour cannot replicate.
 
-5. **Block the original without any actions**
-   - Result: crash immediately after `return` (without a single `Update` tick)
-   - Cause: the engine expects initialization from `ActiveClickWith`; without it, the engine crashes
+### Strategic decision
 
-### The root cause
+For Gate 10.4 we stop hooking ActiveClickWith for spawner units. Spawner combat orders go through the native UI path. The LuaAPI showcase mod (multi_turret_battleship) works with native orders plus our sub-turret and split-salvo systems.
 
-The RA2/YR 1.001 engine **cannot correctly handle** an attack-building order for spawner units through `ActiveClickWith`. This is a fundamental problem in the native engine logic, not our code. The hook cannot work around it because the crash does not occur in the hook itself, but in the engine's expectations after the hook returns.
-
-### Solution: Manual missile creation
-
-For spawner attacks on buildings we **completely bypass** `ActiveClickWith`:
-
-1. **In the `ActiveClickWith` hook**: block the original, write the target to the `g_PlayerTargetOverride` cache, set `pShip->Target` via `UpdateAll`
-2. **In `UpdateAll`**: for each ship in the cache, check whether it has a `SpawnManager` and the target is a building
-3. **Create missiles manually** via `ObjectTypeClass::CreateObject` or `BulletClass::Create`
-4. **Attach the missiles to the target** from the cache via `pMissile->SetTarget`
-5. **Launch the missiles** via `pMissile->QueueMission(Mission::Attack, false)`
-
-### Code example (planned)
-
-```cpp
-// In UpdateAll after processing sub-turrets:
-for (auto it = g_PlayerTargetOverride.begin(); it != g_PlayerTargetOverride.end();) {
-    TechnoClass* pShip = it->first;
-    AbstractClass* pCachedTarget = it->second;
-
-    if (!IsValidTechno(pShip) || !IsValidTechno(static_cast<TechnoClass*>(pCachedTarget))) {
-        it = g_PlayerTargetOverride.erase(it);
-        continue;
-    }
-
-    // Hold the target on the ship
-    SafeHoldTarget(pShip, pCachedTarget);
-
-    // Check whether a manual missile spawn is needed (spawner + building)
-    __try {
-        if (pShip->SpawnManager && pCachedTarget->WhatAmI() == AbstractType::Building) {
-            // Manual missile creation
-            BulletTypeClass* pBulletType = BulletTypeClass::Find("DMISL");
-            if (pBulletType) {
-                CoordStruct shipPos = pShip->GetCoords();
-                CoordStruct targetPos = static_cast<TechnoClass*>(pCachedTarget)->GetCoords();
-
-                // Create the missile manually
-                ObjectClass* pMissileObj = ObjectTypeClass::CreateObject(
-                    pBulletType, shipPos, pShip->Owner);
-
-                if (pMissileObj) {
-                    TechnoClass* pMissile = static_cast<TechnoClass*>(pMissileObj);
-                    pMissile->SetTarget(pCachedTarget);
-                    pMissile->QueueMission(Mission::Attack, false);
-                    pMissile->NextMission();
-
-                    LUA_LOG_INFO("[ManualSpawn] Missile created for '{}' -> '{}'",
-                                 SafeTechnoId(pShip), SafeTechnoId(pCachedTarget));
-                }
-            }
-        }
-    } __except (EXCEPTION_EXECUTE_HANDLER) {}
-
-    ++it;
-}
-```
+Revisit spawner order interception in Milestone 11 with a different hook point (SetTarget or QueueMission detour) or via Ares/Phobos integration.
