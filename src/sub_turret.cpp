@@ -554,9 +554,11 @@ static BulletTypeClass* FindVisibleBulletType() {
     return pType;
 }
 
-// Спавн реального видимого снаряда через BulletClass, урон наносится нативно при
-// попадании (warhead снаряда). Возвращает true при успешном запуске.
-static bool SpawnTracerBullet(TechnoClass* pTechno, SubTurretData& turret, TechnoClass* pTarget) {
+// Спавн реального видимого снаряда через BulletClass. Урон применяется НАТИВНО только
+// при прямом попадании: берём warhead "AP" (CellSpread=0, без площадного урона).
+// damage передаётся вызывающим (0 = чисто визуальный трассер, >0 = урон по контакту).
+static bool SpawnTracerBullet(TechnoClass* pTechno, SubTurretData& turret, TechnoClass* pTarget,
+                              int damage) {
     if (!pTechno || !pTarget) return false;
 
     BulletTypeClass* pType = FindVisibleBulletType();
@@ -565,29 +567,28 @@ static bool SpawnTracerBullet(TechnoClass* pTechno, SubTurretData& turret, Techn
     CoordStruct muzzle{};
     if (!ComputeMuzzle(pTechno, turret, &muzzle)) return false;
 
-    // Warhead берём из основного оружия корабля (Weapon[0]), с фолбэком на
-    // RulesClass::C4Warhead и WarheadTypeClass::Find("AP"), как в прежней реализации.
+    // ПРЯМОЙ КОНТАКТ: "AP" имеет CellSpread=0, поэтому урон не бьёт по площади и не
+    // наносится без касания снаряда цели. Только если "AP" недоступен — фолбэк на
+    // warhead основного оружия корабля (большой урон + CellSpread), затем C4.
     WarheadTypeClass* pWH = nullptr;
-    __try {
-        // ObjectClass::GetType() возвращает базовый ObjectTypeClass*; поле Weapon
-        // есть только у TechnoTypeClass, поэтому приводим явно.
-        auto* pTechType = static_cast<TechnoTypeClass*>(pTechno->GetType());
-        if (pTechType && pTechType->Weapon[0].WeaponType && pTechType->Weapon[0].WeaponType->Warhead)
-            pWH = pTechType->Weapon[0].WeaponType->Warhead;
-    } __except (EXCEPTION_EXECUTE_HANDLER) { pWH = nullptr; }
+    __try { pWH = WarheadTypeClass::Find("AP"); }
+    __except (EXCEPTION_EXECUTE_HANDLER) { pWH = nullptr; }
+    if (!pWH) {
+        __try {
+            // ObjectClass::GetType() возвращает базовый ObjectTypeClass*; поле Weapon
+            // есть только у TechnoTypeClass, поэтому приводим явно.
+            auto* pTechType = static_cast<TechnoTypeClass*>(pTechno->GetType());
+            if (pTechType && pTechType->Weapon[0].WeaponType && pTechType->Weapon[0].WeaponType->Warhead)
+                pWH = pTechType->Weapon[0].WeaponType->Warhead;
+        } __except (EXCEPTION_EXECUTE_HANDLER) { pWH = nullptr; }
+    }
     if (!pWH) {
         __try {
             if (RulesClass::Instance && RulesClass::Instance->C4Warhead)
                 pWH = RulesClass::Instance->C4Warhead;
         } __except (EXCEPTION_EXECUTE_HANDLER) { pWH = nullptr; }
     }
-    if (!pWH) {
-        __try { pWH = WarheadTypeClass::Find("AP"); }
-        __except (EXCEPTION_EXECUTE_HANDLER) { pWH = nullptr; }
-    }
     if (!pWH) return false;
-
-    int damage = 50;
 
     __try {
         // Создаём и конфигурируем снаряд (CreateBullet сам вызывает Construct).
@@ -625,11 +626,25 @@ bool SubTurretManager::FireTurret(TechnoClass* pTechno, size_t turretIndex, Tech
 
     turret.rofTimer = turret.baseRof;
 
-    // Спавн видимого снаряда. Урон наносится нативно при попадании (warhead),
-    // поэтому мгновенный ReceiveDamage из прежней реализации убран (нет двойного урона).
-    if (SpawnTracerBullet(pTechno, turret, pTarget)) {
-        LUA_LOG_INFO("[SubTurret] tracer fired from turret {} at '{}'",
-                     turretIndex, SafeTechnoId(pTarget));
+    // Spawner-корабль (Дредноут/Авианосец): трассер ЧИСТО ВИЗУАЛЬНЫЙ (damage=0),
+    // реальный урон наносят только нативные ракеты DMISL/HORNET. Иначе трассер
+    // суммируется с уроном нативных ракет (двойной урон) + площадной урон без контакта.
+    bool isSpawner = false;
+    __try { isSpawner = (pTechno->SpawnManager != nullptr); }
+    __except (EXCEPTION_EXECUTE_HANDLER) { isSpawner = false; }
+
+    int damage = isSpawner ? 0 : 50;
+
+    // Спавн видимого снаряда. Урон применяется нативно только при прямом попадании
+    // (warhead AP, CellSpread=0); мгновенный ReceiveDamage из прежней реализации убран.
+    if (SpawnTracerBullet(pTechno, turret, pTarget, damage)) {
+        if (damage > 0) {
+            LUA_LOG_INFO("[SubTurret] tracer fired from turret {} at '{}' ({} dmg)",
+                         turretIndex, SafeTechnoId(pTarget), damage);
+        } else {
+            LUA_LOG_INFO("[SubTurret] visual tracer fired from turret {} at '{}' (no dmg)",
+                         turretIndex, SafeTechnoId(pTarget));
+        }
         return true;
     }
     return false;
