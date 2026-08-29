@@ -11,6 +11,12 @@ namespace LuaAPI {
 namespace EventHook {
 
 // ---------------------------------------------------------------------------
+// Полное отключение хука Active_Click_With. Когда true — детур НЕ ставится,
+// игра работает с нативной логикой без нашего вмешательства.
+// ---------------------------------------------------------------------------
+static constexpr bool kDisableActiveClickHook = true;  // отключаем хук полностью
+
+// ---------------------------------------------------------------------------
 // Константы (адрес FootClass::Active_Click_With для 1.001).
 // Дредноут/Авианосец наследуются от FootClass (движимые юниты), поэтому этот
 // перехват срабатывает на кликах по ним.
@@ -190,6 +196,11 @@ void __fastcall Hooked_ActiveClickWith(FootClass* pThis, void* /*edx*/, int acti
 }
 
 bool Install() {
+    if (kDisableActiveClickHook) {
+        LUA_LOG_INFO("[EventHook] ActiveClickWith hook DISABLED (kDisableActiveClickHook=true), native path only");
+        return false;
+    }
+
     if (g_installed || g_pOriginalActiveClickWith) return true;
 
     DWORD oldProtect = 0;
