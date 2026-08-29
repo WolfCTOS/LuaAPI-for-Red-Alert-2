@@ -226,32 +226,80 @@ if (g_pOriginalActiveClickWith) {
 
 ---
 
-## 9. Manual Missile Spawning: Bypassing Native ActiveClickWith for Spawner+Building Attacks
+## 9. The ActiveClickWith Detour Crash: A MinHook Mechanism Bug, Not an Engine Limitation
 
-### Final diagnosis (replaces "The problem persists")
+### The initial misdiagnosis
 
-After exhaustive testing, the crash is NOT specific to buildings. The trigger is any attack order on a TechnoClass target (building OR unit) issued to a spawner unit (SpawnManager != nullptr). Attacking terrain (CellClass) works fine.
+Early testing showed that spawner units (Dreadnought, Aircraft Carrier) crashed when attacking buildings or units via player click, while terrain attacks worked fine. We spent multiple iterations testing spawner-specific theories: blocking the original call, manually setting `pShip->Target`, calling the original once to initialize `SpawnManager`, and various combinations.
 
-Test matrix:
-- Spawner attacks terrain: works
-- Spawner attacks unit: crashes
-- Spawner attacks building: crashes
+All six approaches crashed immediately after the hook returned, before a single `Update` tick. We documented this as "fundamental engine limitation for spawner TechnoClass targets" in an earlier version of this section.
 
-This means the RA2/YR 1.001 engine cannot process ANY TechnoClass combat order for spawner units through ActiveClickWith. The crash occurs immediately after the hook returns, before a single Update tick, regardless of whether we call the original, block it, or manipulate pShip->Target.
+### The breakthrough: disabling the hook entirely
 
-### Why all six hook approaches failed
+The diagnostic breakthrough came from a simple test: **completely disable the MinHook detour on `ActiveClickWith`** (address `0x4D74E0`) and run the game with native logic only.
 
-1. Block original, no Target set: crash after return (engine expects initialization)
-2. Call original for all cases: crash inside original or right after
-3. Set pShip->Target before original: crash inside original
-4. Call original once to init SpawnManager: original returns, crash on next tick
-5. Block original completely: crash after return
-6. Block original + skip SafeHoldTarget in UpdateAll: crash after return (UpdateAll never runs)
+Result: **all units (DRED, APOC, any spawner or non-spawner) attack buildings and units without crashing**.
 
-Conclusion: the crash is not in our code. It is in the engine's expectation that ActiveClickWith for spawners performs internal initialization that our detour cannot replicate.
+This single test invalidated the entire "engine limitation" theory. The problem was not in the engine's handling of spawner combat orders, nor in our state management logic. The problem was in the **MinHook detour mechanism itself**.
 
-### Strategic decision
+### Why the detour crashes
 
-For Gate 10.4 we stop hooking ActiveClickWith for spawner units. Spawner combat orders go through the native UI path. The LuaAPI showcase mod (multi_turret_battleship) works with native orders plus our sub-turret and split-salvo systems.
+When the hook is active, even a trivial detour that immediately returns without reading arguments or calling the original still crashes the game:
 
-Revisit spawner order interception in Milestone 11 with a different hook point (SetTarget or QueueMission detour) or via Ares/Phobos integration.
+```cpp
+void __fastcall Hooked_ActiveClickWith(FootClass* pThis, void* /*edx*/, int action, void* pTarget) {
+    if (action == 0x5) {  // Attack
+        LUA_LOG_WARN("[EventHook] ATTACK action detected, returning WITHOUT calling original");
+        LUA_FLUSH_LOG();
+        return;  // trivial return, no state changes
+    }
+    // ...
+}
+```
+
+This crash pattern (immediate crash after trivial return, no argument reads, no original call) points to a MinHook trampoline issue, not a signature mismatch or logic bug. Possible causes:
+
+- Wrong hook address: `0x4D74E0` may not be the function entry point but somewhere in the middle
+- SEH frame interference: the function may have a Structured Exception Handler frame that MinHook cannot correctly relocate
+- Prologue incompatibility: MinHook's trampoline may not correctly handle the function's prologue bytes
+
+### The diagnostic matrix that led to the truth
+
+| Test | Result | Interpretation |
+|------|--------|----------------|
+| Block original, no state writes | Crash after return | Not a state management issue |
+| Call original with passthrough | Crash after return | Not a signature mismatch (if it were, call would crash inside) |
+| Set pShip->Target before original | Crash inside original | Not a Target write issue |
+| Call original once for SpawnManager init | Crash on next tick | Not a SpawnManager initialization issue |
+| Disable hook entirely | Works perfectly | Problem is in the detour mechanism |
+
+### Why ActiveClickWith has no YRpp signature
+
+The YR++ header library does not declare `UnitClass::Active_Click_With` (or `ActiveClickWith`). The class declaration `class NOVTABLE UnitClass : public FootClass` (UnitClass.h:13) confirms ABI compatibility with `FootClass*`, but the function itself is community-documented.
+
+We used the community signature: `void __thiscall Active_Click_With(ActionType action, ObjectClass* target)`, mapped to a `__fastcall` detour with `FootClass* pThis` (ECX), `int action` (stack+4), `void* pTarget` (stack+8), and `void* /*edx*/` as a placeholder.
+
+The ABI mapping was correct, but the detour mechanism itself was the problem.
+
+### Strategic decision for Gate 10.4
+
+With the hook disabled, native attack orders work for all units including spawners. The showcase mod `multi_turret_battleship` functions with:
+
+- Native attack orders (player clicks, AI targeting)
+- Sub-turret system (visual multi-turret rendering)
+- Split-salvo missile redirection via `ProcessSpawnedMissiles`
+
+The trade-off: we lose programmatic control over the target selection (cannot force a ship to stay on one target across Rearm cycles). For Gate 10.4, this is acceptable.
+
+### Future work: alternative hook points (Milestone 11)
+
+For Milestone 11 architectural improvements, we should explore alternative interception points that do not suffer from the MinHook trampoline issue:
+
+- `SetTarget` detour: intercept the target assignment rather than the click action
+- `QueueMission` detour: intercept mission changes (Attack, Guard, etc.)
+- Mouse input chain: intercept at the UI layer before the click reaches the unit
+- Ares/Phobos integration: leverage community engine extensions that may have solved this problem
+
+### Lesson learned
+
+When a hook crashes immediately after a trivial return (no argument reads, no original call), the problem is almost certainly in the detour mechanism (trampoline, address, SEH), not in the detour's logic or the engine's behavior. Always test with the hook completely disabled before concluding that the engine has a limitation.
