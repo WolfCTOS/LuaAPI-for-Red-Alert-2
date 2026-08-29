@@ -284,6 +284,16 @@ void SubTurretManager::ClearAll() {
 void SubTurretManager::ManagePrimaryAttackTarget(TechnoClass* pTechno) {
     if (!pTechno) return;
 
+    // Для spawner-юнитов (Дредноут/Авианосец) НЕ используем QueueMission(Attack),
+    // потому что это вызывает краш в нативной логике SpawnManager.
+    // Вместо этого только удерживаем pTechno->Target.
+    bool isSpawner = false;
+    __try {
+        isSpawner = (pTechno->SpawnManager != nullptr);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return;
+    }
+
     // --- Защищённое чтение миссии и текущей цели ---
     Mission mission = Mission::None;
     AbstractClass* pCurrent = nullptr;
@@ -341,10 +351,19 @@ void SubTurretManager::ManagePrimaryAttackTarget(TechnoClass* pTechno) {
     // 6. Живая закэшированная цель, а корабль смотрит на другую — принудительно возвращаем.
     __try {
         pTechno->Target = cached;
-        pTechno->QueueMission(Mission::Attack, false);
-        pTechno->NextMission();
-        LUA_LOG_INFO("[PrimaryTarget] '{}' Rearm/Guard drift detected -> forcing back to '{}'",
-                     SafeTechnoId(pTechno), SafeTechnoId(cached));
+
+        if (!isSpawner) {
+            // Обычные юниты: QueueMission + NextMission для возврата на цель
+            pTechno->QueueMission(Mission::Attack, false);
+            pTechno->NextMission();
+            LUA_LOG_INFO("[PrimaryTarget] '{}' Rearm/Guard drift detected -> forcing back to '{}'",
+                         SafeTechnoId(pTechno), SafeTechnoId(cached));
+        } else {
+            // Spawner-юниты (DRED/HORNET): только удерживаем Target, без QueueMission
+            // (QueueMission вызывает краш в нативной логике SpawnManager для зданий)
+            LUA_LOG_INFO("[PrimaryTarget] '{}' (spawner) holding target '{}'",
+                         SafeTechnoId(pTechno), SafeTechnoId(cached));
+        }
     } __except (EXCEPTION_EXECUTE_HANDLER) {
     }
 }
