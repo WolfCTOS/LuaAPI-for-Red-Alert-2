@@ -418,6 +418,29 @@ int Techno_IsAttacking(lua_State* L) {
     return 1;
 }
 
+// obj:GetTarget() -> techno | nil
+// Тихая валидация (без LUA_LOG_WARN, чтобы не спамить лог): возвращает текущую
+// цель юнита как TechnoClass, если это живое техно (Building/Unit/Infantry/Aircraft).
+int Techno_GetTarget(lua_State* L) {
+    auto* pTechno = CheckTechno(L, 1);
+    if (!ValidateTechno(pTechno)) { lua_pushnil(L); return 1; }
+
+    AbstractClass* pTarget = pTechno->Target;
+    if (!pTarget) { lua_pushnil(L); return 1; }
+
+    auto what = pTarget->WhatAmI();
+    if (what != AbstractType::Building && what != AbstractType::Unit &&
+        what != AbstractType::Infantry && what != AbstractType::Aircraft) {
+        lua_pushnil(L); return 1;
+    }
+
+    auto* pTargetTechno = static_cast<TechnoClass*>(pTarget);
+    if (pTargetTechno->Health <= 0) { lua_pushnil(L); return 1; }
+
+    PushTechno(L, pTargetTechno);
+    return 1;
+}
+
 // techno:SetHealthRatio(ratio) -> nil
 // Sets the unit's health to ratio * maxHealth (0.0 - 1.0).
 int Techno_SetHealthRatio(lua_State* L) {
@@ -648,6 +671,7 @@ const luaL_Reg kTechnoMethods[] = {
     { "Hunt",          Techno_Hunt          },
     { "IsIdle",        Techno_IsIdle        },
     { "IsAttacking",   Techno_IsAttacking   },
+    { "GetTarget",     Techno_GetTarget     },
     { "TakeDamage",    Techno_TakeDamage    },
     { "Disable",       Techno_Disable       },
     { "SetHealthRatio", Techno_SetHealthRatio },
