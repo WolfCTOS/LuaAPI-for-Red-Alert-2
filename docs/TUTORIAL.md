@@ -4,9 +4,9 @@
 > **Difficulty:** Beginner  
 > **Time:** ~30 minutes
 
-By the end of this tutorial, you will have a working LuaAPI mod that can inspect game objects, spawn units, and respond to game events.
+This tutorial builds a small LuaAPI mod that reads game objects, modifies units, spawns units, and responds to engine events.
 
-> ⚠️ This tutorial documents the current LuaAPI interface. For the authoritative function signatures and return values, see [`API.md`](../API.md).
+> ⚠️ This tutorial describes the current implemented interface. For authoritative signatures and return values, see [`API.md`](../API.md).
 
 ---
 
@@ -36,7 +36,7 @@ You need:
 
 ### Install LuaAPI
 
-Extract LuaAPI into your Yuri's Revenge game directory:
+Extract the release into the Yuri's Revenge directory. A typical installation contains:
 
 ```text
 Yuri's Revenge/
@@ -49,9 +49,9 @@ Yuri's Revenge/
     └── mods/
 ```
 
-Run the injector according to the installation instructions provided with the release.
+Run the injector according to the release instructions.
 
-After starting the game, check `LuaAPI.log` for messages indicating that the Lua engine and mod loader initialized successfully.
+After starting the game, inspect `LuaAPI.log` if you need to diagnose loading or script errors.
 
 ---
 
@@ -59,15 +59,13 @@ After starting the game, check `LuaAPI.log` for messages indicating that the Lua
 
 ### Step 1: Create the Mod Directory
 
-Create a new directory inside `scripts/mods/`:
+Create:
 
 ```text
 scripts/mods/my_first_mod/
 ```
 
 ### Step 2: Create `main.lua`
-
-Create `scripts/mods/my_first_mod/main.lua`:
 
 ```lua
 local MyFirstMod = {}
@@ -78,13 +76,12 @@ end
 
 function MyFirstMod.Update(frame)
     -- Called once per logical game frame.
-    -- Add your gameplay logic here.
 end
 
 return MyFirstMod
 ```
 
-A LuaAPI mod returns a **table**. The loader uses the functions defined on that table as lifecycle callbacks.
+A mod returns a Lua table. The loader calls lifecycle methods defined on that table.
 
 ### Step 3: Enable the Mod
 
@@ -94,62 +91,61 @@ Open:
 scripts/active_mods.txt
 ```
 
-Add the folder name:
+Add:
 
 ```text
 my_first_mod
 ```
 
-The entry must match the mod directory name. Lines beginning with `#` are comments.
+The entry must match the directory name. Lines beginning with `#` are comments.
 
-### Step 4: Test the Mod
+### Step 4: Test
 
-Start a skirmish match. If everything is configured correctly, the message `MyFirstMod loaded!` will appear through the in-game message system.
+Start a skirmish. The `OnScenarioStart()` callback should display the message through the engine message system.
 
 ---
 
 ## Understanding the API
 
-LuaAPI organizes its implemented functionality into namespaces.
+LuaAPI exposes implemented functionality through namespaces and validated engine-backed objects.
 
-| Namespace | Purpose | Example |
+| Namespace / Object | Purpose | Example |
 |---|---|---|
-| `House` | Player/house access and economy | `House.GetPlayer()` |
-| `World` | Global unit, building, and map queries | `World.GetUnits()` |
-| `Engine` | Engine/HUD functions | `Engine.PrintMessage("Hello")` |
-| `game` | Lower-level diagnostics and legacy map/event-hook helpers | `game.GetEventHookOverrideCount()` |
+| `House` | House/player access and economy | `House.GetPlayer()` |
+| `World` | Unit, building, and map queries | `World.GetUnits()` |
+| `Engine` | Engine/HUD helpers | `Engine.PrintMessage("Hello")` |
+| `game` | Lower-level/legacy diagnostics and map helpers | `game.GetEventHookOverrideCount()` |
+| `Techno` | Methods available on engine objects | `unit:GetTypeName()` |
 
-LuaAPI exposes game objects such as units, buildings, infantry, and aircraft as validated Lua userdata.
+The native layer validates engine objects before exposing or operating on them. Lua references should still be treated as short-lived because an engine object can become invalid after destruction or a session transition.
 
-Native validation protects the engine boundary, but scripts should still treat game objects as potentially invalid and use `IsAlive()` where appropriate.
-
-> **Note:** The current `Game` namespace is not the source of the logical-frame API. Use the `frame` argument supplied to `Update(frame)` for gameplay timing.
+For gameplay timing, use the `frame` argument supplied to `Update(frame)`. Do not substitute wall-clock time for deterministic gameplay logic.
 
 ---
 
 ## Working with Units
 
-### Get and Inspect Units
+### Inspect Units
 
-`World.GetUnits()` returns mobile technos exposed by the current world query.
+`World.GetUnits()` returns mobile technos such as vehicles, infantry, and aircraft.
 
 ```lua
 function MyFirstMod.Update(frame)
     for _, unit in ipairs(World.GetUnits()) do
         if unit:IsAlive() then
-            local name = unit:GetTypeName()
+            local typeName = unit:GetTypeName()
             local owner = unit:GetOwner()
             local hp = unit:GetHealth()
             local pos = unit:GetPosition()
 
-            -- name: "HTNK", "E1", "DRED", etc.
+            -- typeName: "APOC", "E1", "DRED", etc.
             -- pos: { x = ..., y = ..., z = ... }
         end
     end
 end
 ```
 
-For a global scan that includes buildings, use `World.GetAllUnits()`.
+For a global techno scan that includes buildings, use `World.GetAllUnits()`.
 
 ### Filter Your Own Units
 
@@ -168,94 +164,57 @@ function MyFirstMod.Update(frame)
         end
     end
 
-    Engine.PrintMessage("You control " .. #mine .. " units")
+    Engine.PrintMessage("You control " .. #mine .. " mobile units")
 end
 ```
 
 ### Spatial Queries
 
-`World.GetUnitsInRadius()` searches for units around a map position.
-
 ```lua
-local nearbyUnits = World.GetUnitsInRadius(baseX, baseY, 10)
+local nearby = World.GetUnitsInRadius(100, 100, 10)
 ```
 
-The radius is specified in cells.
-
-For large searches, keep the radius reasonable. RA2 uses 256 leptons per cell, so squared-distance calculations can overflow 32-bit integers at sufficiently large distances. Prefer `World.GetAllUnits()` when a global scan is more appropriate.
+The radius is specified in map cells. RA2 uses 256 leptons per cell. Avoid unnecessarily large radius searches; for whole-map scans, prefer `World.GetAllUnits()`.
 
 ---
 
 ## Responding to Events
 
-LuaAPI uses lifecycle callbacks defined as methods on the table returned by a mod. `OnDebugCommand` is a separate global callback.
-
-### Lifecycle Callbacks
-
-```lua
-local MyMod = {}
-
-function MyMod.OnScenarioStart()
-    -- Scenario initialization callback.
-end
-
-function MyMod.Update(frame)
-    -- Called once per logical game frame.
-end
-
-function MyMod.OnPreDamage(attacker, target, damage, dmgType, frame, subc)
-    -- Return a number to override the damage.
-    -- Return 0 to cancel the damage.
-    -- Return nil to leave the original damage unchanged.
-    return nil
-end
-
-function MyMod.OnUnitDestroyed(victim, killer)
-    -- killer may be nil.
-end
-
-return MyMod
-```
+Lifecycle callbacks are methods on the mod table returned from `main.lua`. `OnDebugCommand` is different: it is a global Lua callback.
 
 ### `Update(frame)`
 
-`Update()` receives the current logical game frame.
-
 ```lua
-function MyMod.Update(frame)
+function MyFirstMod.Update(frame)
     if frame % 300 == 0 then
-        Engine.PrintMessage("Five seconds passed")
+        Engine.PrintMessage("Five seconds of logical game time")
     end
 end
 ```
 
-Use logical frames for gameplay timing rather than wall-clock time.
+Use logical frames for deterministic gameplay timing.
 
 ### `OnScenarioStart()`
 
-Use this callback for post-scenario initialization:
+Use it for post-scenario initialization:
 
 ```lua
-function MyMod.OnScenarioStart()
+function MyFirstMod.OnScenarioStart()
     Engine.PrintMessage("Scenario initialized")
 end
 ```
 
-Do not assume this callback restores runtime state after loading a saved game. Systems that require runtime state must account for the savegame lifecycle explicitly.
+Do not assume this callback restores runtime state after a savegame is loaded. Systems that require runtime state must handle that lifecycle explicitly.
 
 ### `OnPreDamage(...)`
 
-`OnPreDamage` can modify incoming damage:
+This callback runs at the damage-processing boundary and can replace incoming damage:
 
 ```lua
-function MyMod.OnPreDamage(attacker, target, damage, dmgType, frame, subc)
+function MyFirstMod.OnPreDamage(attacker, target, damage, dmgType, frame, subc)
     local player = House.GetPlayer()
 
-    if not player then
-        return nil
-    end
-
-    if target and target:GetOwner() == player then
+    if player and target and target:GetOwner() == player then
         return damage * 0.5
     end
 
@@ -269,24 +228,18 @@ Return values:
 - `0` — cancels the damage.
 - `nil` — leaves the original damage unchanged.
 
-Do not return negative damage values.
+Never return negative damage values.
 
 ### `OnUnitDestroyed(victim, killer)`
 
-Use this callback for destruction-related gameplay:
-
 ```lua
-function MyMod.OnUnitDestroyed(victim, killer)
+function MyFirstMod.OnUnitDestroyed(victim, killer)
     if not victim then
         return
     end
 
     local victimType = victim:GetTypeName()
-    local killerType = "unknown"
-
-    if killer then
-        killerType = killer:GetTypeName()
-    end
+    local killerType = killer and killer:GetTypeName() or "unknown"
 
     Engine.PrintMessage(
         victimType .. " destroyed by " .. killerType
@@ -294,13 +247,13 @@ function MyMod.OnUnitDestroyed(victim, killer)
 end
 ```
 
-The `killer` argument may be `nil`.
+`killer` may be `nil` for engine-side causes such as environmental damage or other non-unit sources.
 
 ---
 
 ## Global Debug Callback
 
-`OnDebugCommand` is a **global Lua function**, not a method on the mod table.
+`OnDebugCommand` is a global function and is not attached to the returned mod table.
 
 ```lua
 function OnDebugCommand(text)
@@ -308,7 +261,7 @@ function OnDebugCommand(text)
 end
 ```
 
-Only one global definition should normally be active. Multiple mods defining the same global function can overwrite each other.
+Only one active definition should normally exist. Multiple mods defining the same global callback can overwrite one another.
 
 ---
 
@@ -316,31 +269,22 @@ Only one global definition should normally be active. Multiple mods defining the
 
 ### Spawning Units
 
-LuaAPI provides:
+The current high-level spawn helper is:
 
 ```lua
-house:SpawnUnit(
-    typeId,
-    count,
-    x,
-    y,
-    facing,
-    force,
-    action
-)
+house:SpawnUnit(typeId, count, x, y, facing, force, action)
 ```
 
 Example:
 
 ```lua
-function MyMod.OnScenarioStart()
+function MyFirstMod.OnScenarioStart()
     local player = House.GetPlayer()
-
     if not player then
         return
     end
 
-    local spawned = player:SpawnUnit(
+    local created = player:SpawnUnit(
         "APOC",
         5,
         100,
@@ -350,59 +294,36 @@ function MyMod.OnScenarioStart()
         "hunt"
     )
 
-    Engine.PrintMessage(
-        "Spawned " .. spawned .. " APOC"
-    )
+    Engine.PrintMessage("Spawned " .. created .. " APOC")
 end
 ```
 
-`SpawnUnit()` returns the number of units actually created. When normal spawning is used, the current implementation can search for a nearby valid cell according to its configured fallback behavior.
+The return value is the number of units actually created. Normal spawning can use the implementation's nearby-cell fallback when the requested location is unavailable.
 
-### Debug Console
+### Sub-Turrets
 
-A mod can provide the global `OnDebugCommand` callback:
+Milestone 11 also exposes explicit sub-turret state and firing:
 
 ```lua
-function OnDebugCommand(text)
-    local count, typeId = text:match("^(%d+)%s+(%u+)$")
-
-    if not count or not typeId then
-        Engine.PrintMessage("[DEBUG] Invalid command")
-        return
-    end
-
-    local player = House.GetPlayer()
-    if not player then
-        return
-    end
-
-    local spawned = player:SpawnUnit(
-        typeId,
-        tonumber(count),
-        100,
-        100,
-        0,
-        false,
-        "hunt"
-    )
-
-    Engine.PrintMessage(
-        "[DEBUG] Spawned " .. spawned .. " " .. typeId
-    )
-end
+unit:AddSubTurret(1, 40, 0, 15, 12, 90)
+unit:SetSubTurretTarget(1, enemy)
+unit:FireSubTurret(1, enemy)
 ```
 
-The exact debug-input behavior depends on the current LuaAPI debug input implementation.
+For split-salvo behavior:
+
+```lua
+unit:SetSplitTargets({enemyA, enemyB, enemyC})
+unit:FireSplitSalvo()
+```
+
+Target acquisition remains Lua gameplay logic; the native layer maintains turret state and performs the explicit operation requested by Lua.
 
 ---
 
 ## ⚠️ Common Pitfalls
 
-### 1. Do not blindly use destroyed objects
-
-Avoid assuming that an object remains valid indefinitely.
-
-Prefer:
+### 1. Do not assume engine objects remain valid
 
 ```lua
 if unit and unit:IsAlive() then
@@ -410,45 +331,40 @@ if unit and unit:IsAlive() then
 end
 ```
 
+`IsAlive()` checks liveness at that moment. It does not make a stored engine reference permanently safe.
+
 ### 2. Handle `OnPreDamage` correctly
 
-If your callback does not need to modify damage, return `nil`:
+Pass damage through:
 
 ```lua
-function MyMod.OnPreDamage(attacker, target, damage, dmgType, frame, subc)
-    return nil
-end
+return nil
 ```
 
-To reduce damage:
+Reduce it:
 
 ```lua
 return damage * 0.5
 ```
 
-To cancel it:
+Cancel it:
 
 ```lua
 return 0
 ```
 
+Do not return negative damage.
+
 ### 3. Do not use wall-clock time for deterministic gameplay
 
-Avoid:
+Avoid using `os.time()` or `os.clock()` for gameplay decisions that must remain synchronized in multiplayer.
+
+Use:
 
 ```lua
-os.time()
-os.clock()
-```
-
-for gameplay decisions in multiplayer.
-
-Use the logical frame instead:
-
-```lua
-function MyMod.Update(frame)
+function MyFirstMod.Update(frame)
     if frame % 300 == 0 then
-        -- Deterministic frame-based logic
+        -- deterministic frame-based logic
     end
 end
 ```
@@ -461,7 +377,7 @@ Check:
 scripts/active_mods.txt
 ```
 
-Make sure the entry exactly corresponds to the mod directory:
+The entry must exactly match the directory:
 
 ```text
 scripts/mods/my_first_mod/
@@ -471,34 +387,53 @@ scripts/mods/my_first_mod/
 my_first_mod
 ```
 
-### 5. Do not assume `OnScenarioStart()` restores runtime state
+Also inspect `LuaAPI.log` for loader or script errors.
 
-If your mod maintains state that must survive save/load operations, verify the actual lifecycle behavior and design state initialization accordingly.
+### 5. Savegame behavior
+
+Do not assume `OnScenarioStart()` runs after loading a saved game. If your mod creates runtime state, verify and restore that state as required during subsequent updates.
+
+### 6. Large spatial searches
+
+RA2 coordinates use 256 leptons per cell. Large squared-distance calculations can exceed 32-bit integer range. Prefer a reasonable radius or use `World.GetAllUnits()` for global scans.
+
+### 7. `OnDebugCommand` is global
+
+It is not a method on the returned mod table. Avoid defining competing global implementations across multiple mods.
 
 ---
 
 ## 📚 Quick Reference
 
-### Namespaces
+### House
 
 ```lua
-House.GetPlayer()
-House.GetCount()
-House.GetByIndex(i)
+local player = House.GetPlayer()
+local count = House.GetCount()
+local house = House.GetByIndex(0)
 
+house:GetName()
+house:IsHuman()
+house:IsAlliedWith(otherHouse)
+house:GetCredits()
+house:SetCredits(5000)
+house:AddCredits(500)
+house:GetPowerOutput()
+house:GetPowerDrain()
+house:SpawnUnit("APOC", 1, 100, 100, 0, false, "hunt")
+```
+
+### World
+
+```lua
 World.GetBuildings()
 World.GetUnits()
 World.GetAllUnits()
 World.GetUnitsInRadius(x, y, radius)
 World.GetWaypoint(id)
-
-Engine.PrintMessage(text)
-
-game.GetEventHookOverrideCount()
-game.ClearEventHookOverrides()
 ```
 
-### Unit Methods
+### Unit
 
 ```lua
 unit:GetOwner()
@@ -508,21 +443,23 @@ unit:GetMaxHealth()
 unit:IsAlive()
 unit:GetPosition()
 unit:GetDistanceTo(other)
-unit:IsAttacking()
-unit:GetTarget()
 unit:GetId()
 unit:GetKind()
-
+unit:IsAttacking()
+unit:GetTarget()
+unit:IsIdle()
 unit:MoveTo(x, y)
 unit:Scatter()
 unit:Hunt()
-unit:IsIdle()
 unit:TakeDamage(amount, warhead)
 unit:Disable(frames)
-
 unit:SetHealthRatio(ratio)
 unit:AttachParticleSystem(name)
+```
 
+### Sub-Turret
+
+```lua
 unit:AddSubTurret(section, offX, offY, offZ, rot, rof)
 unit:GetSubTurretCount()
 unit:GetSubTurret(index)
@@ -533,22 +470,16 @@ unit:SetSplitTargets(targets)
 unit:FireSplitSalvo()
 ```
 
-### House Methods
+### Engine / Diagnostics
 
 ```lua
-house:GetName()
-house:IsHuman()
-house:IsAlliedWith(otherHouse)
-house:GetCredits()
-house:SetCredits(amount)
-house:AddCredits(amount)
-house:GetPowerOutput()
-house:GetPowerDrain()
+Engine.PrintMessage(text)
 
-house:SpawnUnit(typeId, count, x, y, facing, force, action)
+game.GetEventHookOverrideCount()
+game.ClearEventHookOverrides()
 ```
 
-### Lifecycle Callbacks
+### Lifecycle
 
 ```lua
 function MyMod.Update(frame)
@@ -565,7 +496,7 @@ function MyMod.OnUnitDestroyed(victim, killer)
 end
 ```
 
-### Global Callback
+### Global Debug Callback
 
 ```lua
 function OnDebugCommand(text)
@@ -576,11 +507,9 @@ end
 
 ## 🚀 Next Steps
 
-Once you understand the basics, explore the rest of the project:
+- **[API Reference](../API.md)** — authoritative interface and callback contract.
+- **[Capabilities & Cookbook](../PROJECT/CAPABILITIES.md)** — verified mechanics and practical recipes.
+- **Sample mods in `scripts/mods/`** — working examples.
+- **[Architecture Roadmap](../PROJECT/ROADMAP.md)** — development status and milestones.
 
-- **[API Reference](../API.md)** — complete API reference and callback contracts.
-- **[Capabilities & Cookbook](../PROJECT/CAPABILITIES.md)** — proven mechanics and implementation recipes.
-- **Sample mods in `scripts/mods/`** — practical examples of LuaAPI usage.
-- **[Architecture Roadmap](../PROJECT/ROADMAP.md)** — current development status and planned milestones.
-
-Start with small scripts, verify behavior in-game, and use `LuaAPI.log` when debugging native/Lua interactions.
+The recommended workflow is simple: start with a small script, test it in-game, verify the behavior, and document only what the current build actually supports.
