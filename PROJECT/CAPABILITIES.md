@@ -562,9 +562,9 @@ If an API name or behavior changes, this document must be updated together with 
 # 📖 Related Documentation
 
 - [`API.md`](../API.md) — Complete LuaAPI reference
-- [`TUTORIAL.md`](../TUTORIAL.md) — Beginner tutorial
+- [`TUTORIAL.md`](../docs/TUTORIAL.md) — Beginner tutorial
 - [`README.md`](../README.md) — Project overview and installation
-- [`ENGINEERING_LESSONS.md`](ENGINEERING_LESSONS.md) — Engineering notes and debugging history
+- [`ENGINEERING_LESSONS.md`](../docs/ENGINEERING_LESSONS.md) — Engineering notes and debugging history
 
 ---
 
