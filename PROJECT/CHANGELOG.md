@@ -2,6 +2,25 @@
 
 All notable changes to LuaPI for Red Alert 2.
 
+# Changelog
+
+All notable changes to LuaPI for Red Alert 2.
+
+## [0.7.0] — Milestone 11: CnCNet Compatibility & Dev Tools - 2026-08-31
+
+### Added
+- **CnCNet attach mode**: `injector.exe --attach` polls for `gamemd-spawn.exe`, waits for Syringe-injected modules (Ares.dll, Phobos.dll, CnCNet-Spawner.dll), then injects LuaAPI.dll. Live byte signature logging at hook addresses.
+- **Multiplayer determinism**: `Hooked_MainLoop` now gates `OnGameFrame` dispatch to fire only when `Unsorted::CurrentFrame` changes, preventing frame-rate dependent state divergence.
+- **`house:SpawnUnit(typeId, count, x, y, facing, force, action)`**: spawns units with pathfinding validation, spiral fallback search (radius 3), map boundary checks (`IsInsideMap`), and optional `hunt` mission queue. Returns count of successfully created units.
+- **Debug input layer**: Backspace toggles input mode, alphanumeric keys fill buffer, Enter calls Lua `OnDebugCommand(text)`. Edge detection prevents key-repeat spam.
+
+### Fixed
+- **ModLoader path resolution**: `scripts/init.lua` now resolves `active_mods.txt` relative to the DLL directory (via `debug.getinfo`) instead of process CWD, ensuring consistency when launched via CnCNet or external clients.
+
+### Changed
+- **Signature verification**: hook installation now logs byte mismatches as warnings instead of blocking. Enables chaining behind Ares/Phobos detours (observed `E9` JMP at MainLoop @ `0x55D360`).
+
+
 ## [0.6.0] - 2026-08-24
 
 ### Added
