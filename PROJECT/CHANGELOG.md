@@ -2,11 +2,11 @@
 
 All notable changes to LuaAPI for Red Alert 2 are documented here.
 
-The changelog follows the project's verified milestone history. Features are listed as released or implemented only when supported by the corresponding project documentation and runtime validation.
+The changelog follows the project's verified milestone history. Features are listed as released or implemented only when supported by project documentation and runtime validation.
 
 ---
 
-## [1.1.0] — Milestone 10 Core / Milestone 11 Development — 2026-08-31
+## [1.1.0] — Milestone 10 Core / Milestone 11 Complete / Milestone 12 Development — 2026-08-31
 
 ### Added
 
@@ -15,8 +15,10 @@ The changelog follows the project's verified milestone history. Features are lis
 - **Multi-turret Lua bindings** for adding turrets, querying turret state, assigning split targets, and explicitly firing split salvos.
 - **Independent target allocation** for multi-turret showcase gameplay.
 - **Passive native turret updates** for timer management and target-facing rotation.
-- **Spawned missile interception and decoupling** for `DMISL`-style spawned projectiles, including native locomotor destination control.
+- **Spawned missile interception and decoupling** for spawned projectiles, including native locomotor destination control.
 - **CnCNet development tooling** including process attachment, debug spawning, and logical-frame callback gating.
+- **Unit Control API vertical slice** with `GetMission`, `GetTarget`, `MoveTo`, `Attack`, `Stop`, and `IsIdle`.
+- **`patrol_demo`** showcase for exercising the unit-control path.
 
 ### Fixed
 
@@ -26,18 +28,22 @@ The changelog follows the project's verified milestone history. Features are lis
 - Corrected Lua binding usage to the verified `GetOwner()` and `GetTypeName()` interfaces.
 - Prevented autonomous C++ multi-turret firing from producing unintended attacks while units were idle or moving.
 - Added savegame-aware runtime reinitialization for systems whose state is not restored through `OnScenarioStart()`.
+- Fixed ModLoader path resolution for the LuaAPI/DLL environment.
 
 ### Changed
 
 - **Architecture boundary:** C++ manages native state, lifecycle, safety, and engine integration; Lua controls gameplay decisions and attack behavior.
 - **Hook compatibility:** existing hooks at the main loop are treated as compatibility conditions rather than automatic injection failures.
-- **Milestone 10 scope:** functional multi-turret combat is complete; voxel matrix rendering is deferred to Milestone 11.
+- **Milestone 10 scope:** functional multi-turret combat is complete; voxel matrix rendering is deferred to Milestone 12.
+- **Milestone 11 scope:** CnCNet compatibility and development tooling are complete. Full two-client online multiplayer validation remains separate.
+- **Milestone 12 scope:** unit control and tactical AI work is now the active development line.
 
 ### Verification
 
 - Milestone 10 core: verified through the `multi_turret_battleship` showcase and native combat infrastructure.
-- CnCNet compatibility: verified through attach mode and hook chaining.
+- Milestone 11 CnCNet/tooling work: verified through attach mode, hook compatibility, logical-frame gating, debug spawning/input, and ModLoader path resolution.
 - Spawned missile decoupling: verified through the native interception path.
+- Milestone 12 Gate 12.1: native implementation is complete; runtime showcase verification remains pending because the first `patrol_demo` run exposed Lua-side script errors.
 
 ---
 
@@ -140,6 +146,7 @@ The changelog follows the project's verified milestone history. Features are lis
 ## Versioning Notes
 
 - `v1.0.0` remains the current **production release baseline**.
-- `1.1.0` represents the current API/development line associated with Milestone 10 core and Milestone 11 work.
-- Milestone 11 presentation and tactical features are development work and must not be described as production-complete until separately verified.
-- `PROJECT/ROADMAP.md`, `PROJECT/CAPABILITIES.md`, and `API.md` should be updated alongside significant API or milestone changes to keep the documentation synchronized.
+- `1.1.0` represents the current API/development line associated with Milestone 10 core, completed Milestone 11 tooling, and Milestone 12 development.
+- Milestone 11 is engineering-complete, but full two-client online multiplayer validation is not claimed.
+- Milestone 12 is development work and must not be described as production-complete until separately verified.
+- `PROJECT/ROADMAP.md`, `PROJECT/CAPABILITIES.md`, and `API.md` should be updated alongside significant API or milestone changes to keep documentation synchronized.
