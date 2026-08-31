@@ -1,7 +1,7 @@
 # 🎓 LuaAPI Tutorial: Your First Mod
 
-> **Prerequisites:** Basic Lua programming and familiarity with Red Alert 2 modding concepts
-> **Difficulty:** Beginner
+> **Prerequisites:** Basic Lua programming and familiarity with Red Alert 2 modding concepts  
+> **Difficulty:** Beginner  
 > **Time:** ~30 minutes
 
 By the end of this tutorial, you will have a working LuaAPI mod that can inspect game objects, spawn units, and respond to game events.
@@ -113,24 +113,24 @@ If everything is configured correctly, the message:
 MyFirstMod loaded!
 ```
 
-will appear in the in-game message ticker.
+will appear in the in-game message system.
 
 ---
 
 ## Understanding the API
 
-LuaAPI organizes its functionality into namespaces.
+LuaAPI organizes its implemented functionality into namespaces.
 
-| Namespace | Purpose                          | Example                 |
-| --------- | -------------------------------- | ----------------------- |
-| `House`   | Player and house management      | `House.GetPlayer()`     |
-| `World`   | Global game-world queries        | `World.GetUnits()`      |
-| `Engine`  | Engine-level functions           | `Engine.PrintMessage()` |
-| `Game`    | Game state and frame information | `Game.GetFrame()`       |
+| Namespace | Purpose | Example |
+| --------- | ------- | ------- |
+| `House` | Player and house management | `House.GetPlayer()` |
+| `World` | Global game-world queries | `World.GetUnits()` |
+| `Engine` | Engine-level functions | `Engine.PrintMessage()` |
+| `Game` | Game state and logical frame information | `Game.GetFrame()` |
 
-LuaAPI exposes game objects such as units, buildings, and houses as Lua userdata.
+LuaAPI exposes game objects such as units, buildings, and houses as validated Lua userdata.
 
-Native objects are validated by the API before exposed operations are performed. Scripts should still treat game objects as potentially invalid and use `IsAlive()` where appropriate.
+Native validation protects the engine boundary, but scripts should still treat game objects as potentially invalid and use `IsAlive()` where appropriate.
 
 ---
 
@@ -138,7 +138,7 @@ Native objects are validated by the API before exposed operations are performed.
 
 ### Get and Inspect Units
 
-`World.GetUnits()` returns the units currently exposed by the world query.
+`World.GetUnits()` returns units currently exposed by the world query.
 
 ```lua
 function MyFirstMod.Update(frame)
@@ -155,6 +155,8 @@ function MyFirstMod.Update(frame)
     end
 end
 ```
+
+For a global unit scan that also includes infantry, use `World.GetAllUnits()`.
 
 ### Filter Your Own Units
 
@@ -217,6 +219,8 @@ if basePos then
 end
 ```
 
+For large searches, keep the radius reasonable. RA2 coordinates use 256 leptons per cell, so squared distance calculations can overflow 32-bit integers at sufficiently large distances. Prefer `World.GetAllUnits()` when a global scan is more appropriate.
+
 ---
 
 ## Responding to Events
@@ -234,7 +238,7 @@ A mod can define the following callbacks:
 local MyMod = {}
 
 function MyMod.OnScenarioStart()
-    -- Called once when scenario initialization reaches
+    -- Called when scenario initialization reaches
     -- the scenario-start callback.
 end
 
@@ -258,7 +262,7 @@ function MyMod.OnPreDamage(
 end
 
 function MyMod.OnUnitDestroyed(victim, killer)
-    -- Called when a unit or building is destroyed.
+    -- Called when a supported game object is destroyed.
     -- killer may be nil.
 end
 
@@ -289,7 +293,7 @@ function MyMod.OnScenarioStart()
 end
 ```
 
-Do not assume that this callback is invoked again when loading a saved game unless the current LuaAPI implementation explicitly guarantees that behavior.
+Do not assume that this callback restores runtime state after loading a saved game. Systems that require persistent runtime state must account for the savegame lifecycle explicitly.
 
 ### `OnPreDamage(...)`
 
@@ -593,8 +597,9 @@ World.GetBuildings()
 World.GetUnits()
 World.GetAllUnits()
 World.GetUnitsInRadius(x, y, radius)
+World.GetWaypoint(id)
 
-Engine.PrintMessage(text, color)
+Engine.PrintMessage(text, colorIndex)
 
 Game.GetFrame()
 Game.IsInMatch()
@@ -640,6 +645,8 @@ house:IsAlliedWith(other)
 
 house:GetCredits()
 house:AddCredits(amount)
+house:GetPowerOutput()
+house:GetPowerDrain()
 
 house:SpawnUnit(
     typeId,
@@ -689,9 +696,9 @@ end
 
 Once you understand the basics, explore the rest of the project:
 
-* **[API.md](API.md)** — complete API reference and callback contracts.
-* **[CAPABILITIES_AND_COOKBOOK.md](PROJECT/CAPABILITIES_AND_COOKBOOK.md)** — proven mechanics and implementation recipes.
+* **[API Reference](../API.md)** — complete API reference and callback contracts.
+* **[Capabilities & Cookbook](../PROJECT/CAPABILITIES.md)** — proven mechanics and implementation recipes.
 * **Sample mods in `scripts/mods/`** — practical examples of LuaAPI usage.
-* **[ROADMAP.md](ROADMAP.md)** — current development status and planned milestones.
+* **[Architecture Roadmap](../PROJECT/ROADMAP.md)** — current development status and planned milestones.
 
 Start with small scripts, verify behavior in-game, and use `LuaAPI.log` when debugging native/Lua interactions.
