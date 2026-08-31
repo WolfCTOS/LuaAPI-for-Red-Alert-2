@@ -118,7 +118,7 @@
   - *Why:* A safe C++ sidecar container attached to `TechnoClass*` storing sub-turret state (facing, target, ROF timer, weapon type, 3D offset) with automatic cleanup on unit destruction.
 - [x] **Gate 10.2: Independent Targeting & Combat Dispatch**
   - *Why:* Enables per-turret/per-slot target acquisition (AG vs AA vs AS) with smooth Rate-of-Turn (ROT) angle stepping and native `BulletClass::Create` projectile spawning.
-- [x] **Gate 10.3: Voxel Matrix Rendering Hook (3D Sub-Turret Drawing)**
-  - *Why:* Hooks into `TechnoClass::Draw` to compute `Matrix3D` transformations for each sub-turret, rendering distinct 3D voxel sections rotated towards their specific targets during hull movement.
-- [ ] **Gate 10.4: Lua Multi-Turret API & Showcase Mod (`multi_turret_battleship`)**
+- [ ] **Gate 10.3: Voxel Matrix Rendering Hook (3D Sub-Turret Drawing)** — DEFERRED to Milestone 11
+  - *Why:* Hooks into `TechnoClass::Draw` to compute `Matrix3D` transformations for each sub-turret, rendering distinct 3D voxel sections rotated towards their specific targets during hull movement. Carried over to Milestone 11 (v1.1 presentation relies on tracers, not rotating voxels).
+- [x] **Gate 10.4: Lua Multi-Turret API & Showcase Mod (`multi_turret_battleship`)**
   - *Why:* Exposes high-level bindings (`unit:AddSubTurret`, `unit:SetSubTurretTarget`, `unit:FireSubTurret`) and validates a 3-turret capital ship engaging multiple targets in real combat.

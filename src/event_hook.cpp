@@ -242,7 +242,7 @@ void Uninstall() {
 }
 
 void Update() {
-    LUA_LOG_CRITICAL("Update: begin, overrideCount={}", g_PlayerTargetOverride.size());
+    LUA_LOG_TRACE("Update: begin, overrideCount={}", g_PlayerTargetOverride.size());
 
     for (auto it = g_PlayerTargetOverride.begin(); it != g_PlayerTargetOverride.end();) {
         TechnoClass* pShip = it->first;
@@ -297,7 +297,7 @@ void Update() {
         ++it;
     }
 
-    LUA_LOG_CRITICAL("Update: end");
+    LUA_LOG_TRACE("Update: end");
 }
 
 void ClearAll() {

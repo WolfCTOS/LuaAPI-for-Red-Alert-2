@@ -1,0 +1,8 @@
+{
+  "id": "god_mode",
+  "name": "God Mode Spectator",
+  "version": "1.0.0",
+  "author": "LuaAPI QA",
+  "description": "Cancels 100% of incoming damage to local player via OnPreDamage for skirmish stress-testing",
+  "conflicts": []
+}

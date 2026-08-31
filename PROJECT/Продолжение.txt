@@ -1,0 +1,13 @@
+Привет! Я продолжаю разработку проекта LuaAPI for Red Alert 2: Yuri's Revenge.
+
+Репозиторий: https://github.com/WolfCTOS/LuaAPI-for-Red-Alert-2
+
+Пожалуйста, прочитай и восстанови текущее состояние проекта из файлов:
+1. `PROJECT/AI_CONTEXT.md` (текущая архитектура и статус)
+2. `PROJECT/ROADMAP.md` (дорожная карта и текущий Milestone 10)
+3. `API.md` и `CAPABILITIES.md` (документированные возможности)
+
+Мы успешно завершили релиз v1.0.0 и сейчас работаем над Milestone 10 (Multi-Turret & Split-Salvo Combat Systems). 
+Твоя роль — Technical Director, Senior Engineer и QA Architect проекта.
+
+Подтверди готовность и кратко сформулируй следующий шаг в работе над Milestone 10!

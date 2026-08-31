@@ -6,6 +6,8 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <cstdlib>
+#include <cstdio>
 
 namespace LuaAPI {
 
@@ -26,9 +28,25 @@ public:
             std::string narrowPath(static_cast<size_t>(size), '\0');
             WideCharToMultiByte(CP_UTF8, 0, logPath.c_str(), -1, &narrowPath[0], size, nullptr, nullptr);
             narrowPath.resize(size - 1);
+            // Стартуем с чистого файла: прежде чем создать синк (он открывается в режиме
+            // append), удаляем уже существующий LuaAPI.log. Иначе каждый запуск дополнял бы
+            // старый лог. Схема ротации (5 MB x 3) сохраняется: удаляем только основной
+            // файл; резервные копии .1/.2/.3 не трогаем.
+            std::remove(narrowPath.c_str());
             logger_ = spdlog::rotating_logger_mt("luaapi", narrowPath, 5 * 1024 * 1024, 3);
             logger_->set_pattern("[%T.%e] [%l] %v");
-            logger_->set_level(spdlog::level::trace);
+            // Читаемость по умолчанию: только info/warn/error, без пер-кадрового шума
+            // (Frame: .../Update: ... на critical/trace). Детальный trace включается
+            // осознанно: компиляцией с макросом LUA_TRACE_FRAMES либо переменной
+            // окружения LUAAPI_TRACE=1. Иначе всё остаётся на info.
+            bool traceMode = false;
+#ifdef LUA_TRACE_FRAMES
+            traceMode = true;
+#else
+            const char* env = std::getenv("LUAAPI_TRACE");
+            traceMode = (env != nullptr && env[0] == '1');
+#endif
+            logger_->set_level(traceMode ? spdlog::level::trace : spdlog::level::info);
             logger_->flush_on(spdlog::level::info);
         } catch (...) {
             logger_ = nullptr;
@@ -76,6 +94,7 @@ private:
 } // namespace LuaAPI
 
 #define LUA_LOG_TRACE(...) ::LuaAPI::Logger::instance().log(spdlog::level::trace, __FILE__, __LINE__, __VA_ARGS__)
+#define LUA_LOG_DEBUG(...) ::LuaAPI::Logger::instance().log(spdlog::level::debug, __FILE__, __LINE__, __VA_ARGS__)
 #define LUA_LOG_INFO(...)  ::LuaAPI::Logger::instance().log(spdlog::level::info,  __FILE__, __LINE__, __VA_ARGS__)
 #define LUA_LOG_WARN(...)  ::LuaAPI::Logger::instance().log(spdlog::level::warn,  __FILE__, __LINE__, __VA_ARGS__)
 #define LUA_LOG_ERROR(...) ::LuaAPI::Logger::instance().log(spdlog::level::err,   __FILE__, __LINE__, __VA_ARGS__)

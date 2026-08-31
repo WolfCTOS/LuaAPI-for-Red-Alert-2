@@ -67,7 +67,7 @@ bool ValidateTechno(TechnoClass* pTechno) {
 
     // Life check: object must be alive (Health > 0 and not in limbo).
     if (!IsValid(pTechno)) {
-        LUA_LOG_WARN("ValidateTechno: techno object is not alive (Health={})", pTechno->Health);
+        LUA_LOG_DEBUG("ValidateTechno: techno object is not alive (Health={})", pTechno->Health);
         return false;
     }
 

@@ -94,6 +94,33 @@ static bool SafeComputeAim(TechnoClass* pTarget, const CoordStruct& myPos,
     }
 }
 
+// SEH-защищённая тихая проверка нативной цели игрока (без логов). Если pTechno->Target
+// указывает на живого вражеского TechnoClass (Building/Unit/Infantry/Aircraft, Health>0,
+// Owner отличен от нашего), возвращает указатель на него; иначе nullptr. Вынесена в
+// отдельную функцию: AssignSplitTargets держит std::vector, а __try в такой функции
+// запрещён (C2712 — требуется object unwinding).
+static TechnoClass* SafeGetNativeTarget(TechnoClass* pTechno) {
+    if (!pTechno) return nullptr;
+    __try {
+        AbstractClass* pTgt = pTechno->Target;
+        if (!pTgt) return nullptr;
+        int what = static_cast<int>(pTgt->WhatAmI());
+        if (what != static_cast<int>(AbstractType::Building) &&
+            what != static_cast<int>(AbstractType::Unit) &&
+            what != static_cast<int>(AbstractType::Infantry) &&
+            what != static_cast<int>(AbstractType::Aircraft)) {
+            return nullptr;
+        }
+        TechnoClass* asT = static_cast<TechnoClass*>(pTgt);
+        if (asT->Health > 0 && asT->Owner != pTechno->Owner) {
+            return asT;
+        }
+        return nullptr;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return nullptr;
+    }
+}
+
 // ==== Разделение залпа для НАСТОЯЩИХ физических ракет (SpawnManager) ====
 // Дредноут (DMISL) и Авианосец (HORNET) через SpawnManagerClass запускают реальные
 // летающие снаряды/истребители. Ракета №1 летит в главную цель, а ракета №2
@@ -639,11 +666,11 @@ bool SubTurretManager::FireTurret(TechnoClass* pTechno, size_t turretIndex, Tech
     // (warhead AP, CellSpread=0); мгновенный ReceiveDamage из прежней реализации убран.
     if (SpawnTracerBullet(pTechno, turret, pTarget, damage)) {
         if (damage > 0) {
-            LUA_LOG_INFO("[SubTurret] tracer fired from turret {} at '{}' ({} dmg)",
-                         turretIndex, SafeTechnoId(pTarget), damage);
+            LUA_LOG_DEBUG("[SubTurret] tracer fired from turret {} at '{}' ({} dmg)",
+                          turretIndex, SafeTechnoId(pTarget), damage);
         } else {
-            LUA_LOG_INFO("[SubTurret] visual tracer fired from turret {} at '{}' (no dmg)",
-                         turretIndex, SafeTechnoId(pTarget));
+            LUA_LOG_DEBUG("[SubTurret] visual tracer fired from turret {} at '{}' (no dmg)",
+                          turretIndex, SafeTechnoId(pTarget));
         }
         return true;
     }
@@ -651,27 +678,35 @@ bool SubTurretManager::FireTurret(TechnoClass* pTechno, size_t turretIndex, Tech
 }
 
 bool SubTurretManager::AssignSplitTargets(TechnoClass* pTechno, const std::vector<TechnoClass*>& targets) {
-    if (!IsValidTechno(pTechno) || targets.empty()) return false;
+    if (!IsValidTechno(pTechno)) return false;
 
     auto* turrets = GetTurrets(pTechno);
     if (!turrets || turrets->empty()) return false;
 
-    // Dynamic Salvo Convergence: собираем до двух живых вражеских целей (A и B).
+    // Приоритет команды игрока над автономностью (Milestone 10): если корабль уже смотрит
+    // на живую вражескую цель (pTechno->Target), назначаем её башне 0 и исключаем из пула
+    // кандидатов. Тихая проверка через SafeGetNativeTarget (без логов). Если нативная цель
+    // невалидна, native == nullptr — поведение прежнее (слот 0 из кандидатов).
+    TechnoClass* native = SafeGetNativeTarget(pTechno);
+
+    // Dynamic Salvo Convergence: собираем живых вражеских кандидатов (A и B), исключая нативную цель.
     // IsValidTechno() SEH-защищён и проверяет IsAlive/Health>0/!InLimbo, поэтому
     // виртуальные вызовы и поля мёртвых/висячих указателей не трогаем (Trap #2).
-    TechnoClass* targetA = nullptr;
-    TechnoClass* targetB = nullptr;
+    std::vector<TechnoClass*> candidates;
+    candidates.reserve(targets.size());
     for (TechnoClass* cand : targets) {
         if (!cand) continue;
+        if (cand == native) continue;
         if (!IsValidTechno(cand)) continue;
         if (cand->Owner == pTechno->Owner) continue;
-        if (!targetA) targetA = cand;
-        else if (!targetB) targetB = cand;
-        else break;
+        candidates.push_back(cand);
     }
 
-    // Если цель A уничтожена/пуста, обе башни сходятся на B, и наоборот.
-    if (!targetA && !targetB) {
+    TechnoClass* targetA = !candidates.empty() ? candidates[0] : nullptr;
+    TechnoClass* targetB = candidates.size() > 1 ? candidates[1] : nullptr;
+
+    // Ни нативной, ни валидной кандидатной цели нет — сбрасываем башни.
+    if (!native && !targetA && !targetB) {
         for (auto& turret : *turrets) {
             turret.target = nullptr;
         }
@@ -681,7 +716,7 @@ bool SubTurretManager::AssignSplitTargets(TechnoClass* pTechno, const std::vecto
     for (size_t i = 0; i < turrets->size(); ++i) {
         TechnoClass* assign = nullptr;
         if (i == 0) {
-            assign = targetA ? targetA : targetB;          // Башня 0 -> A (или B, если A мёртв)
+            assign = native ? native : (targetA ? targetA : targetB);   // Башня 0 -> команда игрока (или A/B)
         } else if (i == 1) {
             assign = targetB ? targetB : targetA;          // Башня 1 -> B (или A, если B мёртв)
         } else {

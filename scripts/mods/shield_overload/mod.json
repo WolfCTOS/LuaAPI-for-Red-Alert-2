@@ -1,0 +1,8 @@
+{
+  "id": "shield_overload",
+  "name": "Shield Overload",
+  "version": "1.0.0",
+  "author": "WolfCTOS",
+  "description": "Absorbs incoming damage via pre-damage event",
+  "conflicts": []
+}

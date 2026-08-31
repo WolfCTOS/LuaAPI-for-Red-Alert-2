@@ -1,76 +1,598 @@
-local SmartAI = {}
+local AIProbe = {}
 
-local SCAN_INTERVAL = 30       -- Scan every 30 frames (~1 second)
-local lastScanFrame = 0
+------------------------------------------------------------
+-- CONFIG
+------------------------------------------------------------
 
-function SmartAI.Update(frame)
-    if frame - lastScanFrame < SCAN_INTERVAL then return end
-    lastScanFrame = frame
+local TICK = 30
 
-    local humanPlayer = House.GetPlayer()
-    if not humanPlayer then return end
+-- true = выводить подробную диагностику в stdout/log
+local DEBUG = true
 
-    local buildings = World.GetBuildings()
-    local units = World.GetUnits()
+-- Максимум объектов, которые probe тестирует за сессию
+local MAX_OBJECTIVES = 20
 
-    -- Group AI houses
-    local aiHouses = {}
-    for idx = 0, House.GetCount() - 1 do
-        local h = House.GetByIndex(idx)
-        if h and not h:IsHuman() and not h:IsAlliedWith(humanPlayer) and h:GetName() ~= "Neutral" then
-            table.insert(aiHouses, h)
+-- Радиус поиска кандидатов вокруг objective
+local CANDIDATE_RADIUS = 15
+
+------------------------------------------------------------
+-- STATE
+------------------------------------------------------------
+
+local lastTick = 0
+
+-- [objectId] = true
+local inspectedObjectives = {}
+
+-- [objectId] = true
+local commandedObjectives = {}
+
+-- Prevents repeated global scans from producing identical logs
+local sessionStarted = false
+
+------------------------------------------------------------
+-- LOGGING
+------------------------------------------------------------
+
+local function Log(message)
+    if not DEBUG then
+        return
+    end
+
+    print("[LuaAPI] [AI-PROBE] " .. message)
+end
+
+------------------------------------------------------------
+-- SAFE ACCESS
+------------------------------------------------------------
+
+local function SafeAlive(object)
+    if not object then
+        return false
+    end
+
+    local ok, result = pcall(function()
+        return object:IsAlive()
+    end)
+
+    return ok and result
+end
+
+local function SafeId(object)
+    if not object then
+        return nil
+    end
+
+    local ok, result = pcall(function()
+        return object:GetId()
+    end)
+
+    if ok then
+        return result
+    end
+
+    return nil
+end
+
+local function SafeType(object)
+    if not object then
+        return "<nil>"
+    end
+
+    local ok, result = pcall(function()
+        return object:GetTypeName()
+    end)
+
+    if ok and result then
+        return result
+    end
+
+    return "<unknown>"
+end
+
+local function SafeName(object)
+    if not object then
+        return "<nil>"
+    end
+
+    local ok, result = pcall(function()
+        return object:GetName()
+    end)
+
+    if ok and result then
+        return result
+    end
+
+    return "<unknown>"
+end
+
+local function SafeOwner(object)
+    if not object then
+        return nil
+    end
+
+    local ok, result = pcall(function()
+        return object:GetOwner()
+    end)
+
+    if ok then
+        return result
+    end
+
+    return nil
+end
+
+local function SafePosition(object)
+    if not object then
+        return nil
+    end
+
+    local ok, result = pcall(function()
+        return object:GetPosition()
+    end)
+
+    if ok then
+        return result
+    end
+
+    return nil
+end
+
+local function SafeIdle(unit)
+    if not unit then
+        return false
+    end
+
+    local ok, result = pcall(function()
+        return unit:IsIdle()
+    end)
+
+    return ok and result
+end
+
+local function SafeDistance(a, b)
+    if not a or not b then
+        return nil
+    end
+
+    local ok, result = pcall(function()
+        return a:GetDistanceTo(b)
+    end)
+
+    if ok then
+        return result
+    end
+
+    return nil
+end
+
+------------------------------------------------------------
+-- OBJECTIVE DETECTION
+------------------------------------------------------------
+
+local function IsOilDerrick(object)
+    if not SafeAlive(object) then
+        return false
+    end
+
+    return SafeType(object) == "CAOILD"
+end
+
+------------------------------------------------------------
+-- OBJECTIVE DESCRIPTION
+------------------------------------------------------------
+
+local function DescribeObjective(objective)
+    local id = SafeId(objective)
+    local typeName = SafeType(objective)
+    local owner = SafeOwner(objective)
+    local ownerName = SafeName(owner)
+    local position = SafePosition(objective)
+
+    local x = -1
+    local y = -1
+
+    if position then
+        x = position.x or -1
+        y = position.y or -1
+    end
+
+    return string.format(
+        "id=%s type=%s owner=%s pos=(%d,%d)",
+        tostring(id),
+        typeName,
+        ownerName,
+        x,
+        y
+    )
+end
+
+------------------------------------------------------------
+-- FIND CANDIDATES
+------------------------------------------------------------
+
+local function FindCandidates(objective, units)
+    local candidates = {}
+
+    for _, unit in ipairs(units) do
+        if SafeAlive(unit) then
+            local kind = unit:GetKind()
+
+            if kind == "unit" then
+                local distance = SafeDistance(
+                    unit,
+                    objective
+                )
+
+                if distance and distance <= CANDIDATE_RADIUS then
+                    table.insert(
+                        candidates,
+                        {
+                            unit = unit,
+                            distance = distance
+                        }
+                    )
+                end
+            end
         end
     end
 
-    if #aiHouses == 0 then return end
-
-    -- 1. Scan AI buildings for flank attacks / damage
-    for _, aiHouse in ipairs(aiHouses) do
-        local aiName = aiHouse:GetName()
-        local breachedBuilding = nil
-
-        for _, bld in ipairs(buildings) do
-            if bld:IsAlive() then
-                local owner = bld:GetOwner()
-                if owner and owner:GetName() == aiName then
-                    -- Check if building is damaged below 85% HP
-                    if bld:GetHealth() < (bld:GetMaxHealth() * 0.85) then
-                        breachedBuilding = bld
-                        break
-                    end
-                end
-            end
+    table.sort(
+        candidates,
+        function(a, b)
+            return a.distance < b.distance
         end
+    )
 
-        -- 2. If base flank is under attack -> Rally idle reserve tanks across the base!
-        if breachedBuilding then
-            local bPos = breachedBuilding:GetPosition()
-            local ralliedCount = 0
+    return candidates
+end
 
-            for _, u in ipairs(units) do
-                if u:IsAlive() and u:GetKind() == "unit" then
-                    local uOwner = u:GetOwner()
-                    if uOwner and uOwner:GetName() == aiName then
-                        -- Check if unit is far from breach or idle
-                        local dist = u:GetDistanceTo(breachedBuilding)
-                        if dist and dist > 6.0 and u:IsIdle() then
-                            -- Command reserve tank to reinforce the breached flank!
-                            u:MoveTo(bPos.x, bPos.y)
-                            u:Hunt()
-                            ralliedCount = ralliedCount + 1
-                        end
-                    end
+------------------------------------------------------------
+-- INSPECT CANDIDATE
+------------------------------------------------------------
+
+local function InspectCandidate(candidate, index)
+    local unit = candidate.unit
+
+    local id = SafeId(unit)
+    local typeName = SafeType(unit)
+
+    local owner = SafeOwner(unit)
+    local ownerName = SafeName(owner)
+
+    local idle = SafeIdle(unit)
+
+    Log(string.format(
+        "  candidate[%d] id=%s type=%s owner=%s distance=%.2f idle=%s",
+        index,
+        tostring(id),
+        typeName,
+        ownerName,
+        candidate.distance,
+        tostring(idle)
+    ))
+end
+
+------------------------------------------------------------
+-- SELECT TEST UNIT
+------------------------------------------------------------
+
+local function SelectTestUnit(candidates)
+    if #candidates == 0 then
+        return nil
+    end
+
+    -- Prefer idle unit.
+    for _, candidate in ipairs(candidates) do
+        if SafeIdle(candidate.unit) then
+            return candidate
+        end
+    end
+
+    -- Otherwise closest unit.
+    return candidates[1]
+end
+
+------------------------------------------------------------
+-- MOVE TEST
+------------------------------------------------------------
+
+local function TestMoveTo(unit, objective)
+    if not SafeAlive(unit) then
+        Log("  COMMAND ABORTED: selected unit is dead")
+        return false
+    end
+
+    if not SafeAlive(objective) then
+        Log("  COMMAND ABORTED: objective is dead")
+        return false
+    end
+
+    local position = SafePosition(objective)
+
+    if not position then
+        Log("  COMMAND FAILED: objective position unavailable")
+        return false
+    end
+
+    local unitId = SafeId(unit)
+    local unitType = SafeType(unit)
+
+    Log(string.format(
+        "  COMMAND: unit id=%s type=%s -> MoveTo(%d,%d)",
+        tostring(unitId),
+        unitType,
+        position.x,
+        position.y
+    ))
+
+    local ok, result = pcall(function()
+        return unit:MoveTo(
+            position.x,
+            position.y
+        )
+    end)
+
+    if not ok then
+        Log(
+            "  MoveTo ERROR: " ..
+            tostring(result)
+        )
+
+        return false
+    end
+
+    Log(
+        "  MoveTo accepted"
+    )
+
+    return true
+end
+
+------------------------------------------------------------
+-- TEST ONE OBJECTIVE
+------------------------------------------------------------
+
+local function TestObjective(objective, units)
+    if not SafeAlive(objective) then
+        return
+    end
+
+    local id = SafeId(objective)
+
+    if not id then
+        Log(
+            "Objective has no valid ID; skipping"
+        )
+
+        return
+    end
+
+    --------------------------------------------------------
+    -- Never inspect same objective twice.
+    --------------------------------------------------------
+
+    if inspectedObjectives[id] then
+        return
+    end
+
+    inspectedObjectives[id] = true
+
+    Log(
+        "========================================"
+    )
+
+    Log(
+        "OBJECTIVE DETECTED"
+    )
+
+    Log(
+        "  " .. DescribeObjective(objective)
+    )
+
+    --------------------------------------------------------
+    -- Find units.
+    --------------------------------------------------------
+
+    local candidates =
+        FindCandidates(
+            objective,
+            units
+        )
+
+    Log(string.format(
+        "  candidates=%d",
+        #candidates
+    ))
+
+    --------------------------------------------------------
+    -- Show first five candidates.
+    --------------------------------------------------------
+
+    local inspectCount = math.min(
+        #candidates,
+        5
+    )
+
+    for i = 1, inspectCount do
+        InspectCandidate(
+            candidates[i],
+            i
+        )
+    end
+
+    --------------------------------------------------------
+    -- No candidates.
+    --------------------------------------------------------
+
+    if #candidates == 0 then
+        Log(
+            "  RESULT: no units within radius"
+        )
+
+        Log(
+            "========================================"
+        )
+
+        return
+    end
+
+    --------------------------------------------------------
+    -- Select unit.
+    --------------------------------------------------------
+
+    local selected =
+        SelectTestUnit(
+            candidates
+        )
+
+    if not selected then
+        Log(
+            "  RESULT: unable to select unit"
+        )
+
+        Log(
+            "========================================"
+        )
+
+        return
+    end
+
+    --------------------------------------------------------
+    -- Test MoveTo once.
+    --------------------------------------------------------
+
+    if commandedObjectives[id] then
+        Log(
+            "  MoveTo already tested for this objective"
+        )
+    else
+        commandedObjectives[id] = true
+
+        TestMoveTo(
+            selected.unit,
+            objective
+        )
+    end
+
+    Log(
+        "========================================"
+    )
+end
+
+------------------------------------------------------------
+-- SCAN OBJECTIVES
+------------------------------------------------------------
+
+local function ScanObjectives(buildings, units)
+    local count = 0
+
+    for _, building in ipairs(buildings) do
+        if IsOilDerrick(building) then
+            local id = SafeId(building)
+
+            if id and not inspectedObjectives[id] then
+                count = count + 1
+
+                if count <= MAX_OBJECTIVES then
+                    TestObjective(
+                        building,
+                        units
+                    )
                 end
-            end
-
-            if ralliedCount > 0 then
-                local alert = string.format("\u{1F6A8} [AI Commander - %s] Flank breach at (%d,%d)! Rallied %d reserve tanks to counter-attack!",
-                    aiName, bPos.x, bPos.y, ralliedCount)
-                Engine.PrintMessage(alert)
-                print("[LuaAPI] " .. alert)
             end
         end
     end
 end
 
-return SmartAI
+------------------------------------------------------------
+-- BASIC API TEST
+------------------------------------------------------------
+
+local function InitialDiagnostic()
+    Log("========================================")
+    Log("LuaAPI AI Probe started")
+    Log("Testing confirmed gameplay surface")
+    Log("Engine.PrintMessage = NOT USED")
+    Log("Repeated MoveTo = PREVENTED")
+    Log("========================================")
+end
+
+------------------------------------------------------------
+-- MAIN UPDATE
+------------------------------------------------------------
+
+function AIProbe.Update(frame)
+    if frame - lastTick < TICK then
+        return
+    end
+
+    lastTick = frame
+
+    --------------------------------------------------------
+    -- One-time initialization.
+    --------------------------------------------------------
+
+    if not sessionStarted then
+        sessionStarted = true
+        InitialDiagnostic()
+    end
+
+    --------------------------------------------------------
+    -- World.
+    --------------------------------------------------------
+
+    local human = House.GetPlayer()
+
+    if not human then
+        return
+    end
+
+    local units = World.GetUnits()
+
+    if not units then
+        Log(
+            "World.GetUnits() returned nil"
+        )
+
+        return
+    end
+
+    local buildings = World.GetBuildings()
+
+    if not buildings then
+        Log(
+            "World.GetBuildings() returned nil"
+        )
+
+        return
+    end
+
+    --------------------------------------------------------
+    -- Scan oil derricks.
+    --------------------------------------------------------
+
+    ScanObjectives(
+        buildings,
+        units
+    )
+end
+
+------------------------------------------------------------
+-- RESET
+------------------------------------------------------------
+
+function AIProbe.Reset()
+    lastTick = 0
+
+    inspectedObjectives = {}
+    commandedObjectives = {}
+
+    sessionStarted = false
+
+    Log(
+        "AI Probe state reset"
+    )
+end
+
+return AIProbe

@@ -1,9 +1,29 @@
 print("[LuaAPI] Universal ModLoader Online!")
 
--- Read enabled mod IDs from scripts/active_mods.txt (one per line, '#' comments).
+-- Каталог самого скрипта (DLL-модуля), а не рабочий каталог процесса.
+-- Лаунчер (injector.exe) пишет список включённых модов в АБСОЛЮТНЫЙ путь
+-- <каталог-модуля>\scripts\active_mods.txt. Чтение из CWD-относительного пути
+-- ломается, когда игру запускает внешний клиент (CnCNet/Syringe) с другим
+-- рабочим каталогом: тогда лаунчер и ModLoader смотрят на ДВА РАЗНЫХ файла и
+-- мод, включённый в лаунчере, не загружается.
+local function moduleScriptDir()
+    local src = debug.getinfo(1, "S").source
+    if src and src:sub(1, 1) == "@" then src = src:sub(2) end
+    src = src:gsub("\\", "/")
+    return src:match("^(.*)/[^/]*$") or "."
+end
+
+local MODULE_DIR = moduleScriptDir()
+
+-- Read enabled mod IDs from active_mods.txt (one per line, '#' comments).
+-- Файл берётся из каталога модуля (где лежит init.lua), т.е. ровно тот же файл,
+-- в который пишет лаунчер.
 local function loadActiveModList()
     local active = {}
-    local f = io.open("scripts/active_mods.txt", "r")
+    local f = io.open(MODULE_DIR .. "/active_mods.txt", "r")
+    if not f then
+        f = io.open("scripts/active_mods.txt", "r")
+    end
     if not f then
         f = io.open("active_mods.txt", "r")
     end

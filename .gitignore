@@ -1,5 +1,33 @@
-# LuaAPI for Red Alert 2 Git Ignore
-# Ignore user profile and system directories
+# LuaAPI for Red Alert 2
+# =======================
+
+# Build artifacts
+build/
+dist/
+x64/
+Release/
+Debug/
+*.dll
+*.exe
+*.pdb
+*.obj
+*.ilk
+*.lib
+*.exp
+
+# Logs and runtime output
+*.log
+benchmark.log
+injector_log.txt
+except.txt
+
+# IDE / editor
+.vscode/
+.idea/
+.vscode-shared/
+*.lock-window
+
+# Local tools / environments
 .cache/
 .config/
 .copilot/
@@ -8,8 +36,53 @@
 .lmstudio/
 .local/
 .nuget/
-.vscode-shared/
-.vscode/
+
+# Local game files
+*.mix
+*.mmx
+*.yro
+*.bik
+*.shp
+*.csf
+*.lcf
+*.tlb
+*.dat
+*.sys
+*.bak
+*.sav
+*.SAV
+
+# Local game executables
+RA2MD.exe
+Ra2.exe
+gamemd.exe
+game.exe
+g2m.exe
+
+# Local game / runtime files
+ra2.ini
+ra2md.ini
+RA2MD.ini
+KeyboardMD.ini
+keyboard.ini
+spawn.ini
+injector.ini
+runimports.bat
+
+# Local game directories
+Map Editor/
+Screenshots/
+Taunts/
+rmcache/
+Client/
+ClientCrashLogs/
+
+# Generated / local files
+init.lua
+dist/
+imports_dump.txt
+
+# User/system profile files
 AppData/
 Contacts/
 Desktop/
@@ -19,40 +92,18 @@ Favorites/
 IntelGraphicsProfiles/
 Links/
 Music/
-NTUSER.DAT*
-NTUSER.DAT{*.regtrans-ms,*.TxR.*.regtrans-ms.cnpf}
-NTUSER.DAT{995bda28-9346-11f1-b524-803049e8b9ce}*
-NTUSER.DAT{995bda29-9346-11f1-b524-803049e8b9ce}*
 Pictures/
 Saved Games/
 Searches/
 Videos/
+
+NTUSER.DAT*
 ntuser.dat.LOG1
 ntuser.dat.LOG2
 ntuser.ini
 
-# Build artifacts
-build/
-*.log
-benchmark.log
-
-# IDE and tools
-.vscode/
-.idea/
-*.tsx
-*.ts
-*.lock-window
-
-# Mod installation
-scripts/mods/*/mod.json
-scripts/mods/*/main.lua
-
-# Temporarily allow these project files
-!scripts/mods/
-!PROJECT/
-!src/
-!scripts/
-!tools/
-!README.md
-!PROJECT/ROADMAP.md
-!PROJECT/AI_CONTEXT.md
+# Temporary / editor files
+*.tmp
+*.temp
+*.swp
+*~

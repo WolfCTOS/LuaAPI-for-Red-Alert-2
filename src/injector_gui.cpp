@@ -17,6 +17,7 @@
 #include <sstream>
 #include <thread>
 #include <algorithm>
+#include <cstring>
 
 #pragma comment(lib, "user32.lib")
 #pragma comment(lib, "gdi32.lib")
@@ -115,6 +116,8 @@ HFONT g_fontSmall = nullptr;   // 10pt
 DWORD g_gamePid = 0;
 bool g_skipInjection = false;
 bool g_injectCnCNet = false;
+bool g_attachMode = false;
+std::wstring g_attachTarget;   // --attach NNN.exe: явная цель (переопределяет дефолты)
 std::wstring g_gameName;
 AppState g_appState = AppState::Ready;
 bool g_dirty = false;
@@ -446,6 +449,90 @@ bool InjectDllIntoProcess(DWORD pid, const std::wstring& dllPath, std::wstring* 
 }
 
 // ---------------------------------------------------------------------------
+// Attach-режим: хелперы поиска процесса/модулей и чтения живой памяти.
+// ---------------------------------------------------------------------------
+
+// Ванильные пролог-байты (первые 8) целевых функций — для сверки живых байт
+// перед инъектом (см. Gate 11.1): 0x55D360 = MainLoop, 0x734E60 = LoadString.
+constexpr uintptr_t kSigAddrMainLoop = 0x0055D360;
+constexpr uintptr_t kSigAddrLoadString = 0x00734E60;
+const uint8_t kSigMainLoop[8]   = {0xA0, 0xA0, 0xE9, 0xA8, 0x00, 0x81, 0xEC, 0xB4};
+const uint8_t kSigLoadString[8] = {0x53, 0x56, 0x8B, 0xF2, 0x8B, 0xD9, 0x85, 0xF6};
+
+// Найти PID процесса по имени исполняемого файла (без учёта регистра).
+DWORD FindProcessByName(const wchar_t* exeName) {
+    if (!exeName || !*exeName) return 0;
+    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snap == INVALID_HANDLE_VALUE) return 0;
+    DWORD pid = 0;
+    PROCESSENTRY32W e{}; e.dwSize = sizeof(e);
+    if (Process32FirstW(snap, &e)) {
+        do {
+            if (_wcsicmp(e.szExeFile, exeName) == 0) { pid = e.th32ProcessID; break; }
+        } while (Process32NextW(snap, &e));
+    }
+    CloseHandle(snap);
+    return pid;
+}
+
+// Базовый адрес модуля заданного имени внутри процесса (или 0).
+uintptr_t GetModuleBase(DWORD pid, const wchar_t* moduleName) {
+    uintptr_t base = 0;
+    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE, pid);
+    if (snap == INVALID_HANDLE_VALUE) return 0;
+    MODULEENTRY32W m{}; m.dwSize = sizeof(m);
+    if (Module32FirstW(snap, &m)) {
+        do {
+            if (_wcsicmp(m.szModule, moduleName) == 0) {
+                base = reinterpret_cast<uintptr_t>(m.modBaseAddr);
+                break;
+            }
+        } while (Module32NextW(snap, &m));
+    }
+    CloseHandle(snap);
+    return base;
+}
+
+std::vector<std::wstring> GetProcessModules(DWORD pid) {
+    std::vector<std::wstring> mods;
+    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE, pid);
+    if (snap == INVALID_HANDLE_VALUE) return mods;
+    MODULEENTRY32W m{}; m.dwSize = sizeof(m);
+    if (Module32FirstW(snap, &m)) {
+        do { mods.emplace_back(m.szModule); } while (Module32NextW(snap, &m));
+    }
+    CloseHandle(snap);
+    return mods;
+}
+
+// Прочитать живую память из удалённого процесса.
+bool ReadLiveBytes(DWORD pid, uintptr_t addr, uint8_t* buf, size_t n) {
+    HANDLE proc = OpenProcess(PROCESS_VM_READ | PROCESS_QUERY_INFORMATION, FALSE, pid);
+    if (!proc) return false;
+    SIZE_T read = 0;
+    bool ok = ReadProcessMemory(proc, reinterpret_cast<LPCVOID>(addr), buf, n, &read) && read == n;
+    CloseHandle(proc);
+    return ok;
+}
+
+std::wstring BytesToHexStr(const uint8_t* bytes, size_t n) {
+    wchar_t b[8];
+    std::wstring out;
+    for (size_t i = 0; i < n; ++i) {
+        swprintf(b, 8, L"%02X", bytes[i]);
+        out += b;
+        if (i + 1 < n) out += L' ';
+    }
+    return out;
+}
+
+std::wstring HexWord(uintptr_t v) {
+    wchar_t b[16];
+    swprintf(b, 16, L"0x%08X", static_cast<unsigned int>(v));
+    return b;
+}
+
+// ---------------------------------------------------------------------------
 // Actions
 // ---------------------------------------------------------------------------
 
@@ -600,6 +687,135 @@ void DoInjectAttach() {
     // WM_APP_INJECT_DONE, чтобы окно не замерзало (InjectDllIntoProcess внутри имеет таймаут).
     HWND hwnd = g_hwnd;
     std::thread([hwnd, pid, dllPath]() { DoInjectAttachAsync(hwnd, pid, dllPath); }).detach();
+}
+
+// ---------------------------------------------------------------------------
+// Wait & Attach (--attach / LUAAPI_ATTACH=1)
+// Клиент CnCNet запускает игру сам (gamemd-spawn.exe через Syringe.exe).
+// Этот режим НЕ запускает игру: поллит список процессов каждые 500мс до 120с,
+// дожидаясь целевого exe, потом ждёт Ares/Phobos/CnCNet-Spawner.dll в модулях
+// (после Syringe-инъекций), пауза 1с, сверяет живые байты на 0x55D360/0x734E60
+// и только затем инжектит LuaAPI.dll. Блокирующий, headless: без окна.
+// ---------------------------------------------------------------------------
+int RunAttachWait(const std::wstring& explicitName) {
+    LogLine(L"--- Attach mode (--attach / LUAAPI_ATTACH=1): waiting for game process ---");
+
+    std::wstring exeDir = GetExeDirectory();
+    std::wstring dllPath = exeDir + L"\\LuaAPI.dll";
+    if (!FileExists(dllPath)) {
+        LogLine(L"Attach: LuaAPI.dll not found: " + dllPath);
+        MessageBoxW(nullptr, (L"\u0424\u0430\u0439\u043B \u043D\u0435 \u043D\u0430\u0439\u0434\u0435\u043D:\n" + dllPath).c_str(),
+                    L"\u041E\u0448\u0438\u0431\u043A\u0430", MB_ICONERROR | MB_OK);
+        return 1;
+    }
+
+    // Целевые имена: явный аргумент переопределяет дефолты (gamemd-spawn -> gamemd).
+    std::vector<std::wstring> targets;
+    if (!explicitName.empty()) {
+        targets.push_back(explicitName);
+    } else {
+        targets.push_back(L"gamemd-spawn.exe");
+        targets.push_back(L"gamemd.exe");
+    }
+
+    // Фаза 1: поллинг процессов каждые 500мс до 120с.
+    constexpr DWORD kWaitMs = 120000;
+    constexpr DWORD kPollMs = 500;
+    DWORD pid = 0;
+    std::wstring foundName;
+    DWORD startTick = GetTickCount64();
+    while (GetTickCount64() - startTick < kWaitMs) {
+        for (const auto& t : targets) {
+            DWORD p = FindProcessByName(t.c_str());
+            if (p != 0) { pid = p; foundName = t; break; }
+        }
+        if (pid) break;
+        Sleep(kPollMs);
+    }
+    if (pid == 0) {
+        LogLine(L"Attach: no target process found within 120s, giving up");
+        return 1;
+    }
+    LogLine(L"Attach: found process '" + foundName + L"' (PID " + std::to_wstring(pid) + L")");
+
+    // Фаза 2: ждём Ares.dll + Phobos.dll + CnCNet-Spawner.dll (до 15с) - это
+    // гарантирует, что Syringe уже внедрил игровые расширения до нашего хука.
+    static const wchar_t* kWaitDlls[] = { L"Ares.dll", L"Phobos.dll", L"CnCNet-Spawner.dll" };
+    constexpr DWORD kModuleWaitMs = 15000;
+    bool allPresent = false;
+    DWORD modStart = GetTickCount64();
+    while (GetTickCount64() - modStart < kModuleWaitMs) {
+        auto mods = GetProcessModules(pid);
+        allPresent = true;
+        for (const wchar_t* dll : kWaitDlls) {
+            bool found = false;
+            for (const auto& m : mods) {
+                if (_wcsicmp(m.c_str(), dll) == 0) { found = true; break; }
+            }
+            if (!found) { allPresent = false; break; }
+        }
+        if (allPresent) break;
+        Sleep(500);
+    }
+    if (allPresent) {
+        LogLine(L"Attach: Ares.dll + Phobos.dll + CnCNet-Spawner.dll present (Syringe injected)");
+    } else {
+        LogLine(L"Attach: WARN - expected mods not all present within 15s, proceeding anyway");
+    }
+
+    // Пауза 1с для стабилизации после Syringe-инъекций.
+    Sleep(1000);
+
+    // База модуля игры.
+    uintptr_t modBase = GetModuleBase(pid, foundName.c_str());
+    LogLine(L"Attach: module base = " + HexWord(modBase) + L" (module '" + foundName + L"')");
+
+    // Живые байты (16) ДО инъекта — сравнить ваниль vs CnCNet.
+    uint8_t live[2][16];
+    bool okA = ReadLiveBytes(pid, kSigAddrMainLoop, live[0], 16);
+    bool okB = ReadLiveBytes(pid, kSigAddrLoadString, live[1], 16);
+    if (okA) {
+        bool match = (memcmp(live[0], kSigMainLoop, 8) == 0);
+        LogLine(L"Attach: live bytes @0x0055D360 = " + BytesToHexStr(live[0], 16) +
+                (match ? L"  [MATCH vanilla]" : L"  [MISMATCH!]"));
+    } else {
+        LogLine(L"Attach: could not read @0x0055D360");
+    }
+    if (okB) {
+        bool match = (memcmp(live[1], kSigLoadString, 8) == 0);
+        LogLine(L"Attach: live bytes @0x00734E60 = " + BytesToHexStr(live[1], 16) +
+                (match ? L"  [MATCH vanilla]" : L"  [MISMATCH!]"));
+    } else {
+        LogLine(L"Attach: could not read @0x00734E60");
+    }
+
+    // Инъект LuaAPI.dll.
+    std::wstring error;
+    if (!InjectDllIntoProcess(pid, dllPath, &error)) {
+        LogLine(L"Attach: injection FAILED: " + error);
+        return 1;
+    }
+
+    g_gamePid = pid;
+    g_gameName = foundName;
+    LogLine(L"Attach: LuaAPI.dll injected into PID " + std::to_wstring(pid));
+
+    // Ждём выхода игры (запущена внешним клиентом), чтобы зафиксировать код выхода.
+    HANDLE hProcess = OpenProcess(SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+    if (hProcess) {
+        WaitForSingleObject(hProcess, INFINITE);
+        DWORD code = 0;
+        GetExitCodeProcess(hProcess, &code);
+        wchar_t b[16];
+        swprintf(b, 16, L"%08X", code);
+        LogLine(L"Attach: '" + foundName + L"' exited code=0x" + std::wstring(b));
+        CloseHandle(hProcess);
+    } else {
+        LogLine(L"Attach: OpenProcess failed, cannot wait for exit (error " +
+                std::to_wstring(GetLastError()) + L")");
+    }
+    Sleep(500);
+    return 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -1452,15 +1668,46 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
             if (_wcsicmp(argv[i], L"--noinject") == 0) {
                 g_skipInjection = true;
                 g_headless = true;
-            }
-            if (_wcsicmp(argv[i], L"--withcncnet") == 0) {
+            } else if (_wcsicmp(argv[i], L"--withcncnet") == 0) {
                 g_injectCnCNet = true;
                 g_headless = true;
+            } else if (_wcsnicmp(argv[i], L"--attach=", 9) == 0) {
+                g_attachMode = true;
+                g_headless = true;
+                g_attachTarget = argv[i] + 9;
+            } else if (_wcsicmp(argv[i], L"--attach") == 0) {
+                g_attachMode = true;
+                g_headless = true;
+                // Опциональный явный аргумент: --attach gamemd.exe
+                if (i + 1 < argc && argv[i + 1][0] != L'-') {
+                    g_attachTarget = argv[i + 1];
+                    ++i;
+                }
             }
         }
         if (argv) LocalFree(argv);
 
+        // LUAAPI_ATTACH=1 (и совместимый ATTACH_MODE=1): клиент (например CnCNet)
+        // запускает игру сам — ждать целевой процесс.
+        if (!g_attachMode) {
+            char envAttach[2] = {0};
+            GetEnvironmentVariableA("LUAAPI_ATTACH", envAttach, sizeof(envAttach));
+            if (envAttach[0] == '1') {
+                g_attachMode = true;
+                g_headless = true;
+            } else {
+                GetEnvironmentVariableA("ATTACH_MODE", envAttach, sizeof(envAttach));
+                if (envAttach[0] == '1') {
+                    g_attachMode = true;
+                    g_headless = true;
+                }
+            }
+        }
+
         if (g_headless) {
+            if (g_attachMode) {
+                return RunAttachWait(g_attachTarget);
+            }
             LogLine(L"--- Headless launch started ---");
             DoLaunchGame();
             // Wait for the game process to exit, then cleanly exit the injector.

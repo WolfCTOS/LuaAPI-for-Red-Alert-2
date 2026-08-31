@@ -1,0 +1,8 @@
+{
+  "id": "damaged_fleet",
+  "name": "Damaged Fleet",
+  "version": "1.0.0",
+  "author": "NiTeMind",
+  "description": "Validates start-of-match damage and smoke attachment without trigger hacks",
+  "conflicts": []
+}

@@ -1,0 +1,8 @@
+{
+  "id": "mod_b",
+  "name": "Mod B",
+  "version": "1.0.0",
+  "author": "WolfCTOS",
+  "description": "Second conflict test mod",
+  "conflicts": ["mod_a"]
+}

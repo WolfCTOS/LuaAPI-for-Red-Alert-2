@@ -1,0 +1,8 @@
+{
+  "id": "bounty_hunter",
+  "name": "Bounty Hunter",
+  "version": "1.0.0",
+  "author": "NiTeMind",
+  "description": "Award +50 credits to player on combat hit",
+  "conflicts": []
+}
