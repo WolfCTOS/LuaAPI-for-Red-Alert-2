@@ -1,3 +1,4 @@
+```lua
 local AIProbe = {}
 
 ------------------------------------------------------------
@@ -43,9 +44,11 @@ local sessionStarted = false
 ------------------------------------------------------------
 
 local function Log(message)
-    if DEBUG then
-        print("[LuaAPI] [AI-PROBE] " .. message)
+    if not DEBUG then
+        return
     end
+
+    print("[LuaAPI] [AI-PROBE] " .. message)
 end
 
 ------------------------------------------------------------
@@ -61,7 +64,7 @@ local function SafeAlive(object)
         return object:IsAlive()
     end)
 
-    return ok and result == true
+    return ok and result
 end
 
 local function SafeId(object)
@@ -137,22 +140,6 @@ local function SafePosition(object)
         return object:GetPosition()
     end)
 
-    if ok and result then
-        return result
-    end
-
-    return nil
-end
-
-local function SafeKind(object)
-    if not object then
-        return nil
-    end
-
-    local ok, result = pcall(function()
-        return object:GetKind()
-    end)
-
     if ok then
         return result
     end
@@ -169,23 +156,7 @@ local function SafeIdle(unit)
         return unit:IsIdle()
     end)
 
-    return ok and result == true
-end
-
-local function SafeMoveTo(unit, x, y)
-    if not SafeAlive(unit) then
-        return false, "unit is no longer alive"
-    end
-
-    local ok, result = pcall(function()
-        return unit:MoveTo(x, y)
-    end)
-
-    if not ok then
-        return false, tostring(result)
-    end
-
-    return result == true, result == true and nil or "MoveTo rejected the command"
+    return ok and result
 end
 
 ------------------------------------------------------------
@@ -193,7 +164,11 @@ end
 ------------------------------------------------------------
 
 local function IsOilDerrick(object)
-    return SafeAlive(object) and SafeType(object) == "CAOILD"
+    if not SafeAlive(object) then
+        return false
+    end
+
+    return SafeType(object) == "CAOILD"
 end
 
 ------------------------------------------------------------
@@ -226,115 +201,129 @@ local function DescribeObjective(objective)
 end
 
 ------------------------------------------------------------
--- CANDIDATE SELECTION
+-- FIND BEST CANDIDATE
 ------------------------------------------------------------
 
--- Find the best candidate without sorting the entire candidate list.
--- Priority:
---   1. idle unit
---   2. shortest distance
---
--- Returns:
---   selectedCandidate, candidateCount, debugCandidates
 local function FindBestCandidate(objective)
-    local position = SafePosition(objective)
-
-    if not position then
-        return nil, 0, {}
+    if not SafeAlive(objective) then
+        return nil, 0
     end
 
-    local nearby = World.GetUnitsInRadius(
-        position.x,
-        position.y,
+    local candidates = World.GetUnitsInRadius(
+        objective,
         CANDIDATE_RADIUS
     )
 
-    if not nearby then
-        return nil, 0, {}
+    if not candidates then
+        return nil, 0
     end
 
     local bestIdle = nil
+    local bestIdleDistance = math.huge
+
     local bestAny = nil
-    local count = 0
+    local bestAnyDistance = math.huge
 
-    -- Only keep a tiny debug list. The AI itself never sorts all candidates.
-    local debugCandidates = {}
+    local candidateCount = 0
 
-    for _, unit in ipairs(nearby) do
-        if SafeAlive(unit) and SafeKind(unit) == "unit" then
-            local unitPosition = SafePosition(unit)
+    for _, unit in ipairs(candidates) do
+        if SafeAlive(unit) then
+            local kind = unit:GetKind()
 
-            if unitPosition then
-                local dx = unitPosition.x - position.x
-                local dy = unitPosition.y - position.y
-                local distanceSq = dx * dx + dy * dy
+            if kind == "unit" then
+                candidateCount = candidateCount + 1
 
-                if distanceSq <= CANDIDATE_RADIUS * CANDIDATE_RADIUS then
-                    count = count + 1
+                local distance = nil
 
-                    local candidate = {
-                        unit = unit,
-                        distanceSq = distanceSq
-                    }
+                local ok, result = pcall(function()
+                    return unit:GetDistanceTo(objective)
+                end)
 
-                    if not bestAny or distanceSq < bestAny.distanceSq then
-                        bestAny = candidate
+                if ok then
+                    distance = result
+                end
+
+                if distance then
+                    if distance < bestAnyDistance then
+                        bestAny = {
+                            unit = unit,
+                            distance = distance
+                        }
+
+                        bestAnyDistance = distance
                     end
 
-                    if SafeIdle(unit) and
-                        (not bestIdle or distanceSq < bestIdle.distanceSq) then
-                        bestIdle = candidate
-                    end
+                    if SafeIdle(unit) and distance < bestIdleDistance then
+                        bestIdle = {
+                            unit = unit,
+                            distance = distance
+                        }
 
-                    if DEBUG then
-                        debugCandidates[#debugCandidates + 1] = candidate
+                        bestIdleDistance = distance
                     end
                 end
             end
         end
     end
 
-    if DEBUG and #debugCandidates > 1 then
-        table.sort(debugCandidates, function(a, b)
-            return a.distanceSq < b.distanceSq
-        end)
+    -- Prefer the nearest idle unit.
+    if bestIdle then
+        return bestIdle, candidateCount
+    end
 
-        while #debugCandidates > DEBUG_CANDIDATES do
-            debugCandidates[#debugCandidates] = nil
+    -- Otherwise use the nearest valid unit.
+    return bestAny, candidateCount
+end
+
+------------------------------------------------------------
+-- DEBUG CANDIDATES
+------------------------------------------------------------
+
+local function InspectCandidates(objective)
+    if not DEBUG then
+        return
+    end
+
+    local candidates = World.GetUnitsInRadius(
+        objective,
+        CANDIDATE_RADIUS
+    )
+
+    if not candidates then
+        return
+    end
+
+    local inspected = 0
+
+    for _, unit in ipairs(candidates) do
+        if inspected >= DEBUG_CANDIDATES then
+            break
+        end
+
+        if SafeAlive(unit) and unit:GetKind() == "unit" then
+            local ok, distance = pcall(function()
+                return unit:GetDistanceTo(objective)
+            end)
+
+            if ok and distance then
+                inspected = inspected + 1
+
+                Log(string.format(
+                    "  candidate[%d] id=%s type=%s owner=%s distance=%.2f idle=%s",
+                    inspected,
+                    tostring(SafeId(unit)),
+                    SafeType(unit),
+                    SafeName(SafeOwner(unit)),
+                    distance,
+                    tostring(SafeIdle(unit))
+                ))
+            end
         end
     end
-
-    return bestIdle or bestAny, count, debugCandidates
 end
 
 ------------------------------------------------------------
--- DEBUG CANDIDATE REPORT
-------------------------------------------------------------
-
-local function InspectCandidates(candidates)
-    for index, candidate in ipairs(candidates) do
-        local unit = candidate.unit
-        local id = SafeId(unit)
-        local typeName = SafeType(unit)
-        local owner = SafeOwner(unit)
-        local ownerName = SafeName(owner)
-        local idle = SafeIdle(unit)
-        local distance = math.sqrt(candidate.distanceSq)
-
-        Log(string.format(
-            "  candidate[%d] id=%s type=%s owner=%s distance=%.2f idle=%s",
-            index,
-            tostring(id),
-            typeName,
-            ownerName,
-            distance,
-            tostring(idle)
-        ))
-    end
-end
-
-------------------------------------------------------------
--- COMMAND
+-- MOVE TEST
 ------------------------------------------------------------
 
 local function TestMoveTo(unit, objective)
@@ -366,18 +355,24 @@ local function TestMoveTo(unit, objective)
         position.y
     ))
 
-    local ok, errorMessage = SafeMoveTo(
-        unit,
-        position.x,
-        position.y
-    )
+    local ok, result = pcall(function()
+        return unit:MoveTo(
+            position.x,
+            position.y
+        )
+    end)
 
     if not ok then
-        Log("  MoveTo FAILED: " .. tostring(errorMessage))
+        Log(
+            "  MoveTo ERROR: " ..
+            tostring(result)
+        )
+
         return false
     end
 
     Log("  MoveTo accepted")
+
     return true
 end
 
@@ -407,37 +402,56 @@ local function TestObjective(objective)
     Log("OBJECTIVE DETECTED")
     Log("  " .. DescribeObjective(objective))
 
-    local selected, candidateCount, debugCandidates =
+    --------------------------------------------------------
+    -- Diagnostic candidate inspection.
+    --------------------------------------------------------
+
+    InspectCandidates(objective)
+
+    --------------------------------------------------------
+    -- Select best candidate.
+    --------------------------------------------------------
+
+    local selected, candidateCount =
         FindBestCandidate(objective)
 
-    Log(string.format("  candidates=%d", candidateCount))
-
-    if DEBUG then
-        InspectCandidates(debugCandidates)
-    end
+    Log(string.format(
+        "  valid candidates=%d",
+        candidateCount
+    ))
 
     if not selected then
-        Log("  RESULT: no suitable units within radius")
+        Log("  RESULT: no valid unit within radius")
         Log("========================================")
         return
     end
+
+    local unit = selected.unit
+
+    Log(string.format(
+        "  selected id=%s type=%s distance=%.2f idle=%s",
+        tostring(SafeId(unit)),
+        SafeType(unit),
+        selected.distance,
+        tostring(SafeIdle(unit))
+    ))
+
+    --------------------------------------------------------
+    -- Test MoveTo once.
+    --------------------------------------------------------
 
     if commandedObjectives[id] then
         Log("  MoveTo already tested for this objective")
-        Log("========================================")
-        return
-    end
+    else
+        local success = TestMoveTo(
+            unit,
+            objective
+        )
 
-    commandedObjectives[id] = true
-
-    local success = TestMoveTo(
-        selected.unit,
-        objective
-    )
-
-    if not success then
-        -- Do not permanently consume an objective when the command failed.
-        commandedObjectives[id] = nil
+        -- Only mark as commanded if the native call succeeded.
+        if success then
+            commandedObjectives[id] = true
+        end
     end
 
     Log("========================================")
@@ -451,21 +465,20 @@ local function ScanObjectives(buildings)
     local processed = 0
 
     for _, building in ipairs(buildings) do
+        if processed >= MAX_OBJECTIVES then
+            break
+        end
+
         if IsOilDerrick(building) then
             local id = SafeId(building)
 
             if id and not inspectedObjectives[id] then
-                if processed >= MAX_OBJECTIVES then
-                    break
-                end
-
                 processed = processed + 1
+
                 TestObjective(building)
             end
         end
     end
-
-    return processed
 end
 
 ------------------------------------------------------------
@@ -475,11 +488,10 @@ end
 local function InitialDiagnostic()
     Log("========================================")
     Log("LuaAPI AI Probe v2 started")
-    Log("Perception: World.GetUnitsInRadius")
-    Log("Selection: single-pass nearest/idle candidate")
-    Log("Action: native MoveTo")
-    Log("Global unit scan: DISABLED")
-    Log("Repeated MoveTo: PREVENTED")
+    Log("Spatial candidate queries enabled")
+    Log("Global unit scan disabled")
+    Log("Candidate sorting disabled")
+    Log("Repeated MoveTo prevented")
     Log("========================================")
 end
 
@@ -494,10 +506,18 @@ function AIProbe.Update(frame)
 
     lastTick = frame
 
+    --------------------------------------------------------
+    -- One-time initialization.
+    --------------------------------------------------------
+
     if not sessionStarted then
         sessionStarted = true
         InitialDiagnostic()
     end
+
+    --------------------------------------------------------
+    -- Player.
+    --------------------------------------------------------
 
     local human = House.GetPlayer()
 
@@ -506,8 +526,7 @@ function AIProbe.Update(frame)
     end
 
     --------------------------------------------------------
-    -- Objective discovery is intentionally slower than the
-    -- decision tick. Candidate search is spatial and local.
+    -- Objective scan.
     --------------------------------------------------------
 
     if frame - lastObjectiveScan >= OBJECTIVE_SCAN_TICK then
@@ -541,3 +560,4 @@ function AIProbe.Reset()
 end
 
 return AIProbe
+```
