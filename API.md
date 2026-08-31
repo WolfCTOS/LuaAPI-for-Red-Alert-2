@@ -1,4 +1,4 @@
-# LuaAPI for Red Alert 2 — API Reference
+# LuaAPI for Red Alert 2 — API Reference 
 
 > **Version:** 1.1.0
 > **Milestone:** 11
