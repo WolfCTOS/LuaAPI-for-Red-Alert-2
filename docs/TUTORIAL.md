@@ -302,15 +302,15 @@ The return value is the number of units actually created. Normal spawning can us
 
 ### Sub-Turrets
 
-Milestone 11 also exposes explicit sub-turret state and firing:
+Milestone 10 exposes explicit sub-turret state and split-salvo firing:
 
 ```lua
 unit:AddSubTurret(1, 40, 0, 15, 12, 90)
-unit:SetSubTurretTarget(1, enemy)
-unit:FireSubTurret(1, enemy)
+unit:SetSplitTargets({enemy})
+unit:FireSplitSalvo()
 ```
 
-For split-salvo behavior:
+For split-salvo behavior with multiple targets:
 
 ```lua
 unit:SetSplitTargets({enemyA, enemyB, enemyC})
@@ -463,11 +463,9 @@ unit:AttachParticleSystem(name)
 unit:AddSubTurret(section, offX, offY, offZ, rot, rof)
 unit:GetSubTurretCount()
 unit:GetSubTurret(index)
-unit:SetSubTurretTarget(index, target)
-unit:FireSubTurret(index, target)
-unit:ClearSubTurrets()
 unit:SetSplitTargets(targets)
 unit:FireSplitSalvo()
+unit:ClearSubTurrets()
 ```
 
 ### Engine / Diagnostics
