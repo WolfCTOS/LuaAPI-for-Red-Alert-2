@@ -2,10 +2,6 @@
 
 All notable changes to LuaPI for Red Alert 2.
 
-# Changelog
-
-All notable changes to LuaPI for Red Alert 2.
-
 ## [0.7.0] — Milestone 11: CnCNet Compatibility & Dev Tools - 2026-08-31
 
 ### Added
