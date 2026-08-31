@@ -3,20 +3,12 @@
 > **Target Platform:** `gamemd.exe` — Yuri's Revenge 1.001  
 > **Repository:** https://github.com/WolfCTOS/LuaAPI-for-Red-Alert-2  
 > **Current Release:** `v1.0.0` Production Release  
-> **Current Development:** Milestone 11  
-> **Last Updated:** August 2026
+> **Current Development:** Milestone 12  
+> **Last Updated:** August 31, 2026
 
-This document tracks the architectural evolution of LuaAPI from the initial proof of concept to the current advanced combat and engine-integration work.
+This roadmap tracks the evolution of LuaAPI from runtime embedding to safe native bindings, CnCNet integration, advanced combat systems, and Lua-driven tactical gameplay.
 
-The roadmap distinguishes between:
-
-- **Completed and verified milestones**
-- **Completed gates**
-- **Deferred work**
-- **Current development**
-- **Future architectural goals**
-
-> ⚠️ **Verification policy:** A gate should only be marked `DONE / VERIFIED` when the corresponding functionality has been implemented and tested against the current LuaAPI build.
+> ⚠️ **Verification policy:** Implementation and runtime verification are separate. A capability is only marked `VERIFIED` after it has been tested against the current LuaAPI build.
 
 ---
 
@@ -30,66 +22,46 @@ The roadmap distinguishes between:
 | Phase 4 | Milestone 8 — Beta Hardening | ✅ DONE / VERIFIED |
 | Phase 5 | Milestone 9 — Production Release v1.0 | ✅ DONE / VERIFIED |
 | Phase 6 | Milestone 10 — Multi-Turret & Advanced Combat | 🟡 CORE COMPLETE |
-| Phase 7 | Milestone 11 — Presentation, Tactical AI & Naval Intelligence | 🔵 CURRENT |
+| Phase 7 | Milestone 11 — CnCNet Compatibility & Dev Tools | ✅ DONE |
+| Phase 8 | Milestone 12 — Unit Control API & Tactical AI | 🔵 CURRENT |
 
 ---
 
 # 🏆 Detailed Milestones & Gates
 
----
-
 ## [x] Milestones 1–3 — Core Engine Hooking & Runtime Sandbox
 
-> **Goal:** Prove that a modern Lua runtime can be embedded into the closed-source 32-bit Yuri's Revenge executable without destabilizing the original engine loop.
+> **Goal:** Embed Lua into the closed-source 32-bit Yuri's Revenge executable without destabilizing the game loop.
 
 ### [x] Gate 1.1 — MainLoop Hook
 
-Hook the canonical game loop at:
+Hooked the canonical game loop at `0x55D360`.
 
-```text
-0x55D360
-```
-
-**Result:** Stable per-frame execution inside `gamemd.exe`.
+**Result:** Stable Lua execution inside `gamemd.exe`.
 
 ### [x] Gate 1.2 — Lua 5.4 Runtime
 
-Implemented:
-
-- Native Lua 5.4 runtime
-- Isolated script execution
-- `pcall` error handling
-- Script error reporting
-
-Lua errors are handled without terminating the game process.
+Implemented the native Lua 5.4 runtime, isolated script execution, protected calls, and script error reporting.
 
 ### [x] Gate 1.3 — Native Techno Access
 
-Established the initial C++ ↔ Lua bridge for reading and modifying engine-backed `TechnoClass` objects.
+Established the C++ ↔ Lua bridge for engine-backed `TechnoClass` objects.
 
 ---
 
 ## [x] Milestone 4 — Inbound Events & Sub-Frame Reactive Control
 
-> **Goal:** Move beyond frame polling and allow Lua scripts to react at the engine's damage-processing boundary.
-
 ### [x] Gate 4.1 — `OnPreDamage`
 
-Implemented an interception point around the engine's damage-processing path.
+Implemented interception around the engine damage-processing path.
 
 ### [x] Gate 4.2 — Damage Modification Pipeline
 
-Lua can:
-
-- Pass damage through with `nil`
-- Return modified damage
-- Return `0` to cancel damage
-
-This provides the foundation for custom defensive mechanics.
+Lua can pass damage through, modify it, or return `0` to cancel it.
 
 ### [x] Gate 4.3 — `shield_overload` Validation
 
-Validated through the `shield_overload` showcase mod.
+Validated through the `shield_overload` showcase.
 
 **Status:** ✅ VERIFIED
 
@@ -97,49 +69,35 @@ Validated through the `shield_overload` showcase mod.
 
 ## [x] Milestone 5 — Multiplayer Determinism & Benchmarking
 
-> **Goal:** Establish predictable execution under Yuri's Revenge's lockstep multiplayer environment.
-
 ### [x] Gate 5.1 — CnCNet Process Attachment
 
 Implemented process attachment for CnCNet-launched game instances.
 
-The injector can resolve the active game process rather than relying exclusively on the standard executable name.
-
 ### [x] Gate 5.2 — Deterministic Frame-Based Execution
 
-Gameplay callbacks are driven by the game's logical frame rather than render-frame frequency.
-
-This establishes the foundation required for deterministic scripting.
+Gameplay callbacks use the engine's logical frame rather than render FPS.
 
 ### [x] Gate 5.3 — Performance Benchmarking
 
-LuaAPI was benchmarked under real game workloads using hardware-level frame measurements.
-
-The benchmark demonstrated negligible runtime overhead relative to the base game.
+Benchmarked LuaAPI under real game workloads with negligible observed runtime overhead.
 
 ---
 
 # [x] Milestone 6 — Alpha-1: Lifecycle Hardening & Safety
 
-> **Goal:** Make the native scripting layer resilient to destroyed engine objects, session transitions, and common sources of `0xC0000005` crashes.
+> **Goal:** Prevent stale engine pointers and lifecycle-related crashes.
 
 ### [x] Gate 6.1 — Session Lifecycle Management
 
-Implemented session reset handling for:
-
-- Scenario initialization
-- Mission restart
-- Game exit
+Handled scenario initialization, mission restart, and game exit resets.
 
 ### [x] Gate 6.2 — Techno Validation
 
-Implemented validation of engine-backed objects before exposing them to Lua.
-
-The API avoids blindly dereferencing stale `TechnoClass*` pointers.
+Implemented liveness validation before dereferencing exposed engine objects.
 
 ### [x] Gate 6.3 — Economy & HUD APIs
 
-Implemented high-level interfaces for:
+Implemented:
 
 ```lua
 House.GetPlayer()
@@ -150,7 +108,7 @@ Engine.PrintMessage()
 
 ### [x] Gate 6.4 — `bounty_hunter` Validation
 
-Validated the lifecycle and economy APIs through the `bounty_hunter` showcase.
+Validated lifecycle and economy APIs through the `bounty_hunter` showcase.
 
 **Status:** ✅ VERIFIED
 
@@ -158,27 +116,13 @@ Validated the lifecycle and economy APIs through the `bounty_hunter` showcase.
 
 # [x] Milestone 7 — Alpha-2: Spatial Map API & Extended Events
 
-> **Goal:** Replace common trigger-based workarounds with direct Lua access to scenario events and spatial game data.
-
 ### [x] Gate 7.1 — `OnScenarioStart`
 
-Implemented post-scenario initialization callback.
-
-Useful for:
-
-- Initial unit configuration
-- Scenario setup
-- Starting-state modifications
-- Custom visual effects
+Implemented post-scenario initialization callbacks.
 
 ### [x] Gate 7.2 — `OnUnitDestroyed`
 
-Implemented destruction-event handling for gameplay systems such as:
-
-- Bounties
-- Boss phases
-- Custom victory conditions
-- Unit lifecycle tracking
+Implemented destruction-event handling for gameplay systems.
 
 ### [x] Gate 7.3 — Spatial Queries
 
@@ -190,11 +134,9 @@ World.GetUnits()
 World.GetUnitsInRadius()
 ```
 
-These provide direct access to map and unit information from Lua.
-
 ### [x] Gate 7.4 — `damaged_fleet` Validation
 
-Validated scenario-start unit modification and visual damage effects.
+Validated scenario-start modification and visual damage effects.
 
 **Status:** ✅ VERIFIED
 
@@ -202,57 +144,33 @@ Validated scenario-start unit modification and visual damage effects.
 
 # [x] Milestone 8 — Beta: Feature Freeze & Hardening
 
-> **Goal:** Transition from feature development toward a stable SDK suitable for external modders.
-
 ### [x] Gate 8.1 — Long-Run Stress Testing
 
-Performed extended combat testing under heavy AI workloads.
-
-The test verified:
-
-- Runtime stability
-- No observed memory creep
-- No crash during the test session
-- Stable Lua execution under sustained load
+Verified runtime stability and sustained Lua execution under heavy AI workloads.
 
 ### [x] Gate 8.2 — API Reference
 
-Created the primary API reference:
-
-```text
-API.md
-```
-
-The document defines the public Lua-facing API and usage examples.
+Created `API.md` as the primary public API reference.
 
 ### [x] Gate 8.3 — CnCNet Integration
 
-Validated loading LuaAPI within CnCNet-oriented mod environments.
+Validated LuaAPI in CnCNet-oriented mod environments.
 
 ### [x] Gate 8.4 — API Stabilization
 
-Existing public API signatures were stabilized before the production release.
-
-Future changes should preserve compatibility where practical.
+Stabilized public API signatures before production release.
 
 ---
 
 # [x] Milestone 9 — Production Release v1.0
 
-> **Goal:** Package the proven runtime as a usable public release.
-
 ### [x] Gate 9.1 — `v1.0.0` Release
 
-Published:
-
-- LuaAPI runtime
-- Injector / launcher components
-- Example mods
-- Documentation
+Published the runtime, injector/launcher, examples, and documentation.
 
 ### [x] Gate 9.2 — Community Release
 
-Published the project for external C&C modding communities and testers.
+Published LuaAPI for external C&C modding communities and testers.
 
 **Release status:** ✅ `v1.0.0`
 
@@ -262,78 +180,25 @@ Published the project for external C&C modding communities and testers.
 
 > **Status:** 🟡 **CORE COMPLETE**  
 > **Version target:** `v1.1`  
-> **Primary objective:** Break the vanilla single-target / single-turret limitation while keeping the native C++ layer passive and Lua-driven.
-
-Milestone 10 established the core multi-turret architecture.
-
-The remaining presentation-oriented work was intentionally moved to Milestone 11.
-
----
+> **Goal:** Break the vanilla single-target / single-turret limitation while keeping native C++ systems passive and Lua-driven.
 
 ### [x] Gate 10.1 — Sub-Turret Memory Model & Lifecycle
 
-Implemented `SubTurretManager` as a native C++ sidecar system associated with `TechnoClass*`.
+Implemented `SubTurretManager` as a native C++ sidecar associated with `TechnoClass*`.
 
-Tracked state includes:
-
-- Turret identity
-- Facing
-- Target
-- Reload / ROF timer
-- Weapon information
-- Spatial offsets
-
-Lifecycle handling includes:
-
-- Unit removal
-- Target invalidation
-- Deferred cleanup
-- Global target invalidation
+Tracked state includes turret identity, facing, target, reload/ROF timer, weapon information, and spatial offsets. Lifecycle handling includes unit removal, target invalidation, deferred cleanup, and global target invalidation.
 
 **Status:** ✅ VERIFIED
-
----
 
 ### [x] Gate 10.2 — Independent Targeting & Combat Dispatch
 
-Implemented the core infrastructure for:
-
-- Multiple turret slots
-- Independent target references
-- Target-facing calculations
-- ROT stepping
-- Split-target allocation
-- Explicit salvo dispatch
-- Spawned missile interception
-
-The system deliberately separates state management from gameplay decisions.
-
-**C++ manages:**
-
-```text
-State
-Pointers
-Timers
-Safety
-Engine integration
-```
-
-**Lua controls:**
-
-```text
-Target selection
-Target allocation
-Attack decisions
-Salvo execution
-```
+Implemented multiple turret slots, independent targets, target-facing calculations, ROT stepping, split-target allocation, explicit salvo dispatch, and spawned missile interception.
 
 **Status:** ✅ VERIFIED
 
----
-
 ### [x] Gate 10.4 — Lua Multi-Turret API & Showcase
 
-Exposed Lua-facing functionality including:
+Exposed:
 
 ```lua
 unit:AddSubTurret(...)
@@ -342,57 +207,148 @@ unit:SetSplitTargets(...)
 unit:FireSplitSalvo()
 ```
 
-Validated through:
-
-```text
-multi_turret_battleship
-```
-
-The showcase demonstrates multiple turret slots engaging separate targets.
+Validated through `multi_turret_battleship`.
 
 **Status:** ✅ VERIFIED
-
----
 
 ### [x] Gate 10.5 — Spawned Missile Decoupling
 
-Implemented the native interception path required to prevent `SpawnManagerClass` from continuously forcing spawned missiles back onto the parent's target.
+Implemented native interception and locomotor redirection for spawned projectiles so the parent spawn manager cannot continuously force them back onto the parent's target.
 
-The system can detach the spawned missile from the parent spawn manager and redirect its trajectory through the native locomotor interface.
+**Status:** ✅ VERIFIED
 
-This solves the spawned-missile targeting problem addressed by the current implementation.
+### [ ] Gate 10.3 — Voxel Matrix Rendering
+
+**Status:** ⏸️ **DEFERRED TO MILESTONE 12**
+
+Independent visual rotation of voxel sub-turrets remains deferred. The project prioritizes functional multi-turret combat before visual turret rendering.
+
+---
+
+# [x] Milestone 11 — CnCNet Compatibility & Development Tools
+
+> **Status:** ✅ **DONE**  
+> **Goal:** Make LuaAPI reliable in CnCNet-launched environments and provide the tooling needed for continued development.
+
+The engineering work for this milestone is complete. Full two-client online multiplayer validation is not claimed and remains a separate test.
+
+### [x] Gate 11.1 — CnCNet Attach Mode
+
+Implemented attach mode for CnCNet-launched `gamemd-spawn.exe` processes.
+
+**Status:** ✅ VERIFIED
+
+### [x] Gate 11.2 — MinHook Compatibility / Chaining
+
+Implemented compatibility handling for hooks coexisting with Ares, Phobos, and CnCNet infrastructure.
+
+**Status:** ✅ VERIFIED
+
+### [x] Gate 11.3 — Logical-Frame Gating
+
+Gameplay callbacks are synchronized to logical game frames for deterministic execution.
+
+**Status:** ✅ VERIFIED
+
+### [x] Gate 11.4 — `house:SpawnUnit`
+
+Implemented validated unit spawning with placement/pathfinding checks and fallback placement.
+
+**Status:** ✅ VERIFIED
+
+### [x] Gate 11.5 — Debug Input Layer
+
+Implemented development input handling for debug command entry and execution.
+
+**Status:** ✅ VERIFIED
+
+### [x] Gate 11.6 — ModLoader Path Resolution
+
+Fixed mod/script path resolution so the loader resolves paths relative to the LuaAPI/DLL environment instead of the process working directory.
 
 **Status:** ✅ VERIFIED
 
 ---
 
-### [ ] Gate 10.3 — Voxel Matrix Rendering
+# 🔵 Milestone 12 — Unit Control API & Tactical AI
 
-**Status:** ⏸️ **DEFERRED TO MILESTONE 11**
+> **Status:** 🔵 **CURRENT DEVELOPMENT**  
+> **Goal:** Expose safe unit-control primitives and use them to build higher-level tactical behavior without immediately replacing the native AI.
 
-The original goal was to render independently rotating voxel sub-turrets by hooking the engine's drawing path.
+The current development loop is:
 
-This work was intentionally removed from the Milestone 10 completion criteria.
+```text
+Observe game state
+      ↓
+Select unit
+      ↓
+Select objective / threat
+      ↓
+Issue movement or attack command
+      ↓
+Observe result
+      ↓
+Re-evaluate
+```
 
-Milestone 10 therefore focuses on:
+### [x] Gate 12.1 — Unit Control API Vertical Slice
 
-> **Functional multi-turret combat first, visual turret rendering second.**
+Implemented:
 
----
+```lua
+unit:GetMission()
+unit:GetTarget()
+unit:MoveTo(x, y)
+unit:Attack(target)
+unit:Stop()
+unit:IsIdle()
+```
 
-# 🔵 Milestone 11 — Tactical AI, Naval Intelligence & Presentation
+`Attack()` uses the native target-assignment and attack-mission path without relying on the disabled `ActiveClickWith` hook.
 
-> **Status:** 🔵 **CURRENT DEVELOPMENT**
+Added the `patrol_demo` showcase.
 
-Milestone 11 extends the functional combat foundation established in Milestone 10 into higher-level tactical systems and visual presentation.
+**Implementation status:** ✅ COMPLETE  
+**Runtime showcase status:** ⚠️ VERIFICATION PENDING / DEBUGGING
 
----
+The current build exposed Lua-side errors in the first showcase pass. Runtime movement and attack behavior must be re-tested after those errors are corrected.
 
-### [ ] Gate 11.1 — Voxel Matrix Sub-Turret Rendering
+### [ ] Gate 12.2 — Dynamic Objective Defense
 
-Implement independent visual rotation for sub-turret voxel components.
+Create a Lua-driven tactical showcase that detects important objectives, selects nearby friendly units, moves them toward the objective, scans for enemies, attacks them, and continuously re-evaluates the situation.
 
-Target areas include:
+**Target showcase:** `dynamic_objective_defense`
+
+The first version should use the minimum existing API surface. New bindings should only be added when a concrete missing primitive is demonstrated.
+
+### [ ] Gate 12.3 — Miner Self-Preservation / Threat Avoidance
+
+Prevent mining units from repeatedly entering obvious enemy danger zones.
+
+Initial behavior:
+
+- Detect hostile units near the miner's route or destination.
+- Avoid sending replacement miners into recently dangerous areas.
+- Stop or redirect miners when the route becomes unsafe.
+- Avoid repeatedly committing miners after losses without re-evaluating the threat.
+
+This is a concrete survival behavior, not a complete strategic AI.
+
+### [ ] Gate 12.4 — Tactical Threat Model
+
+After basic survival behavior is proven, introduce a lightweight threat model using factors such as enemy presence, distance, friendly strength, objective value, recent losses, and retreat/regroup state.
+
+Do not add weapon-range or damage-estimation bindings until a concrete behavior requires them.
+
+### [ ] Gate 12.5 — Dynamic Salvo Convergence
+
+Reallocate a multi-turret target when an assigned target is destroyed.
+
+### [ ] Gate 12.6 — Voxel Matrix Sub-Turret Rendering
+
+Resume the deferred visual turret work from Milestone 10.
+
+Target areas:
 
 ```text
 TechnoClass::Draw
@@ -400,248 +356,69 @@ VoxelClass::Draw_Matrix
 Matrix3D transformations
 ```
 
-The objective is for each turret's visual facing to correspond to its independent combat target.
+### [ ] Gate 12.7 — Dynamic Build Queue Control
 
----
-
-### [ ] Gate 11.2 — Z-Mode / Planning Command Integration
-
-Investigate interception of the command buffer generated by Planning Mode (`Z` key).
-
-Target behavior:
-
-```text
-Player command
-      ↓
-Planning Mode
-      ↓
-Command buffer
-      ↓
-LuaAPI interception
-      ↓
-SetSplitTargets()
-      ↓
-Multi-turret execution
-```
-
-**Status:** UNVERIFIED / RESEARCH REQUIRED
-
-No current implementation or verified hook for `PlanningModeClass` is claimed here.
-
----
-
-### [ ] Gate 11.3 — Dynamic Salvo Convergence
-
-Implement fallback target allocation when one of several assigned targets is destroyed.
-
-Example:
-
-```text
-Turret 1 → Target A 💥 DESTROYED
-Turret 2 → Target B
-Turret 3 → Target C
-             ↓
-     Reallocate Turret 1
-             ↓
-        Target B / C
-```
-
----
-
-### [ ] Gate 11.4 — Naval Cell Intelligence
-
-Investigate direct `CellClass` access for:
-
-- Water detection
-- Land detection
-- Island identification
-- Naval movement analysis
-- Coastal area classification
-
-This provides the foundation for higher-level naval AI.
-
----
-
-### [ ] Gate 11.5 — Dynamic Build Queue Control
-
-Expose safe Lua control over production decisions.
-
-Potential applications include:
-
-- Naval production priorities
-- Dynamic AI reinforcement
-- Threat-based production
-- Scenario-specific build logic
-- Custom tactical AI
-
----
-
-### [ ] Gate 11.6 — Tactical AI Prototype
-
-Build the first Lua-driven tactical AI layer using the existing engine APIs.
-
-Potential architecture:
-
-```text
-                 ┌──────────────┐
-                 │  Game State  │
-                 └──────┬───────┘
-                        ↓
-              ┌──────────────────┐
-              │ Tactical Analysis │
-              └────────┬─────────┘
-                       ↓
-              ┌──────────────────┐
-              │ Decision System  │
-              └────────┬─────────┘
-                       ↓
-              ┌──────────────────┐
-              │ Lua Gameplay API │
-              └──────────────────┘
-```
-
-The objective is not to replace the vanilla AI immediately, but to establish a programmable tactical layer on top of the existing engine.
+Expose safe Lua control over production decisions for reinforcement, naval production, threat-based production, and custom tactical AI.
 
 ---
 
 # 🧭 Architectural Principles
 
-These principles should remain stable across future milestones.
-
 ### 1. 🧠 C++ Manages State, Lua Controls Gameplay
 
-C++ should provide:
-
-- Safe engine access
-- Native state management
-- Pointer lifecycle handling
-- Timers
-- Performance-critical integration
-
-Lua should provide:
-
-- Gameplay rules
-- Target selection
-- Tactical decisions
-- Mod-specific behavior
-
----
+C++ provides safe engine access, native state, lifecycle handling, timers, and performance-critical integration. Lua provides gameplay rules, target selection, tactical decisions, and mod-specific behavior.
 
 ### 2. 🛡️ Never Trust Persistent Engine Pointers
 
-An engine pointer obtained during one frame may become invalid later.
-
-Objects can disappear because of:
-
-- Destruction
-- Scenario transitions
-- Savegame loading
-- Engine cleanup
-- Unit removal
-
-Native code must validate engine-backed objects before dereferencing them.
-
----
+Engine-backed pointers can become invalid after destruction, scenario transitions, savegame loading, cleanup, or unit removal. Native code must validate them before dereferencing.
 
 ### 3. 🧹 Use Deferred Cleanup
 
-Do not erase entries from a container while iterating through that same container.
-
-Preferred pattern:
-
-```text
-Update
-  ↓
-Detect invalid objects
-  ↓
-Queue removal
-  ↓
-Finish iteration
-  ↓
-Process removals
-```
-
----
+Detect invalid objects first, queue removals, finish iteration, then process removals.
 
 ### 4. 💀 Invalidate Destroyed Targets Globally
 
-Any subsystem maintaining target references must release references to destroyed objects.
-
-This is especially important for multi-turret systems where several independent turrets may reference the same target.
-
----
+Every subsystem holding target references must release them when engine objects are destroyed.
 
 ### 5. 💾 Treat Savegames as a Separate Lifecycle
 
-`OnScenarioStart()` is not sufficient for all initialization requirements.
-
-Runtime systems must account for:
-
-```text
-New scenario
-    +
-Loaded savegame
-    +
-Newly spawned units
-    +
-Existing units
-```
-
----
+Runtime systems must account for new scenarios, loaded savegames, newly spawned units, and existing units.
 
 ### 6. 🔢 Use Appropriate Integer Widths
 
-RA2 coordinates use leptons:
-
-```text
-1 cell = 256 leptons
-```
-
-Squared distance calculations can exceed signed 32-bit integer limits.
-
-Use 64-bit arithmetic where required.
-
----
+RA2 uses leptons (`1 cell = 256 leptons`). Squared distance calculations may exceed signed 32-bit limits; use 64-bit arithmetic where required.
 
 ### 7. ⏱️ Use Logical Game Frames
 
-Gameplay callbacks should be synchronized with the engine's logical frame progression rather than render FPS.
-
-This prevents high-refresh or variable-FPS environments from unintentionally executing gameplay logic at different rates.
-
----
+Gameplay callbacks should use logical frame progression rather than render FPS.
 
 ### 8. 🔗 Hook Conflicts Are Not Automatically Fatal
 
-A function may already be hooked by another component such as Ares, Phobos, or CnCNet infrastructure.
-
-Therefore:
-
-```text
-Signature mismatch
-        ≠
-Injection failure
-```
-
-Hook state must be inspected before treating a mismatch as a fatal condition.
-
----
+A signature mismatch or existing hook is not automatically an injection failure. Hook state must be inspected in context.
 
 ### 9. 🎯 C++ Combat Systems Should Remain Passive
 
-The multi-turret system established an important architectural boundary.
+Native systems maintain state and expose safe primitives. Strategic decisions such as who to attack and when to attack belong to Lua or explicit game commands.
 
-The native manager should maintain state and provide safe primitives.
+### 10. 🧪 No API Without a Demonstrated Consumer
 
-It should not independently decide:
+Preferred progression:
 
 ```text
-Who to attack
-When to attack
-Which target is strategically important
+Gameplay requirement
+        ↓
+Try existing API
+        ↓
+Identify missing primitive
+        ↓
+Add minimal binding
+        ↓
+Build showcase
+        ↓
+Verify in game
 ```
 
-Those decisions belong to Lua or explicit game commands.
+This keeps the native API surface small and prevents speculative engine exposure.
 
 ---
 
@@ -655,16 +432,19 @@ Milestone 10
 ██████████████████░░  Core complete 🟡
 
 Milestone 11
-████░░░░░░░░░░░░░░░░  Current development 🔵
+████████████████████ 100% ✅
+
+Milestone 12
+███░░░░░░░░░░░░░░░░░  Current development 🔵
 ```
 
-Milestone 11 is intentionally open-ended. Individual gates should only be marked complete after implementation and verification against the current build.
+Milestone 12 is intentionally iterative. Individual gates should only be marked verified after implementation and runtime testing against the current build.
 
 ---
 
 # 🎯 Roadmap Philosophy
 
-LuaAPI should evolve in the following order:
+LuaAPI should evolve in this order:
 
 ```text
 Reverse Engineering
