@@ -318,12 +318,17 @@ Added the `patrol_demo` showcase: anchors a combat unit (skips MCV), patrols bet
 Created `dynamic_objective_defense`, a public showcase mod that:
 
 1. Scans `World.GetBuildings()` for an oil derrick (`CAOILD`).
-2. Picks the player's first combat unit (skips MCV) or spawns an LTNK near the derrick via `house:SpawnUnit`.
-3. Patrols two points on either side of the derrick (offset ±6 cells).
-4. When an enemy enters the defense radius (15 cells), issues `unit:Attack` with a 100-frame cooldown. Ignores neutrals and civilians.
-5. After the target dies, calls `unit:Stop` and resumes patrol.
+2. Uses `World.GetSelectedUnits` together with `Input.WasKeyPressed` to accept a manually selected defender when the player presses Numpad1.
+3. If no suitable selected unit is available, spawns an LTNK near the derrick via `house:SpawnUnit`.
+4. Patrols two points on either side of the derrick (offset ±6 cells).
+5. When an enemy enters the defense radius (15 cells), issues `unit:Attack` with a 100-frame cooldown. Ignores neutrals and civilians.
+6. After the target dies, calls `unit:Stop` and resumes patrol.
+
+The `Input.WasKeyPressed` and `World.GetSelectedUnits` bindings were added because the showcase had a concrete runtime consumer for them.
 
 All decisions run in `Update()` each logic frame. No event hooks.
+
+The complete detect → attack → target eliminated → stop → return-to-patrol cycle was verified in live gameplay against the current LuaAPI build.
 
 Full walkthrough: `docs/SHOWCASE_DYNAMIC_DEFENSE.md`.
 
