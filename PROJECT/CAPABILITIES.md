@@ -36,7 +36,7 @@ It focuses on practical examples rather than API definitions:
 
 ### 🎯 Outcome
 
-LuaAPI can intercept incoming damage **before the engine applies it to the target**.
+LuaAPI exposes `OnPreDamage` at the damage-processing boundary, allowing a mod to modify or cancel incoming damage before the final damage is applied to the target.**.
 
 This makes it possible to implement:
 
