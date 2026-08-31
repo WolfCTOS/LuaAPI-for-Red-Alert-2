@@ -1,160 +1,669 @@
-# 📚 LuaAPI for Red Alert 2: API Reference Manual
+# LuaAPI for Red Alert 2: API Reference Manual
 
 > **Version:** 1.1.0 (Milestone 11)
-> **Target:** `gamemd.exe` (Yuri's Revenge 1.001)
+> **Target:** `gamemd.exe` — Yuri's Revenge 1.001
 > **Last Updated:** 2026-08-31
-> **Safety:** Protected via RTTI (`WhatAmI()`) validation & SEH against `0xC0000005`.
+> **Safety:** Protected by RTTI (`WhatAmI()`) validation and SEH against `0xC0000005`.
 
 ---
 
-## 🏗️ API Architecture
+## API Architecture
 
-LuaAPI uses a **namespace-based architecture** for clean separation of concerns:
+LuaAPI uses a namespace-based architecture for clean separation of concerns:
 
-- **`House`** — Player and house management
-- **`World`** — Global queries (units, buildings, spatial)
-- **`Engine`** — Game engine functions (messages, system)
-- **`Game`** — Game state and frame information
-- **`AI`** — AI control functions (planned)
+* **`House`** — Player and house management
+* **`World`** — Global queries (units, buildings, spatial)
+* **`Engine`** — Game engine functions (messages, system)
+* **`Game`** — Game state and frame information
+* **`AI`** — AI control functions (planned)
 
-All methods include **automatic pointer validation** and **SEH protection** against access violations.
-
----
-
-## 🛡️ Security Architecture & Pointer Safety
-
-In bare C++ modding, referencing a destroyed or deallocated unit causes `0xC0000005` (Access Violation) crashes. LuaAPI solves this through defensive boundary validation:
-
-- **`ValidateTechno(TechnoClass* ptr)`**: Every binding checks `nullptr`, verifies object RTTI type via `ptr->WhatAmI()`, and validates lifecycle flags (`IsAlive`, `Health > 0`).
-- **Graceful Failure**: If a script references a dead unit or invalid pointer, the function returns `nil` and writes a warning to `LuaAPI.log` without crashing the game.
-- **Session Lifecycle (`ResetSession`)**: All Lua callback references and VM states are cleanly reset on scenario load, restart, and exit.
+All exposed engine objects are validated before use, with native exception protection applied where supported.
 
 ---
 
-## 🎖️ Unit Methods (TechnoClass)
+## Security Architecture & Pointer Safety
 
-Safe object methods called on valid unit/building pointers:
+In bare C++ modding, referencing a destroyed or invalid game object can cause `0xC0000005` (Access Violation) crashes.
 
-### Basic Properties
-- **`unit:GetOwner()`** → `HouseClass*` (returns the owner house)
-- **`unit:GetTypeName()`** → `string` (returns INI type identifier, e.g., `"HTNK"`, `"E1"`, `"DRED"`)
-- **`unit:GetHealth()`** → `number` (returns current HP)
-- **`unit:GetMaxHealth()`** → `number` (returns maximum HP)
-- **`unit:IsAlive()`** → `boolean` (checks if unit is alive and valid)
-- **`unit:GetPosition()`** → `{x=number, y=number}` (returns cell coordinates)
-- **`unit:GetDistanceTo(otherUnit)`** → `number` (Euclidean distance in cells)
+LuaAPI uses defensive validation at the C++/Lua boundary.
 
-### Combat State
-- **`unit:IsAttacking()`** → `boolean` (true if unit is in Attack mission)
-- **`unit:TakeDamage(amount, warhead)`** → `boolean` (applies damage with optional warhead)
-- **`unit:Disable(frames)`** → `boolean` (temporarily disables unit)
+### `ValidateTechno(TechnoClass* ptr)`
 
-### Sub-Turret API
-- **`unit:AddSubTurret(section, offX, offY, offZ, rot, rof)`** → `boolean`
-  - Adds a sub-turret to the unit with specified voxel section and offset
-  - `section`: Voxel section index (0-7)
-  - `offX, offY, offZ`: 3D offset in leptons from unit center
-  - `rot`: Rotation speed (0-255, 0 = instant)
-  - `rof`: Rate of fire in frames (e.g., 90 = 3 seconds)
+Techno object bindings validate:
 
-- **`unit:SetSplitTargets(targets)`** → `boolean`
-  - Assigns targets to sub-turrets from a table of TechnoClass pointers
-  - Turret 0 locks onto player's native target, remaining turrets get autonomous targets
+* `nullptr`
+* Engine RTTI type through `WhatAmI()`
+* Object lifecycle state
+* Health/liveness where applicable
 
-- **`unit:FireSplitSalvo()`** → `boolean`
-  - Fires all sub-turrets at their assigned targets
-  - Spawns tracer bullets with appropriate warheads
+Invalid objects are rejected before unsafe access.
 
-### Particle Effects
-- **`unit:SetHealthRatio(ratio)`** → `boolean` (sets unit health, e.g., `0.35` for 35% HP)
-- **`unit:AttachParticleSystem(sysName)`** → `boolean` (attaches `"DamageSmokeSys"`, `"DamageFireSys"`, etc.)
+### Graceful Failure
+
+When a script references an invalid or destroyed object, the binding fails safely instead of dereferencing the pointer.
+
+Depending on the operation, the binding returns `nil` or `false` and may write diagnostic information to `LuaAPI.log`.
+
+### Session Lifecycle
+
+LuaAPI resets Lua callback references and VM/session state when a scenario is loaded, restarted, or exited.
+
+This prevents callbacks and Lua state from surviving across incompatible game sessions.
 
 ---
 
-## 💰 House Methods (HouseClass)
+# Unit API
 
-### Static Functions
-- **`House.GetPlayer()`** → `HouseClass*` (returns the local human player)
-- **`House.GetCount()`** → `number` (returns total number of houses)
-- **`House.GetByIndex(index)`** → `HouseClass*` (returns house at specified index)
+The Unit API operates on `TechnoClass` objects, including units and buildings exposed by the engine.
 
-### Instance Methods
-- **`house:GetName()`** → `string` (returns house name, e.g., `"Allies"`, `"Soviets"`)
-- **`house:IsHuman()`** → `boolean` (true if house is human-controlled)
-- **`house:IsAlliedWith(otherHouse)`** → `boolean` (checks alliance status)
-- **`house:GetCredits()`** → `number` (reads player credits balance)
-- **`house:AddCredits(amount)`** → `boolean` (safely adds or subtracts credits)
-- **`house:GetPowerOutput()`** → `number` (returns total power production)
-- **`house:GetPowerDrain()`** → `number` (returns total power consumption)
+## Basic Properties
 
-### Development Tools
-- **`house:SpawnUnit(typeId, count, x, y, facing, force, action)`** → `number`
-  - Spawns units at specified coordinates with pathfinding validation
-  - **Parameters:**
-    - `typeId`: Unit type identifier (e.g., `"APOC"`, `"LTNK"`, `"E1"`)
-    - `count`: Number of units to spawn (default: 1)
-    - `x, y`: Cell coordinates for spawn location
-    - `facing`: Direction (0-255, default: 0 = North)
-    - `force`: If true, spawn without pathfinding checks (default: false)
-    - `action`: Optional action string (e.g., `"hunt"` to queue Hunt mission)
-  - **Returns:** Count of successfully created units
-  - **Behavior:**
-    - If target cell is occupied and `force=false`, searches in spiral pattern (radius 3) for free cell
-    - If coordinates are outside map bounds (0-511), unit is skipped with warning
-    - If `action="hunt"`, queues Hunt mission on each spawned unit
+### `unit:GetOwner()`
 
----
-
-## 🗺️ World Queries
-
-### Global Collections
-- **`World.GetBuildings()`** → `table` (array of all buildings in the world)
-- **`World.GetUnits()`** → `table` (array of all units in the world)
-- **`World.GetAllUnits()`** → `table` (array of all units, including infantry)
-
-### Spatial Queries
-- **`World.GetUnitsInRadius(x, y, radius)`** → `table`
-  - Returns array of units within specified radius (in cells) from coordinates
-  - Uses Euclidean distance calculation
-  - Filters out dead/invalid units automatically
-
-### Map Information
-- **`World.GetWaypoint(id)`** → `{x=number, y=number}` or `nil`
-  - Gets map coordinates for FinalAlert2 waypoint (0-99)
-  - Returns `nil` if waypoint doesn't exist
-
----
-
-## 💬 Engine Functions
-
-### Messages & HUD
-- **`Engine.PrintMessage(text, colorIndex)`** → `boolean`
-  - Prints text directly to the standard in-game RA2 message ticker
-  - `colorIndex`: 0=white, 1=yellow, 2=red, 3=green, 4=blue
-
----
-
-## 🎮 Game State
-
-- **`Game.GetFrame()`** → `number` (returns current logical frame from `Unsorted::CurrentFrame`)
-- **`Game.IsInMatch()`** → `boolean` (true if match is active, false in menus/loading)
-
----
-
-## 📡 Event Bus & Callbacks
-
-Register custom script logic to reactive engine events.
-
-### Event Registration
-Events are registered in your mod's `main.lua`:
-
+```lua
+local house = unit:GetOwner()
 ```
-lua
+
+**Returns:** `HouseClass*` or `nil`
+
+Returns the house that owns the unit.
+
+---
+
+### `unit:GetTypeName()`
+
+```lua
+local typeName = unit:GetTypeName()
+```
+
+**Returns:** `string` or `nil`
+
+Returns the unit's INI type identifier.
+
+Examples:
+
+```text
+HTNK
+E1
+DRED
+APOC
+```
+
+---
+
+### `unit:GetHealth()`
+
+```lua
+local hp = unit:GetHealth()
+```
+
+**Returns:** `number`
+
+Returns the unit's current health.
+
+---
+
+### `unit:GetMaxHealth()`
+
+```lua
+local maxHp = unit:GetMaxHealth()
+```
+
+**Returns:** `number`
+
+Returns the unit's maximum health.
+
+---
+
+### `unit:IsAlive()`
+
+```lua
+if unit:IsAlive() then
+    -- Unit is alive and valid
+end
+```
+
+**Returns:** `boolean`
+
+Checks whether the unit is currently valid and alive.
+
+---
+
+### `unit:GetPosition()`
+
+```lua
+local pos = unit:GetPosition()
+
+print(pos.x, pos.y)
+```
+
+**Returns:** `{ x = number, y = number }` or `nil`
+
+Returns the unit's map-cell coordinates.
+
+---
+
+### `unit:GetDistanceTo(otherUnit)`
+
+```lua
+local distance = unit:GetDistanceTo(otherUnit)
+```
+
+**Returns:** `number` or `nil`
+
+Returns the Euclidean distance between two units in map cells.
+
+---
+
+# Combat API
+
+### `unit:IsAttacking()`
+
+```lua
+if unit:IsAttacking() then
+    -- Unit is currently attacking
+end
+```
+
+**Returns:** `boolean`
+
+Returns `true` when the unit is currently operating under an Attack mission.
+
+---
+
+### `unit:TakeDamage(amount, warhead)`
+
+```lua
+unit:TakeDamage(100, "AP")
+```
+
+**Returns:** `boolean`
+
+Applies damage to the unit.
+
+`warhead` specifies the warhead used by the damage operation.
+
+---
+
+### `unit:Disable(frames)`
+
+```lua
+unit:Disable(90)
+```
+
+**Returns:** `boolean`
+
+Temporarily disables the unit for the specified number of logical game frames.
+
+---
+
+# Sub-Turret API
+
+LuaAPI provides a sub-turret system for attaching additional firing points and target assignments to existing `TechnoClass` objects.
+
+## `unit:AddSubTurret(section, offX, offY, offZ, rot, rof)`
+
+```lua
+unit:AddSubTurret(section, offX, offY, offZ, rot, rof)
+```
+
+**Returns:** `boolean`
+
+Adds a sub-turret to the unit.
+
+### Parameters
+
+| Parameter | Type     | Description                    |
+| --------- | -------- | ------------------------------ |
+| `section` | `number` | Voxel section index (`0–7`)    |
+| `offX`    | `number` | X offset from the unit center  |
+| `offY`    | `number` | Y offset from the unit center  |
+| `offZ`    | `number` | Z offset from the unit center  |
+| `rot`     | `number` | Rotation speed (`0–255`)       |
+| `rof`     | `number` | Rate of fire in logical frames |
+
+Offsets are specified in engine leptons.
+
+Example:
+
+```lua
+unit:AddSubTurret(1, 40, 0, 15, 12, 90)
+```
+
+---
+
+## `unit:SetSplitTargets(targets)`
+
+```lua
+unit:SetSplitTargets(targets)
+```
+
+**Returns:** `boolean`
+
+Assigns targets to the unit's sub-turrets from a Lua table containing valid `TechnoClass` objects.
+
+The targeting system uses the unit's native target for turret `0` when available. Remaining sub-turrets can receive independently selected targets.
+
+---
+
+## `unit:FireSplitSalvo()`
+
+```lua
+unit:FireSplitSalvo()
+```
+
+**Returns:** `boolean`
+
+Fires the configured sub-turrets at their assigned targets.
+
+The split-salvo firing path creates tracer projectiles and applies the configured projectile/warhead behavior.
+
+---
+
+# Health and Particle Effects
+
+### `unit:SetHealthRatio(ratio)`
+
+```lua
+unit:SetHealthRatio(0.35)
+```
+
+**Returns:** `boolean`
+
+Sets the unit's health as a ratio of its maximum health.
+
+For example:
+
+```lua
+unit:SetHealthRatio(0.35)
+```
+
+sets the unit to approximately 35% of its maximum health.
+
+---
+
+### `unit:AttachParticleSystem(sysName)`
+
+```lua
+unit:AttachParticleSystem("DamageSmokeSys")
+```
+
+**Returns:** `boolean`
+
+Attaches a particle system to the unit.
+
+Examples:
+
+```text
+DamageSmokeSys
+DamageFireSys
+```
+
+---
+
+# House API
+
+The `House` namespace provides access to player and house-level information.
+
+## Static Functions
+
+### `House.GetPlayer()`
+
+```lua
+local player = House.GetPlayer()
+```
+
+**Returns:** `HouseClass*` or `nil`
+
+Returns the local human player's house.
+
+---
+
+### `House.GetCount()`
+
+```lua
+local count = House.GetCount()
+```
+
+**Returns:** `number`
+
+Returns the number of houses currently available to the game engine.
+
+---
+
+### `House.GetByIndex(index)`
+
+```lua
+local house = House.GetByIndex(index)
+```
+
+**Returns:** `HouseClass*` or `nil`
+
+Returns the house at the specified engine index.
+
+---
+
+## Instance Methods
+
+### `house:GetName()`
+
+```lua
+local name = house:GetName()
+```
+
+**Returns:** `string`
+
+Returns the house name.
+
+Examples:
+
+```text
+Allies
+Soviets
+```
+
+---
+
+### `house:IsHuman()`
+
+```lua
+if house:IsHuman() then
+    -- Human-controlled house
+end
+```
+
+**Returns:** `boolean`
+
+Checks whether the house is human-controlled.
+
+---
+
+### `house:IsAlliedWith(otherHouse)`
+
+```lua
+if house:IsAlliedWith(otherHouse) then
+    -- Houses are allied
+end
+```
+
+**Returns:** `boolean`
+
+Checks the alliance relationship between two houses.
+
+---
+
+### `house:GetCredits()`
+
+```lua
+local credits = house:GetCredits()
+```
+
+**Returns:** `number`
+
+Returns the current credit balance.
+
+---
+
+### `house:AddCredits(amount)`
+
+```lua
+house:AddCredits(1000)
+```
+
+**Returns:** `boolean`
+
+Adds or subtracts credits from the house.
+
+Negative values can be used to subtract credits.
+
+---
+
+### `house:GetPowerOutput()`
+
+```lua
+local output = house:GetPowerOutput()
+```
+
+**Returns:** `number`
+
+Returns the house's total power production.
+
+---
+
+### `house:GetPowerDrain()`
+
+```lua
+local drain = house:GetPowerDrain()
+```
+
+**Returns:** `number`
+
+Returns the house's total power consumption.
+
+---
+
+# Development Tools
+
+## `house:SpawnUnit(typeId, count, x, y, facing, force, action)`
+
+```lua
+local spawned = house:SpawnUnit(
+    typeId,
+    count,
+    x,
+    y,
+    facing,
+    force,
+    action
+)
+```
+
+**Returns:** `number`
+
+Spawns one or more units for the specified house.
+
+### Parameters
+
+| Parameter | Type      | Description                                         |
+| --------- | --------- | --------------------------------------------------- |
+| `typeId`  | `string`  | Unit type identifier, e.g. `"APOC"`                 |
+| `count`   | `number`  | Number of units to spawn                            |
+| `x`       | `number`  | X map-cell coordinate                               |
+| `y`       | `number`  | Y map-cell coordinate                               |
+| `facing`  | `number`  | Facing direction (`0–255`)                          |
+| `force`   | `boolean` | If `true`, bypasses normal spawn/pathfinding checks |
+| `action`  | `string`  | Optional action, e.g. `"hunt"`                      |
+
+Example:
+
+```lua
+local spawned = player:SpawnUnit(
+    "APOC",
+    5,
+    100,
+    100,
+    0,
+    false,
+    "hunt"
+)
+```
+
+### Spawn Behavior
+
+When `force` is `false`:
+
+* The requested cell is checked for occupancy.
+* If occupied, the spawn system searches nearby cells using a spiral pattern.
+* The current search radius is 3 cells.
+
+If the requested coordinates are outside the supported map bounds, the spawn request is rejected.
+
+If:
+
+```lua
+action == "hunt"
+```
+
+the spawned units receive a Hunt mission.
+
+The function returns the number of units successfully created.
+
+---
+
+# World API
+
+## Global Collections
+
+### `World.GetBuildings()`
+
+```lua
+local buildings = World.GetBuildings()
+```
+
+**Returns:** `table`
+
+Returns an array of building objects currently available to the script.
+
+---
+
+### `World.GetUnits()`
+
+```lua
+local units = World.GetUnits()
+```
+
+**Returns:** `table`
+
+Returns an array of unit objects.
+
+---
+
+### `World.GetAllUnits()`
+
+```lua
+local units = World.GetAllUnits()
+```
+
+**Returns:** `table`
+
+Returns the complete unit collection, including infantry.
+
+---
+
+# Spatial Queries
+
+## `World.GetUnitsInRadius(x, y, radius)`
+
+```lua
+local units = World.GetUnitsInRadius(x, y, 15)
+```
+
+**Returns:** `table`
+
+Returns valid units within the specified radius.
+
+Parameters:
+
+* `x` — X map-cell coordinate.
+* `y` — Y map-cell coordinate.
+* `radius` — Radius in map cells.
+
+Distance is calculated using Euclidean distance.
+
+Invalid or dead objects are filtered from the result.
+
+---
+
+# Map Information
+
+## `World.GetWaypoint(id)`
+
+```lua
+local position = World.GetWaypoint(0)
+
+if position then
+    print(position.x, position.y)
+end
+```
+
+**Returns:** `{ x = number, y = number }` or `nil`
+
+Returns the map coordinates associated with a FinalAlert2 waypoint.
+
+Supported waypoint IDs are `0–99`.
+
+Returns `nil` if the requested waypoint does not exist.
+
+---
+
+# Engine API
+
+## Messages and HUD
+
+### `Engine.PrintMessage(text, colorIndex)`
+
+```lua
+Engine.PrintMessage("Hello, commander!", 0)
+```
+
+**Returns:** `boolean`
+
+Prints a message through the standard Red Alert 2 in-game message system.
+
+### Color Indices
+
+| Index | Color  |
+| ----: | ------ |
+|   `0` | White  |
+|   `1` | Yellow |
+|   `2` | Red    |
+|   `3` | Green  |
+|   `4` | Blue   |
+
+---
+
+# Game API
+
+### `Game.GetFrame()`
+
+```lua
+local frame = Game.GetFrame()
+```
+
+**Returns:** `number`
+
+Returns the current logical game frame from `Unsorted::CurrentFrame`.
+
+---
+
+### `Game.IsInMatch()`
+
+```lua
+if Game.IsInMatch() then
+    -- Gameplay is active
+end
+```
+
+**Returns:** `boolean`
+
+Returns whether an active match is currently running.
+
+---
+
+# Event Bus and Callbacks
+
+LuaAPI exposes script callbacks for selected engine events.
+
+Callbacks are implemented by returning a table from a mod's `main.lua`.
+
+## Basic Mod Structure
+
+```lua
 local MyMod = {}
 
 function MyMod.OnPreDamage(attacker, target, damage, dmgType, frame, subc)
     -- Your logic here
-    return damage -- or modified damage, or nil
+    return damage
 end
 
 function MyMod.OnScenarioStart()
@@ -166,109 +675,302 @@ function MyMod.OnUnitDestroyed(victim, killer)
 end
 
 function MyMod.OnDebugCommand(text)
-    -- Called when user enters command via debug console (Backspace/Enter)
+    -- Debug console command
 end
 
 function MyMod.Update(frame)
-    -- Called every logical frame (gated by CurrentFrame)
+    -- Per-frame logic
 end
 
 return MyMod
-``` 
+```
 
-Supported Events
-OnPreDamage(attacker, target, damage, dmgType, frame, subc)
-Sub-frame damage interception
-Arguments:
-attacker: TechnoClass* or nil (attacker unit, may be nil for environmental damage)
-target: TechnoClass* (unit being damaged)
-damage: number (incoming damage amount)
-dmgType: string (warhead type)
-frame: number (current frame)
-subc: number (sub-cell index)
-Return:
-number — sets modified damage (e.g., damage * 0.5)
-0 — completely cancels incoming damage (full immunity)
-nil — passes original damage through untouched
-OnScenarioStart()
-First-frame match initialization
-Arguments: None
-Trigger: Fires on frame 1 immediately after map load
-Use case: Starting fleet damage, army setup, initial state
-OnUnitDestroyed(victim, killer)
-Unit death event
-Arguments:
-victim: TechnoClass* (unit that died)
-killer: TechnoClass* or nil (unit that killed victim, may be nil)
-Trigger: Fires when a unit or building is destroyed
-Use case: Bounties, mission triggers, death effects
-OnDebugCommand(text)
-Debug console input
-Arguments:
-text: string (command entered by user)
-Trigger: Called when user presses Enter in debug input mode (Backspace toggles mode)
-Use case: Dev tools, rapid testing, AI spawning
-Update(frame)
-Per-frame update
-Arguments:
-frame: number (current logical frame from Unsorted::CurrentFrame)
-Trigger: Called every logical frame (gated to prevent multiplayer desync)
-Use case: Continuous logic, polling, state management
-🌐 CnCNet Determinism & Multiplayer Guidelines
-Critical Rules
-⚠️ Never use os.time() or os.clock() in gameplay logic to prevent Out-of-Sync (OOS) errors.
-Always seed random sequences from the frame counter: 
+---
+
+# Supported Events
+
+## `OnPreDamage(attacker, target, damage, dmgType, frame, subc)`
+
+Intercepts damage before it is applied.
+
+### Arguments
+
+| Argument   | Type                   | Description                    |
+| ---------- | ---------------------- | ------------------------------ |
+| `attacker` | `TechnoClass*` / `nil` | Attacking object, if available |
+| `target`   | `TechnoClass*`         | Object receiving damage        |
+| `damage`   | `number`               | Incoming damage amount         |
+| `dmgType`  | `string`               | Warhead/damage type            |
+| `frame`    | `number`               | Current logical frame          |
+| `subc`     | `number`               | Sub-cell index                 |
+
+### Return Values
+
+Return a modified damage value:
+
+```lua
+return damage * 0.5
+```
+
+Return `0` to cancel the incoming damage:
+
+```lua
+return 0
+```
+
+Return `nil` to leave the original damage unchanged:
+
+```lua
+return nil
+```
+
+---
+
+## `OnScenarioStart()`
+
+Called when a new scenario or match session starts.
+
+### Arguments
+
+None.
+
+### Use Cases
+
+* Initialize mod state.
+* Configure units.
+* Apply initial effects.
+* Initialize custom gameplay systems.
+
+---
+
+## `OnUnitDestroyed(victim, killer)`
+
+Called when a unit or building is destroyed.
+
+### Arguments
+
+| Argument | Type                   | Description                                          |
+| -------- | ---------------------- | ---------------------------------------------------- |
+| `victim` | `TechnoClass*`         | Destroyed object                                     |
+| `killer` | `TechnoClass*` / `nil` | Object responsible for the destruction, if available |
+
+### Use Cases
+
+* Bounty systems.
+* Death-triggered effects.
+* Mission triggers.
+* Statistics.
+
+---
+
+## `OnDebugCommand(text)`
+
+Called when the debug input system submits a command.
+
+### Arguments
+
+```text
+text: string
+```
+
+Contains the command entered by the user.
+
+### Use Cases
+
+* Development tools.
+* Rapid testing.
+* Debug spawning.
+* Runtime diagnostics.
+
+---
+
+## `Update(frame)`
+
+Called once per logical game frame while gameplay is active.
+
+### Arguments
+
+```text
+frame: number
+```
+
+The current logical frame from `Unsorted::CurrentFrame`.
+
+### Use Cases
+
+* Continuous gameplay logic.
+* Polling.
+* State management.
+* Custom AI systems.
+
+LuaAPI gates this callback against the logical game frame rather than the render frame.
+
+---
+
+# CnCNet Determinism and Multiplayer
+
+Lua gameplay code must remain deterministic across all clients.
+
+## Critical Rules
+
+Do not use:
+
+```lua
+os.time()
+os.clock()
+```
+
+for gameplay decisions.
+
+These values can differ between clients and may contribute to Out-of-Sync (OOS) conditions.
+
+When deterministic randomness is required, derive the random sequence from synchronized game state.
+
+Example:
+
+```lua
 math.randomseed(frame + 12345)
+
 local roll = math.random(1, 100)
+```
 
-Logic-Frame Gating
-LuaAPI automatically gates Update() calls to logical frames (Unsorted::CurrentFrame), not render frames. This prevents multiplayer desync when clients have different FPS.
-What this means for you:
-Your Update() is called exactly once per logical frame on all clients
-You don't need to implement frame gating yourself
-Focus on game logic, not frame synchronization
-Multiplayer Testing
+The important requirement is that all clients execute the same logic with the same inputs.
+
+---
+
+## Logical Frame Gating
+
+LuaAPI dispatches `Update()` according to the logical game frame rather than the render frame.
+
+This prevents differences in rendering FPS from causing additional `Update()` executions.
+
+Your `Update()` callback is therefore driven by synchronized logical game time.
+
+Scripts should base gameplay timing on the supplied `frame` value.
+
+---
+
+# Multiplayer Testing
+
 To test LuaAPI in CnCNet multiplayer:
-Both players must have identical LuaAPI.dll and scripts/ directory
-Both players must have the same mods enabled in scripts/active_mods.txt
-Launch via CnCNet client, then run injector.exe --attach on each client
-Verify no OOS errors during gameplay
-🔌 CnCNet Integration Guide
-Attach Mode (Recommended)
-To use LuaAPI with CnCNet:
-Place LuaAPI.dll, injector.exe, and scripts/ in the game root directory
-Launch game via CnCNet client (which spawns gamemd-spawn.exe)
-Run injector.exe --attach from game directory
-Injector polls for gamemd-spawn.exe, waits for Ares/Phobos injection, then injects LuaAPI
-Headless Mode
-For automated testing or modpack integration: 
-injector.exe --withcncnet 
 
-The injector runs headlessly in the background, attaches to gamemd-spawn.exe upon spawn, and auto-exits when the game closes.
-ModLoader Configuration
-Mods are enabled via scripts/active_mods.txt:
+1. Both players must use identical `LuaAPI.dll` binaries.
+2. Both players must use identical `scripts/` contents.
+3. Both players must enable the same mods in `scripts/active_mods.txt`.
+4. Launch the game through the CnCNet client.
+5. Attach LuaAPI to the appropriate game process.
+6. Verify that the match completes without OOS errors.
+
+---
+
+# CnCNet Integration
+
+## Attach Mode
+
+Attach mode is recommended when launching through CnCNet.
+
+Place the following in the game directory:
+
+```text
+LuaAPI.dll
+injector.exe
+scripts/
+```
+
+Launch the game through the CnCNet client and then run:
+
+```text
+injector.exe --attach
+```
+
+The injector polls for the appropriate game process, waits for the required Ares/Phobos environment, and injects LuaAPI when the target is ready.
+
+---
+
+## Headless Mode
+
+For automated testing or external modpack integration:
+
+```text
+injector.exe --withcncnet
+```
+
+The injector runs headlessly, waits for the CnCNet game process, attaches LuaAPI, and exits when the game closes.
+
+---
+
+# ModLoader Configuration
+
+Mods are enabled through:
+
+```text
+scripts/active_mods.txt
+```
+
+Example:
+
+```text
 # scripts/active_mods.txt
+
 multi_turret_battleship
 shield_overload
-my_custom_mod 
+my_custom_mod
+```
 
-One mod name per line (folder name in scripts/mods/). Lines starting with # are comments.
-📝 Complete Example: Multi-Turret Battleship 
+One mod name is specified per line.
+
+The name must correspond to a directory under:
+
+```text
+scripts/mods/
+```
+
+Lines beginning with `#` are treated as comments.
+
+---
+
+# Complete Example: Multi-Turret Battleship
+
+```lua
 -- scripts/mods/multi_turret_battleship/main.lua
+
 local MultiTurretMod = {}
 
 function MultiTurretMod.OnScenarioStart()
     local player = House.GetPlayer()
-    if not player then return end
 
-    -- Equip all Dreadnoughts with 3 sub-turrets
+    if not player then
+        return
+    end
+
+    -- Equip all Dreadnoughts with three sub-turrets.
     for _, unit in ipairs(World.GetUnits()) do
         if unit:IsAlive() and unit:GetOwner() == player then
             if unit:GetTypeName() == "DRED" then
-                -- Add 3 turrets: Fore, Aft, Port
-                unit:AddSubTurret(1, 40, 0, 15, 12, 90)   -- Fore
-                unit:AddSubTurret(2, -40, 0, 15, 12, 90)  -- Aft
-                unit:AddSubTurret(3, 0, 40, 15, 12, 90)   -- Port
+
+                -- Fore
+                unit:AddSubTurret(
+                    1,
+                    40, 0, 15,
+                    12,
+                    90
+                )
+
+                -- Aft
+                unit:AddSubTurret(
+                    2,
+                    -40, 0, 15,
+                    12,
+                    90
+                )
+
+                -- Port
+                unit:AddSubTurret(
+                    3,
+                    0, 40, 15,
+                    12,
+                    90
+                )
             end
         end
     end
@@ -276,30 +978,38 @@ end
 
 function MultiTurretMod.Update(frame)
     local player = House.GetPlayer()
-    if not player then return end
 
-    -- Every 30 frames, assign targets and fire
-    if frame % 30 == 0 then
-        for _, unit in ipairs(World.GetUnits()) do
-            if unit:IsAlive() and unit:GetOwner() == player then
-                if unit:GetTypeName() == "DRED" then
-                    -- Find nearby enemies
-                    local pos = unit:GetPosition()
-                    local enemies = World.GetUnitsInRadius(pos.x, pos.y, 15)
-                    
-                    -- Filter to enemy units only
-                    local targets = {}
-                    for _, enemy in ipairs(enemies) do
-                        if enemy:IsAlive() and enemy:GetOwner() ~= player then
-                            table.insert(targets, enemy)
-                        end
+    if not player then
+        return
+    end
+
+    -- Assign targets and fire every 30 logical frames.
+    if frame % 30 ~= 0 then
+        return
+    end
+
+    for _, unit in ipairs(World.GetUnits()) do
+        if unit:IsAlive() and unit:GetOwner() == player then
+            if unit:GetTypeName() == "DRED" then
+
+                local pos = unit:GetPosition()
+
+                local nearbyUnits =
+                    World.GetUnitsInRadius(pos.x, pos.y, 15)
+
+                local targets = {}
+
+                for _, enemy in ipairs(nearbyUnits) do
+                    if enemy:IsAlive()
+                        and enemy:GetOwner() ~= player then
+
+                        table.insert(targets, enemy)
                     end
-                    
-                    -- Assign targets and fire if we have targets
-                    if #targets > 0 then
-                        unit:SetSplitTargets(targets)
-                        unit:FireSplitSalvo()
-                    end
+                end
+
+                if #targets > 0 then
+                    unit:SetSplitTargets(targets)
+                    unit:FireSplitSalvo()
                 end
             end
         end
@@ -307,53 +1017,107 @@ function MultiTurretMod.Update(frame)
 end
 
 return MultiTurretMod
-` 
-🚀 Development Tools Example: Debug Console 
-``
+```
+
+---
+
+# Development Example: Debug Console
+
+```lua
 -- scripts/mods/debug_console/main.lua
+
 local DebugConsole = {}
 
 function DebugConsole.OnDebugCommand(text)
-    -- Parse "5 APOC" or "3 LTNK"
-    local count, typeId = text:match("^(%d+)%s+(%u+)$")
+    -- Parse commands such as:
+    -- 5 APOC
+    -- 3 LTNK
+
+    local count, typeId =
+        text:match("^(%d+)%s+(%u+)$")
+
     if not count or not typeId then
-        Engine.PrintMessage("[DEBUG] Invalid command: " .. text, 2)
+        Engine.PrintMessage(
+            "[DEBUG] Invalid command: " .. text,
+            2
+        )
         return
     end
-    
+
     count = tonumber(count)
+
     local player = House.GetPlayer()
+
     if not player then
-        Engine.PrintMessage("[DEBUG] No player house", 2)
+        Engine.PrintMessage(
+            "[DEBUG] No player house",
+            2
+        )
         return
     end
-    
-    -- Find player's base (first building)
+
+    -- Find the player's first building.
     local baseX, baseY = 0, 0
-    for _, b in ipairs(World.GetBuildings()) do
-        if b:IsAlive() and b:GetOwner() == player then
-            local p = b:GetPosition()
-            baseX, baseY = math.floor(p.x), math.floor(p.y)
+
+    for _, building in ipairs(World.GetBuildings()) do
+        if building:IsAlive()
+            and building:GetOwner() == player then
+
+            local position = building:GetPosition()
+
+            baseX = math.floor(position.x)
+            baseY = math.floor(position.y)
+
             break
         end
     end
-    
+
     if baseX == 0 and baseY == 0 then
-        Engine.PrintMessage("[DEBUG] No player building", 2)
+        Engine.PrintMessage(
+            "[DEBUG] No player building",
+            2
+        )
         return
     end
-    
-    -- Spawn with hunt mission
-    local spawned = player:SpawnUnit(typeId, count, baseX + 5, baseY + 5, 0, false, "hunt")
-    Engine.PrintMessage("[DEBUG] Spawned " .. spawned .. " " .. typeId .. " with hunt", 1)
+
+    -- Spawn with Hunt mission.
+    local spawned = player:SpawnUnit(
+        typeId,
+        count,
+        baseX + 5,
+        baseY + 5,
+        0,
+        false,
+        "hunt"
+    )
+
+    Engine.PrintMessage(
+        "[DEBUG] Spawned "
+            .. spawned
+            .. " "
+            .. typeId
+            .. " with hunt",
+        1
+    )
 end
 
-return DebugConsole 
-` 
+return DebugConsole
+```
 
-🔗 Related Documentation
-ROADMAP.md — Project lifecycle and milestone status
-CAPABILITIES_AND_COOKBOOK.md — Proven mechanics with post-mortems
-ENGINEERING_LESSONS.md — Technical deep-dives and pitfalls
-MOD_MANAGER.md — How to create and distribute mods
-TUTORIAL.md — Step-by-step guide for new modders
+---
+
+# Related Documentation
+
+* [`PROJECT/ROADMAP.md`](../PROJECT/ROADMAP.md) — Project lifecycle and milestone status.
+* [`PROJECT/CAPABILITIES.md`](../PROJECT/CAPABILITIES.md) — Current capabilities and supported mechanics.
+* [`docs/ENGINEERING_LESSONS.md`](ENGINEERING_LESSONS.md) — Technical investigations, findings, and engine-specific pitfalls.
+* [`docs/MOD_MANAGER.md`](MOD_MANAGER.md) — Mod loading, configuration, and distribution.
+* [`docs/TUTORIAL.md`](TUTORIAL.md) — Step-by-step guide for LuaAPI mod development.
+
+---
+
+## Implementation Status
+
+This document describes the currently exposed LuaAPI surface.
+
+Features marked as planned or deferred in the project roadmap should not be considered part of the stable API until their corresponding milestone or gate has been completed and verified.
