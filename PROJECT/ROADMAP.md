@@ -99,7 +99,9 @@ Status: ✅ VERIFIED (initial release, ⚠️ BROKEN in current builds due to ev
 
 [x] Milestone 7 — Alpha-2: Spatial Map API & Extended Events
 Status: ⚠️ CODE COMPLETE, RUNTIME ISSUES
-Spatial queries work. Event hooks (OnScenarioStart, OnUnitDestroyed) have implementation but do not fire due to initialization race conditions and missing pcall. Showcase damaged_fleet has syntax errors and does not load. Restoration planned for Milestone 13.
+
+Spatial queries work. Event hooks (OnScenarioStart, OnUnitDestroyed) have implementation but do not fire due to initialization race conditions and missing pcall. Showcase damaged_fleet has syntax errors and does not load. 
+Restoration planned for Milestone 13.
 
 [x] Gate 7.1 — OnScenarioStart
 Implemented post-scenario initialization callbacks.
