@@ -10,7 +10,9 @@ The project follows three core principles:
 - 🎮 **Lua controls gameplay behavior**
 - 🛡️ **Only implemented and tested functionality is documented as verified**
 
-> **Status:** `v1.1.0` — Milestone 11  
+> **Current Release:** `v1.0.0` — Production Release  
+> **Current Development:** Milestone 11  
+> **Development API Line:** `1.1.0`  
 > **Target:** Yuri's Revenge `1.001`  
 > **Compatibility:** Singleplayer, Skirmish, and CnCNet environments
 
@@ -35,8 +37,9 @@ The project follows three core principles:
 
 | Property | Value |
 |---|---|
-| **API Version** | `1.1.0` |
-| **Milestone** | `11` |
+| **Current Release** | `v1.0.0` |
+| **Development Milestone** | `11` |
+| **Development API Line** | `1.1.0` |
 | **Game** | Yuri's Revenge `1.001` |
 | **Primary Process** | `gamemd.exe` |
 | **CnCNet Process** | `gamemd-spawn.exe` |
