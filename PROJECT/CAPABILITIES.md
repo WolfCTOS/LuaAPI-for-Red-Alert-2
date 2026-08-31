@@ -26,6 +26,8 @@ It focuses on practical examples rather than API definitions:
 - [Case Study 4 — Multi-Turret Batteries](#-case-study-4--multi-turret-batteries)
 - [Case Study 5 — CnCNet Multiplayer & Dev Tools](#-case-study-5--cncnet-multiplayer--dev-tools)
 - [Universal Engineering Principles](#-universal-engineering-principles)
+- [Verification Policy](#-verification-policy)
+- [Related Documentation](#-related-documentation)
 
 ---
 
@@ -36,7 +38,7 @@ It focuses on practical examples rather than API definitions:
 
 ### 🎯 Outcome
 
-LuaAPI can intercept incoming damage **before the engine applies it to the target**.
+LuaAPI can intercept incoming damage before the engine applies it to the target.
 
 This makes it possible to implement:
 
@@ -57,7 +59,7 @@ By the time a regular frame callback runs, the engine may have already resolved 
 
 ### ⚙️ Architecture
 
-The flow is:
+The intended flow is:
 
 ```text
 Engine damage event
@@ -70,8 +72,8 @@ Engine damage event
  ↓      ↓        ↓
 nil   number     0
  ↓      ↓        ↓
-Original Modified Cancel
-damage   damage  damage
+Pass   Modify   Cancel
+through damage  damage
 📝 Lua Recipe
 -- scripts/mods/shield_overload/main.lua
 
@@ -107,6 +109,9 @@ Economy modifiers
 Dynamic income systems
 HUD notifications
 ⚙️ Architecture
+
+The general flow is:
+
 Receive a combat callback.
 Identify the attacker's house.
 Modify the house's credits.
@@ -166,7 +171,7 @@ OnScenarioStart() runs after scenario initialization.
 The mod can then:
 
 Query units.
-Filter them by owner/type.
+Filter them by owner and type.
 Modify their health.
 Attach visual effects.
 📝 Lua Recipe
@@ -176,6 +181,7 @@ local FleetMod = {}
 
 function FleetMod.OnScenarioStart()
     local player = House.GetPlayer()
+
     if not player then
         return
     end
@@ -198,7 +204,7 @@ Do not access scenario-dependent game objects before the scenario has finished i
 
 Use OnScenarioStart() for post-load initialization.
 
-Note that OnScenarioStart() does not fire when loading a savegame. Mods that require persistent initialization should account for the savegame lifecycle.
+Savegame note: OnScenarioStart() does not fire when loading a savegame. Systems that require persistent runtime state must account for the savegame lifecycle separately.
 
 🚢 Case Study 4 — Multi-Turret Batteries
 
@@ -277,6 +283,7 @@ local MultiTurretMod = {}
 
 function MultiTurretMod.OnScenarioStart()
     local player = House.GetPlayer()
+
     if not player then
         return
     end
@@ -299,6 +306,7 @@ function MultiTurretMod.Update(frame)
     end
 
     local player = House.GetPlayer()
+
     if not player then
         return
     end
@@ -331,7 +339,7 @@ return MultiTurretMod
 🌐 Case Study 5 — CnCNet Multiplayer & Development Tools
 
 Status: ✅ VERIFIED
-Reference implementation: spawn_test, debug_console
+Reference implementations: spawn_test, debug_console
 
 🎯 Outcome
 
@@ -362,11 +370,11 @@ LuaAPI may encounter an existing hook at the game's main loop.
 
 A signature mismatch does not necessarily mean that injection failed.
 
-When another mod such as Ares or Phobos has already hooked the function, LuaAPI can chain its hook through MinHook.
+When another modification such as Ares or Phobos has already hooked the function, LuaAPI can chain its hook through MinHook.
 
 ⏱️ Logical Frame Gating
 
-Callbacks should be synchronized to the game's logical frame rather than the render rate.
+Gameplay callbacks should be synchronized to the game's logical frame rather than the render rate.
 
 Conceptually:
 
@@ -394,6 +402,7 @@ function SpawnTest.Update(frame)
     end
 
     local player = House.GetPlayer()
+
     if not player then
         return
     end
@@ -430,6 +439,7 @@ function OnDebugCommand(text)
     end
 
     local player = House.GetPlayer()
+
     if not player then
         return
     end
@@ -504,29 +514,29 @@ A capability should only be marked:
 
 when it has been implemented and tested against the current LuaAPI build.
 
-Examples and recipes in this document are intended to reflect the current API contract. If an API name or behavior changes, this document must be updated together with API.md and TUTORIAL.md.
+Examples and recipes in this document are intended to reflect the current API contract.
+
+If an API name or behavior changes, this document must be updated together with API.md and TUTORIAL.md.
 
 📖 Related Documentation
 API.md — Complete LuaAPI reference
 TUTORIAL.md — Beginner tutorial
 README.md — Project overview and installation
 PROJECT/ENGINEERING_LESSONS.md — Engineering notes and debugging history
-🎓 Final Note
+🎓 Development Workflow
 
-LuaAPI is designed to expose powerful Red Alert 2 engine functionality while keeping gameplay logic accessible from Lua.
-
-The recommended development workflow is:
+LuaAPI development follows a verification-first workflow:
 
 Understand the API
-       ↓
+        ↓
 Build a small Lua prototype
-       ↓
+        ↓
 Verify the behavior
-       ↓
+        ↓
 Move unsafe engine work into C++
-       ↓
+        ↓
 Expose a safe Lua interface
-       ↓
+        ↓
 Document the proven capability
 
 Build small. Test frequently. Verify before documenting.
