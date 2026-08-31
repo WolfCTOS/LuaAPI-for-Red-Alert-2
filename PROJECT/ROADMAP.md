@@ -96,13 +96,17 @@ Engine.PrintMessage()
 [x] Gate 6.4 — bounty_hunter Validation
 Validated lifecycle and economy APIs through the bounty_hunter showcase.
 Status: ✅ VERIFIED (initial release, ⚠️ BROKEN in current builds due to event system)
+
 [x] Milestone 7 — Alpha-2: Spatial Map API & Extended Events
 Status: ⚠️ CODE COMPLETE, RUNTIME ISSUES
 Spatial queries work. Event hooks (OnScenarioStart, OnUnitDestroyed) have implementation but do not fire due to initialization race conditions and missing pcall. Showcase damaged_fleet has syntax errors and does not load. Restoration planned for Milestone 13.
+
 [x] Gate 7.1 — OnScenarioStart
 Implemented post-scenario initialization callbacks.
+
 [x] Gate 7.2 — OnUnitDestroyed
 Implemented destruction-event handling for gameplay systems.
+
 [x] Gate 7.3 — Spatial Queries
 Implemented: 
 ```
@@ -113,32 +117,42 @@ World.GetUnitsInRadius()
 [x] Gate 7.4 — damaged_fleet Validation
 Validated scenario-start modification and visual damage effects.
 Status: ✅ VERIFIED (initial release, ⚠️ BROKEN in current builds)
+
 [x] Milestone 8 — Beta: Feature Freeze & Hardening
 [x] Gate 8.1 — Long-Run Stress Testing
 Verified runtime stability and sustained Lua execution under heavy AI workloads.
+
 [x] Gate 8.2 — API Reference
 Created API.md as the primary public API reference.
+
 [x] Gate 8.3 — CnCNet Integration
 Validated LuaAPI in CnCNet-oriented mod environments.
+
 [x] Gate 8.4 — API Stabilization
 Stabilized public API signatures before production release.
+
 [x] Milestone 9 — Production Release v1.0
 [x] Gate 9.1 — v1.0.0 Release
 Published the runtime, injector/launcher, examples, and documentation.
+
 [x] Gate 9.2 — Community Release
 Published LuaAPI for external C&C modding communities and testers.
+
 Release status: ✅ v1.0.0
 🟡 Milestone 10 — Multi-Turret & Advanced Combat
 Status: 🟡 CORE COMPLETE
 Version target: v1.1
 Goal: Break the vanilla single-target / single-turret limitation while keeping native C++ systems passive and Lua-driven.
+
 [x] Gate 10.1 — Sub-Turret Memory Model & Lifecycle
 Implemented SubTurretManager as a native C++ sidecar associated with TechnoClass*.
 Tracked state includes turret identity, facing, target, reload/ROF timer, weapon information, and spatial offsets. Lifecycle handling includes unit removal, target invalidation, deferred cleanup, and global target invalidation.
+
 Status: ✅ VERIFIED
 [x] Gate 10.2 — Independent Targeting & Combat Dispatch
 Implemented multiple turret slots, independent targets, target-facing calculations, ROT stepping, split-target allocation, explicit salvo dispatch, and spawned missile interception.
 Status: ✅ VERIFIED
+
 [x] Gate 10.4 — Lua Multi-Turret API & Showcase
 Exposed: 
 ```
@@ -152,31 +166,40 @@ Status: ✅ VERIFIED
 [x] Gate 10.5 — Spawned Missile Decoupling
 Implemented native interception and locomotor redirection for spawned projectiles so the parent spawn manager cannot continuously force them back onto the parent's target.
 Status: ✅ VERIFIED
+
 [ ] Gate 10.3 — Voxel Matrix Rendering
 Status: ⏸️ DEFERRED TO MILESTONE 12
 Independent visual rotation of voxel sub-turrets remains deferred. The project prioritizes functional multi-turret combat before visual turret rendering.
+
 [x] Milestone 11 — CnCNet Compatibility & Development Tools
 Status: ✅ DONE
 Goal: Make LuaAPI reliable in CnCNet-launched environments and provide the tooling needed for continued development.
 The engineering work for this milestone is complete. Full two-client online multiplayer validation is not claimed and remains a separate test.
+
 [x] Gate 11.1 — CnCNet Attach Mode
 Implemented attach mode for CnCNet-launched gamemd-spawn.exe processes.
 Status: ✅ VERIFIED
+
 [x] Gate 11.2 — MinHook Compatibility / Chaining
 Implemented compatibility handling for hooks coexisting with Ares, Phobos, and CnCNet infrastructure.
 Status: ✅ VERIFIED
+
 [x] Gate 11.3 — Logical-Frame Gating
 Gameplay callbacks are synchronized to logical game frames for deterministic execution.
 Status: ✅ VERIFIED
+
 [x] Gate 11.4 — house:SpawnUnit
 Implemented validated unit spawning with placement/pathfinding checks and fallback placement.
 Status: ✅ VERIFIED
+
 [x] Gate 11.5 — Debug Input Layer
 Implemented development input handling for debug command entry and execution.
 Status: ✅ VERIFIED
+
 [x] Gate 11.6 — ModLoader Path Resolution
 Fixed mod/script path resolution so the loader resolves paths relative to the LuaAPI/DLL environment instead of the process working directory.
 Status: ✅ VERIFIED
+
 [x] Milestone 12 — Unit Control API & Tactical AI
 Status: ✅ SHOWCASE VERIFIED
 Goal: Expose safe unit-control primitives and use them to build higher-level tactical behavior without immediately replacing the native AI.
@@ -190,9 +213,11 @@ Not yet verified:
 • Live-fire test on the player's own miner.
 • Enemy miner protection — vanilla AI overwrites Stop() every frame.
 • Hotkey spam / mixed multi-select behavior.
+
 Technical:
 World.GetSelectedUnits() reads ObjectClass::CurrentObjects. Input.WasKeyPressed is edge-triggered. MCVs were filtered because they have no weapon and GetTarget() stays nil.
 Next: close miner_safety with a forced live-fire test, then address the dead M4/M7 event system.
+
 🧭 Architectural Principles
 1. 🧠 C++ Manages State, Lua Controls Gameplay
 C++ provides safe engine access, native state, lifecycle handling, timers, and performance-critical integration. Lua provides gameplay rules, target selection, tactical decisions, and mod-specific behavior.
