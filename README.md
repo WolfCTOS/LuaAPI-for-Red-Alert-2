@@ -1,183 +1,645 @@
-﻿# LuaAPI for Red Alert 2 — Yuri's Revenge
+# 🚀 LuaAPI for Red Alert 2 — Yuri's Revenge
 
-A high-performance, native x86 runtime that injects a **Lua 5.4 scripting engine** into `gamemd.exe` (Yuri's Revenge 1.001). It enables complex, dynamic gameplay mechanics, reactive inbound events, and stateful mod logic to be written in pure Lua with **zero engine overhead** (< 0.01 FPS delta).
+> **Lua scripting API for Command & Conquer: Red Alert 2 — Yuri's Revenge 1.001**
 
-> **Status:** `v1.0.0 Production Release` (All Milestones 1–9 Verified & Benchmarked).  
-> **Compatibility:** Singleplayer, Skirmish, and CnCNet Multiplayer (Deterministic RNG).
+LuaAPI is a native x86 Lua 5.4 runtime injected into `gamemd.exe`. It exposes selected Red Alert 2 engine functionality to Lua so modders can build gameplay systems without implementing every mechanic directly in C++.
+
+The project follows three core principles:
+
+- 🧠 **C++ handles engine integration, runtime state, and safety**
+- 🎮 **Lua controls gameplay behavior**
+- 🛡️ **Only implemented and tested functionality is documented as verified**
+
+> **Status:** `v1.1.0` — Milestone 11  
+> **Target:** Yuri's Revenge `1.001`  
+> **Compatibility:** Singleplayer, Skirmish, and CnCNet environments
 
 ---
 
-## ⚡ Key Features
+## ✨ Key Features
 
-- **Sub-Frame Inbound Events:** Intercept and modify damage before application (`OnPreDamage`) for custom shields, armor types, and damage reflection.
-- **Zero-Overhead Runtime:** Lock-free QPC frame profiling confirmed **60.04 Avg FPS / 55.11 1% Low FPS** (identical to pure Vanilla). See [BENCHMARK.md](BENCHMARK.md).
-- **Crash-Resistant Pointer Safety:** All engine object bindings validate pointers via RTTI (`WhatAmI()`) and lifecycle flags — preventing `0xC0000005` Access Violations on dead units.
-- **Clean Session Lifecycle:** Automatic Lua state & callback cleanup on scenario load, restart, and exit (`ResetSession`).
-- **CnCNet Determinism:** Synchronized frame-seeded RNG preventing Out-of-Sync (OOS) in multiplayer.
-- **Modular Mod Ecosystem:** Isolated `scripts/mods/<name>/` directories with `mod.json` manifests and GUI conflict detection.
+- 💥 **Sub-Frame Damage Interception** — modify or cancel incoming damage through `OnPreDamage`.
+- 📡 **Mod-Table Event Callbacks** — lifecycle and gameplay callbacks are methods on the table returned by `main.lua`.
+- 👤 **House & Player API** — query players and access supported house state such as credits.
+- 🌍 **World Queries** — inspect units and buildings and perform spatial queries.
+- 🚜 **Runtime Unit Spawning** — create units directly from Lua.
+- 🔫 **Multi-Turret Systems** — add runtime turret state and control split-target salvos from Lua.
+- 📨 **Engine Messaging** — display messages through the game's message system.
+- 🛡️ **Pointer & Lifecycle Safety** — C++ protects Lua-facing engine access against invalid runtime objects where supported.
+- 🌐 **CnCNet Support** — injection and hook handling account for the CnCNet process environment.
+- ⏱️ **Logical-Frame Callbacks** — gameplay logic can be tied to logical game frames rather than render FPS.
+
+---
+
+## 📦 Project Version
+
+| Property | Value |
+|---|---|
+| **API Version** | `1.1.0` |
+| **Milestone** | `11` |
+| **Game** | Yuri's Revenge `1.001` |
+| **Primary Process** | `gamemd.exe` |
+| **CnCNet Process** | `gamemd-spawn.exe` |
+| **Lua Runtime** | Lua 5.4 |
+| **Architecture** | Native x86 |
+| **Hooking** | MinHook |
+
+> ⚠️ LuaAPI is actively developed. Always use the documentation matching the current API version.
+
+---
+
+## 🧩 Architecture
+
+```text
+┌─────────────────────────────────────┐
+│              Lua Mods               │
+│                                     │
+│   Gameplay logic / AI / mechanics   │
+└──────────────────┬──────────────────┘
+                   │
+                   ▼
+┌─────────────────────────────────────┐
+│             LuaAPI SDK              │
+│                                     │
+│  House / World / Engine / Game      │
+│  Events / Object access / Safety    │
+└──────────────────┬──────────────────┘
+                   │
+                   ▼
+┌─────────────────────────────────────┐
+│          C++ Engine Layer           │
+│                                     │
+│ Hooks / pointers / runtime state    │
+│ Lifecycle / MinHook integration     │
+└──────────────────┬──────────────────┘
+                   │
+                   ▼
+┌─────────────────────────────────────┐
+│       Red Alert 2 / YR Engine      │
+│             gamemd.exe              │
+└─────────────────────────────────────┘
+```
+
+### 🧠 Design Principle
+
+> **C++ manages engine state. Lua decides gameplay behavior.**
+
+C++ provides the bridge to the Westwood engine and handles unsafe or engine-specific operations. Lua determines what the mod actually does.
+
+---
+
+## 📁 Installation Structure
+
+A typical LuaAPI installation looks like:
+
+```text
+Yuri's Revenge/
+├── gamemd.exe
+├── LuaAPI.dll
+├── injector.exe
+│
+└── scripts/
+    ├── init.lua
+    ├── active_mods.txt
+    │
+    └── mods/
+        ├── my_first_mod/
+        │   └── main.lua
+        │
+        ├── shield_overload/
+        │   └── main.lua
+        │
+        └── bounty_hunter/
+            └── main.lua
+```
 
 ---
 
 ## 🚀 Quick Start
 
-### 1. Launch via GUI Mod Manager
-- Launch **`injector.exe`**.
-- Toggle desired mods in the card list, view conflict warnings, and click **Launch Game**.
-- The injector handles suspended launch, DLL injection, and DPI scaling automatically.
+### 1. Install LuaAPI
 
-### 2. Launch under CnCNet Multiplayer
-```batch
-injector.exe --withcncnet
+Extract the release into your Yuri's Revenge directory.
 
-Runs in headless spawner mode compatible with CnCNet clients.
+The installation should contain:
+
+```text
+LuaAPI.dll
+injector.exe
+scripts/
 ```
 
-### 3. Manual Mod Activation
+### 2. Enable a mod
 
-Edit `scripts/active_mods.txt` (one mod ID per line, `#` for comments):
+Edit:
+
+```text
+scripts/active_mods.txt
+```
+
+Add one mod ID per line:
 
 ```text
 shield_overload
 bounty_hunter
-tesla_overload
 ```
+
+Lines beginning with `#` are comments.
+
+The loader reads the active mod list and loads each module as:
+
+```text
+mods.<mod_id>.main
+```
+
+### 3. Create a mod
+
+Create:
+
+```text
+scripts/mods/my_first_mod/main.lua
+```
+
+A standard LuaAPI mod returns a table:
+
+```lua
+local MyMod = {}
+
+function MyMod.OnScenarioStart()
+    Engine.PrintMessage("My mod loaded!", 1)
+end
+
+function MyMod.Update(frame)
+    -- Gameplay logic.
+end
+
+return MyMod
+```
+
+### 4. Launch the game
+
+Run `injector.exe` and start Yuri's Revenge.
+
+Check the LuaAPI log for initialization and mod-loading messages.
 
 ---
 
-## 📁 Mod Anatomy (Folder Structure)
+## 🧱 Mod Anatomy
 
-Each mod lives in its own directory under `scripts/mods/<mod_id>/`:
+Each mod lives under `scripts/mods/<mod_id>/`.
 
 ```text
 scripts/mods/bounty_hunter/
-├── mod.json       # Mod manifest
-└── main.lua       # Entry point
+└── main.lua
 ```
 
-### `mod.json` — Manifest
+A mod may also contain additional files as required by the implementation.
 
-```json
-{
-  "id": "bounty_hunter",
-  "name": "Bounty Hunter",
-  "version": "1.0.0",
-  "author": "YourName",
-  "description": "Awards credits and displays HUD alerts on combat hits",
-  "conflicts": []
-}
-```
+The important contract is that `main.lua` returns a Lua table containing the callbacks and state used by the mod.
 
 ---
 
-## 💻 Writing Mod Scripts (`main.lua`)
+## 📡 Event Model
 
-### 1. Inbound Events (Sub-Frame Pre-Damage Hooks)
+LuaAPI currently supports two callback mechanisms.
 
-Intercept incoming damage before it is applied to the unit:
+### Lifecycle callbacks — mod-table methods
+
+Callbacks such as `Update`, `OnScenarioStart`, `OnPreDamage`, and `OnUnitDestroyed` are defined on the table returned by the mod.
+
+```lua
+local MyMod = {}
+
+function MyMod.OnScenarioStart()
+    -- Scenario initialization.
+end
+
+function MyMod.Update(frame)
+    -- Logical-frame gameplay logic.
+end
+
+function MyMod.OnPreDamage(attacker, target, damage, dmgType, frame, subc)
+    return nil
+end
+
+function MyMod.OnUnitDestroyed(victim, killer)
+    -- React to destruction.
+end
+
+return MyMod
+```
+
+### Global debug callback
+
+`OnDebugCommand(text)` is a global callback rather than a mod-table method.
+
+```lua
+function OnDebugCommand(text)
+    Engine.PrintMessage("Command: " .. text, 1)
+end
+```
+
+Only one active definition should normally provide this global callback.
+
+---
+
+## 💥 Sub-Frame Damage Interception
+
+`OnPreDamage` can modify incoming damage before it is finally applied.
 
 ```lua
 local ShieldMod = {}
 
--- Callback: (attacker, target, damage, dmg_type, frame, subc)
-function ShieldMod.OnPreDamage(attacker, target, damage, dmg_type, frame, subc)
-    -- Absorb 50% of energy and explosive damage
-    if dmg_type == "energy" or dmg_type == "explosive" then
-        return damage * 0.5 -- Return modified damage
+function ShieldMod.OnPreDamage(attacker, target, damage, dmgType, frame, subc)
+    if dmgType == "energy" or dmgType == "explosive" then
+        return damage * 0.5
     end
-    return nil -- Keep original damage
-end
 
-function ShieldMod.OnRegister()
-    game_RegisterEvent("OnPreDamage", ShieldMod.OnPreDamage)
+    return nil
 end
 
 return ShieldMod
 ```
 
-### 2. Economy & HUD Messaging
+Return values:
 
-Award credits and display notifications in the in-game message feed:
+| Return value | Result |
+|---|---|
+| `nil` | Original damage is preserved |
+| `number` | Incoming damage is replaced |
+| `0` | Damage is cancelled |
+
+Do not return negative damage values.
+
+---
+
+## 👤 House & Player API
+
+Query the current player through the `House` namespace:
 
 ```lua
-local BountyMod = {}
+local player = House.GetPlayer()
 
-function BountyMod.OnPreDamage(attacker, target, damage, dmg_type, frame, subc)
-    -- Award $50 bounty to attacking player
-    local attackerHouse = attacker:GetHouse()
-    if attackerHouse then
-        house_AddCredits(attackerHouse, 50)
-        game_PrintMessage("[Bounty] +$50 awarded for combat hit!", 1)
-    end
-    return nil
+if player then
+    local name = player:GetName()
+    local credits = player:GetCredits()
 end
-
-function BountyMod.OnRegister()
-    game_RegisterEvent("OnPreDamage", BountyMod.OnPreDamage)
-end
-
-return BountyMod
 ```
 
-### 3. Unit State & Visual Effects (VFX)
-
-Directly control health ratios and attach particle systems without map trigger hacks:
+Supported house operations can also modify game state:
 
 ```lua
-local FleetMod = {}
-
-function FleetMod.Update(frame)
-    -- Example: damaged starting unit setup on first frame
-    if frame == 1 then
-        local unit = ... -- acquired unit
-        unit:SetHealthRatio(0.35)                     -- Set to 35% HP
-        unit:AttachParticleSystem("DamageSmokeSys")    -- Attach real damage smoke
-    end
-end
-
-return FleetMod
-```
-
-### 4. Multiplayer RNG Guidelines (CnCNet OOS Prevention)
-
-> ⚠️ **Never use `os.time()` or `os.clock()` in gameplay logic.**
-
-The Lua runtime initializes a synchronized deterministic seed (12345).
-
-For frame-unique randomness, use:
-
-```lua
-math.randomseed(frame + 12345)
-local roll = math.random(1, 100)
+player:AddCredits(500)
 ```
 
 ---
 
-## 📊 Performance & Benchmarks
+## 🌍 World Queries
 
-Benchmarked via Intel PresentMon (hardware ETW capture, 65s active Skirmish combat, D3D9 renderer):
+Query units and buildings through the `World` namespace:
 
-| Configuration | Average FPS | 1% Low FPS | 95th Percentile | Max FrameTime | Overhead |
-|---|---|---|---|---|---|
-| **Vanilla RA2: YR** | 60.05 | 54.40 | 17.56 ms | 22.92 ms | — (Baseline) |
-| **Clean LuaAPI (Hook 0x55D360)** | 60.05 | 55.13 | 17.51 ms | 18.84 ms | **0.00%** |
-| **Modded LuaAPI (Active Mods + Events)** | 60.04 | 55.11 | 17.31 ms | 18.62 ms | **< 0.02%** |
+```lua
+local units = World.GetUnits()
+local buildings = World.GetBuildings()
+```
 
-Full methodology, frame time distribution, and reproduction instructions are available in [BENCHMARK.md](BENCHMARK.md).
+Spatial queries are also available:
+
+```lua
+local nearby = World.GetUnitsInRadius(x, y, radius)
+```
+
+Example unit inspection:
+
+```lua
+for _, unit in ipairs(World.GetUnits()) do
+    if unit:IsAlive() then
+        local typeName = unit:GetTypeName()
+        local owner = unit:GetOwner()
+        local health = unit:GetHealth()
+        local position = unit:GetPosition()
+    end
+end
+```
 
 ---
 
-## 🛠️ Repository Structure
+## 🚜 Runtime Unit Spawning
+
+House objects can spawn units through Lua:
+
+```lua
+local count = player:SpawnUnit(
+    "APOC",
+    5,
+    100,
+    100,
+    0,
+    false,
+    "hunt"
+)
+
+Engine.PrintMessage(
+    "Spawned " .. count .. " APOC",
+    1
+)
+```
+
+The return value is the number of units actually created.
+
+---
+
+## 🔫 Multi-Turret Systems
+
+LuaAPI can expose additional runtime turret state through the multi-turret system.
+
+```lua
+unit:AddSubTurret(1, 40, 0, 15, 12, 90)
+unit:AddSubTurret(2, -40, 0, 15, 12, 90)
+```
+
+Target allocation and firing remain Lua-controlled:
+
+```lua
+unit:SetSplitTargets(targets)
+unit:FireSplitSalvo()
+```
+
+The intended architecture is:
 
 ```text
-├── src/               # C++ Core: Injector GUI, Hook Profiler, Lua Engine & Bindings
-├── include/LuaAPI/    # Public C++ Header definitions & game struct bindings
-├── scripts/           # Lua Runtime: init.lua dispatcher & mods/
-│   └── mods/          # Built-in sample mods (shield_overload, bounty_hunter, etc.)
-├── tools/             # PresentMon automation (run_benchmark.ps1, benchmark_analyzer.py)
-├── PROJECT/           # Architecture context, Roadmap & Milestone tracking
-├── BENCHMARK.md       # Empirical performance report
-└── README.md          # Project documentation
+C++
+ ↓
+Runtime turret state
+ ↓
+Lua
+ ↓
+Target selection
+ ↓
+FireSplitSalvo()
 ```
+
+The C++ state layer should not autonomously decide when a unit fires.
+
+---
+
+## 📨 Engine Messaging
+
+Display messages through the `Engine` namespace:
+
+```lua
+Engine.PrintMessage("Hello, Commander!", 1)
+```
+
+This can be used for HUD feedback, development tools, and gameplay notifications.
+
+---
+
+## 🌐 CnCNet Compatibility
+
+CnCNet may launch the game through:
+
+```text
+gamemd-spawn.exe
+```
+
+rather than the standard:
+
+```text
+gamemd.exe
+```
+
+LuaAPI's injector must therefore resolve the actual game module from the running process rather than assuming a fixed executable name.
+
+LuaAPI may also encounter an existing hook at a function already modified by Ares, Phobos, or another engine modification. A signature mismatch should be treated as a condition requiring evaluation, not automatically as an injection failure.
+
+---
+
+## ⏱️ Logical Frames & Multiplayer
+
+Gameplay logic should be tied to logical game frames rather than render FPS.
+
+```lua
+function MyMod.Update(frame)
+    if frame % 300 ~= 0 then
+        return
+    end
+
+    -- Execute every 300 logical frames.
+end
+```
+
+Avoid using wall-clock functions for deterministic gameplay decisions:
+
+```lua
+os.time()
+os.clock()
+```
+
+Different clients may have different wall-clock timing and render rates.
+
+---
+
+## 🛡️ Engine Safety
+
+Red Alert 2 relies heavily on raw engine pointers. Objects may become invalid after destruction, map transitions, scenario changes, or other lifecycle events.
+
+Never assume that an engine-backed object remains valid indefinitely.
+
+Prefer validity checks before accessing object methods:
+
+```lua
+if unit and unit:IsAlive() then
+    local position = unit:GetPosition()
+end
+```
+
+The C++ layer is responsible for providing safe access to engine-backed state wherever possible.
+
+---
+
+## 🧹 Runtime State Management
+
+Systems that maintain references to engine objects must handle object destruction correctly.
+
+```text
+Object created
+      ↓
+Runtime state registered
+      ↓
+Object used
+      ↓
+Object destroyed
+      ↓
+Reference invalidated
+      ↓
+Runtime state cleaned up
+```
+
+When maintaining C++ containers, avoid erasing entries in a way that invalidates the active iterator. Deferred cleanup is preferred.
+
+---
+
+## 📊 Performance
+
+LuaAPI is designed to keep the engine-facing layer lightweight, but performance claims should be evaluated against the current build and workload.
+
+For empirical measurements and reproduction methodology, see [`BENCHMARK.md`](BENCHMARK.md).
+
+Do not interpret benchmark results from an older release as a permanent guarantee for every future build or mod workload.
+
+---
+
+## 📚 Documentation
+
+### 📖 API Reference
+
+[`API.md`](API.md) — Complete LuaAPI reference, namespaces, objects, methods, callbacks, and contracts.
+
+### 🎓 Tutorial
+
+[`TUTORIAL.md`](TUTORIAL.md) — Beginner guide for creating and testing a LuaAPI mod.
+
+### 💡 Capabilities & Cookbook
+
+[`CAPABILITIES.md`](CAPABILITIES.md) — Verified capabilities, case studies, reusable recipes, and engineering lessons.
+
+### 🔧 Project Documentation
+
+[`PROJECT/`](PROJECT/) — Architecture, roadmap, milestones, gates, and engineering documentation.
+
+### 📊 Benchmark
+
+[`BENCHMARK.md`](BENCHMARK.md) — Performance measurements and benchmark methodology.
+
+---
+
+## 🧪 Verification Policy
+
+LuaAPI distinguishes between theoretical engine possibilities and functionality that has actually been implemented and tested.
+
+A capability should only be described as **VERIFIED** when it has been tested against the current LuaAPI implementation.
+
+If an API name, callback contract, or behavior changes, the related documentation should be updated together.
+
+---
+
+## 🗺️ Development Workflow
+
+```text
+Identify engine capability
+          ↓
+Research engine behavior
+          ↓
+Implement C++ integration
+          ↓
+Expose safe Lua interface
+          ↓
+Build Lua prototype
+          ↓
+Test in-game
+          ↓
+Test lifecycle & edge cases
+          ↓
+Verify behavior
+          ↓
+Document the proven capability
+```
+
+The goal is not to expose every engine feature immediately. The goal is to expose useful functionality incrementally while keeping the boundary between unsafe engine internals and Lua gameplay logic well defined.
+
+---
+
+## 🤝 Contributing
+
+When developing or contributing to LuaAPI:
+
+1. Reproduce the behavior.
+2. Identify the actual engine boundary.
+3. Keep unsafe engine work inside C++.
+4. Expose the smallest useful Lua interface.
+5. Test destruction and lifecycle edge cases.
+6. Test savegame behavior where relevant.
+7. Consider multiplayer determinism.
+8. Document only verified behavior.
+
+---
+
+## ⚠️ Project Status
+
+LuaAPI is under active development.
+
+The API and internal architecture may change as engine integration becomes safer and more complete.
+
+Use the documentation corresponding to the current API version.
+
+---
+
+## 📌 Minimal Example
+
+A minimal LuaAPI mod:
+
+```lua
+local MyMod = {}
+
+function MyMod.OnScenarioStart()
+    local player = House.GetPlayer()
+
+    if not player then
+        return
+    end
+
+    Engine.PrintMessage(
+        "LuaAPI mod initialized for " .. player:GetName(),
+        1
+    )
+end
+
+function MyMod.Update(frame)
+    if frame % 300 ~= 0 then
+        return
+    end
+
+    local player = House.GetPlayer()
+
+    if not player then
+        return
+    end
+
+    player:AddCredits(100)
+
+    Engine.PrintMessage("+$100", 1)
+end
+
+return MyMod
+```
+
+This demonstrates the core LuaAPI model:
+
+```text
+Lua Mod
+   ↓
+Returned Mod Table
+   ↓
+Lifecycle Callback
+   ↓
+LuaAPI Namespace / Object
+   ↓
+Red Alert 2 Engine
+```
+
+---
+
+## 🎓 Where to Start
+
+If you are new to LuaAPI:
+
+**1.** Read [`TUTORIAL.md`](TUTORIAL.md)  
+**2.** Use [`API.md`](API.md) as the technical reference  
+**3.** Study [`CAPABILITIES.md`](CAPABILITIES.md) for verified examples  
+**4.** Explore the sample mods under `scripts/mods/`
+
+> 🛠️ **Build small. Test frequently. Verify before documenting.**
 
 ---
 
@@ -185,10 +647,4 @@ Full methodology, frame time distribution, and reproduction instructions are ava
 
 Yuri's Revenge is a trademark of Electronic Arts.
 
-Developed for the C&C modding community (Haven / CnCNet / PPM).
-
----
-
-## 📖 API Reference
-
-Full documentation of all Lua functions, signatures, and safety guarantees: [API.md](API.md).
+Developed for the C&C modding community.
