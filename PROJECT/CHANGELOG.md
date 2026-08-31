@@ -1,87 +1,145 @@
 # Changelog
 
-All notable changes to LuaPI for Red Alert 2.
+All notable changes to LuaAPI for Red Alert 2 are documented here.
 
-## [0.7.0] — Milestone 11: CnCNet Compatibility & Dev Tools - 2026-08-31
+The changelog follows the project's verified milestone history. Features are listed as released or implemented only when supported by the corresponding project documentation and runtime validation.
+
+---
+
+## [1.1.0] — Milestone 10 Core / Milestone 11 Development — 2026-08-31
 
 ### Added
-- **CnCNet attach mode**: `injector.exe --attach` polls for `gamemd-spawn.exe`, waits for Syringe-injected modules (Ares.dll, Phobos.dll, CnCNet-Spawner.dll), then injects LuaAPI.dll. Live byte signature logging at hook addresses.
-- **Multiplayer determinism**: `Hooked_MainLoop` now gates `OnGameFrame` dispatch to fire only when `Unsorted::CurrentFrame` changes, preventing frame-rate dependent state divergence.
-- **`house:SpawnUnit(typeId, count, x, y, facing, force, action)`**: spawns units with pathfinding validation, spiral fallback search (radius 3), map boundary checks (`IsInsideMap`), and optional `hunt` mission queue. Returns count of successfully created units.
-- **Debug input layer**: Backspace toggles input mode, alphanumeric keys fill buffer, Enter calls Lua `OnDebugCommand(text)`. Edge detection prevents key-repeat spam.
+
+- **Sub-turret state system** via the native `SubTurretManager` sidecar associated with `TechnoClass*` objects.
+- **Independent turret state** including turret identity, facing, target references, ROF timers, weapon information, and spatial offsets.
+- **Multi-turret Lua bindings** for adding turrets, querying turret state, assigning split targets, and explicitly firing split salvos.
+- **Independent target allocation** for multi-turret showcase gameplay.
+- **Passive native turret updates** for timer management and target-facing rotation.
+- **Spawned missile interception and decoupling** for `DMISL`-style spawned projectiles, including native locomotor destination control.
+- **CnCNet development tooling** including process attachment, debug spawning, and logical-frame callback gating.
 
 ### Fixed
-- **ModLoader path resolution**: `scripts/init.lua` now resolves `active_mods.txt` relative to the DLL directory (via `debug.getinfo`) instead of process CWD, ensuring consistency when launched via CnCNet or external clients.
+
+- Prevented iterator invalidation during turret cleanup by using deferred removal.
+- Prevented stale target references from surviving engine-object destruction.
+- Corrected distance calculations that could overflow signed 32-bit integers when working in leptons.
+- Corrected Lua binding usage to the verified `GetOwner()` and `GetTypeName()` interfaces.
+- Prevented autonomous C++ multi-turret firing from producing unintended attacks while units were idle or moving.
+- Added savegame-aware runtime reinitialization for systems whose state is not restored through `OnScenarioStart()`.
 
 ### Changed
-- **Signature verification**: hook installation now logs byte mismatches as warnings instead of blocking. Enables chaining behind Ares/Phobos detours (observed `E9` JMP at MainLoop @ `0x55D360`).
 
+- **Architecture boundary:** C++ manages native state, lifecycle, safety, and engine integration; Lua controls gameplay decisions and attack behavior.
+- **Hook compatibility:** existing hooks at the main loop are treated as compatibility conditions rather than automatic injection failures.
+- **Milestone 10 scope:** functional multi-turret combat is complete; voxel matrix rendering is deferred to Milestone 11.
 
-## [0.6.0] - 2026-08-24
+### Verification
+
+- Milestone 10 core: verified through the `multi_turret_battleship` showcase and native combat infrastructure.
+- CnCNet compatibility: verified through attach mode and hook chaining.
+- Spawned missile decoupling: verified through the native interception path.
+
+---
+
+## [1.0.0] — Milestone 9: Production Release — 2026-08
 
 ### Added
-- Tesla Overload interactive gameplay module (`scripts/tesla_overload.lua`):
-  pulsing EMP lock + electrical damage against enemy buildings, with a
-  `DEBUG_MAP_WIDE` flag for instant map-wide testing and an 8-cell radius mode
-  driven by player-unit proximity.
-- Dynamic `package.path` resolution: the engine prepends `<DLL dir>/scripts/?.lua`
-  so `require()` works regardless of the game's working directory.
+
+- Public production release of LuaAPI for the C&C modding community.
+- Stable runtime package and injector/launcher components.
+- Example and showcase mods.
+- Production documentation and API reference.
+
+### Verification
+
+- Milestones 1–8 completed and verified before the production release.
+- `v1.0.0` published as the stable production baseline.
+
+---
+
+## [0.6.0] — Milestone 8: Beta Hardening — 2026-08-24
+
+### Added
+
+- Tesla Overload interactive gameplay module (`scripts/tesla_overload.lua`) with pulsing EMP lock and electrical damage against enemy buildings.
+- `DEBUG_MAP_WIDE` testing mode and proximity-based radius mode.
+- Dynamic `package.path` resolution so `require()` works independently of the game's working directory.
 
 ### Fixed
-- `ProcessDisabledObjects` dangling pointer validation: disabled-object entries
-  are now verified by address against all active engine arrays
-  (Building/Unit/Infantry/Aircraft) before any dereference; destroyed objects
-  are dropped silently instead of crashing at timer expiry (post-victory crash).
-- `TakeDamage` zero-health clamping: damage on already-dead objects is ignored,
-  preventing further interaction with dying structures.
 
-## [0.5.0] — Gate 5.1
+- `ProcessDisabledObjects` dangling-pointer validation: disabled-object entries are verified against active engine arrays before dereferencing.
+- `TakeDamage` zero-health clamping: already-dead objects no longer receive additional damage interactions.
 
-### Added
-- `house:IsAlliedWith(other_house)` via `HouseClass::IsAlliedWith`
-- `obj:GetDistanceTo(other_obj)` — Euclidean distance in map cells
-- `obj:TakeDamage(n)` — direct HP reduction (clamped at 0), logged as `[Combat]`
-- `obj:Disable(frames)` — timed disable:
-  - buildings via `BuildingClass::DisableStuff()` / `EnableStuff()`
-  - units/infantry via `TechnoClass::Deactivated` flag
-  - auto re-enable tracked per-frame from the game loop; dead objects are skipped
+---
 
-## [0.4.0] — Gate 4.1
+## [0.5.0] — Milestone 7: Extended Gameplay API
 
 ### Added
-- `src/bindings_techno.cpp`: unified `LuaAPI.Techno` userdata handle
-  - Methods: `GetTypeName`, `GetHealth`, `GetMaxHealth`, `GetOwner`, `GetPosition` (cell coords), `IsAlive`
-  - All methods validate pointer liveness (`ptr != nullptr && Health > 0`)
-- Global `World` namespace: `World.GetBuildings()`, `World.GetUnits()` iterating YRpp arrays
-- `PushHouse` exported from house bindings for cross-module wrapping
-- `scripts/init.lua`: one-shot world scanner logging building/unit names, HP and positions
 
-## [0.3.0] — Gate 3.1
+- `house:IsAlliedWith(other_house)` via `HouseClass::IsAlliedWith`.
+- `obj:GetDistanceTo(other_obj)` for Euclidean map-cell distance.
+- `obj:TakeDamage(n)` for direct HP reduction with clamping at zero.
+- `obj:Disable(frames)` for timed building/unit/infantry disabling with automatic re-enable tracking.
+
+---
+
+## [0.4.0] — Milestone 6: Lifecycle & Native Object Access
 
 ### Added
-- `src/bindings_house.cpp`: global `House` namespace (`GetPlayer`, `GetCount`, `GetByIndex`)
-- House instance methods: `GetCredits`, `SetCredits`, `AddCredits`, `GetPowerOutput`, `GetPowerDrain`, `GetName`, `IsHuman`
-- Credits changes routed through the game's own `TransactMoney`
+
+- Unified `LuaAPI.Techno` userdata handle.
+- Techno methods including `GetTypeName`, `GetHealth`, `GetMaxHealth`, `GetOwner`, `GetPosition`, and `IsAlive`.
+- Pointer-liveness validation for exposed Techno objects.
+- Global `World` namespace with building and unit enumeration.
+- Cross-module `PushHouse` export.
+- Initial world scanner in `scripts/init.lua`.
+
+---
+
+## [0.3.0] — Milestone 5: House & Economy API
+
+### Added
+
+- Global `House` namespace with `GetPlayer`, `GetCount`, and `GetByIndex`.
+- House methods including `GetCredits`, `SetCredits`, `AddCredits`, `GetPowerOutput`, `GetPowerDrain`, `GetName`, and `IsHuman`.
+- Credit changes routed through the game's native `TransactMoney` path.
 
 ### Fixed
-- Missing global `byte` typedef required by YRpp headers in new TUs
 
-## [0.2.0] — Gate 2.2
+- Added the missing `byte` typedef required by YRpp headers in new translation units.
+
+---
+
+## [0.2.0] — Milestone 2: Engine Hook & HUD Integration
 
 ### Changed
-- Hook target corrected to `Unsorted::MainLoop` @ `0x55D360` (documented in YRpp);
-  previous guessed address `0x685650` never fired
-- Detour calling convention matched to target (`void __fastcall()`)
+
+- Corrected the MainLoop hook target to `Unsorted::MainLoop` at `0x55D360`.
+- Corrected the detour calling convention to `void __fastcall()`.
 
 ### Added
-- `Engine.PrintMessage(text)` → `MessageListClass::PrintMessage`
-- First-fire hook verification logging; MH status codes logged
 
-## [0.1.0] — Milestone 1
+- `Engine.PrintMessage(text)` through `MessageListClass::PrintMessage`.
+- First-fire hook verification logging and MinHook status reporting.
+
+---
+
+## [0.1.0] — Milestone 1: Runtime Foundation
 
 ### Added
-- CMake Win32 build, static CRT (`/MT`) for all targets
-- `injector.exe`: remote-thread injection with dynamic DLL path resolution
-- Rotating file logger (`LuaAPI.log`, 5 MB × 3), initialized off the loader lock
-- Lua engine bootstrap on the main game thread; `print` redirected to log
-- Auto-deploy of binaries to the game directory after build
+
+- CMake Win32 build with static CRT (`/MT`) for all targets.
+- `injector.exe` with remote-thread DLL injection and dynamic DLL path resolution.
+- Rotating `LuaAPI.log` logging with 5 MB × 3 retention.
+- Lua engine bootstrap on the main game thread.
+- Redirected Lua `print` output to the project log.
+- Automatic deployment of built binaries to the game directory.
+
+---
+
+## Versioning Notes
+
+- `v1.0.0` remains the current **production release baseline**.
+- `1.1.0` represents the current API/development line associated with Milestone 10 core and Milestone 11 work.
+- Milestone 11 presentation and tactical features are development work and must not be described as production-complete until separately verified.
+- `PROJECT/ROADMAP.md`, `PROJECT/CAPABILITIES.md`, and `API.md` should be updated alongside significant API or milestone changes to keep the documentation synchronized.
