@@ -1,15 +1,13 @@
-Отлично, продолжаю синхронизацию. Следующий: **TUTORIAL.md** под актуальный API.
-
-Вот обновлённый **TUTORIAL.md**:
-
-```markdown
 # 🎓 LuaAPI Tutorial: Your First Mod
 
-> **Prerequisites:** Basic Lua programming, understanding of Red Alert 2 modding concepts
+> **Prerequisites:** Basic Lua programming and familiarity with Red Alert 2 modding
 > **Difficulty:** Beginner
-> **Time:** 30 minutes
+> **Time:** ~30 minutes
+> **Target:** Yuri's Revenge 1.001
 
-This tutorial will guide you through creating your first LuaAPI mod from scratch. By the end, you'll have a working mod that spawns units and responds to game events.
+This tutorial walks you through creating your first LuaAPI mod. By the end, you will have a working mod that responds to game events, reads game objects, and can spawn units.
+
+For complete API signatures and return-value details, see [`API.md`](../API.md).
 
 ---
 
@@ -21,7 +19,9 @@ This tutorial will guide you through creating your first LuaAPI mod from scratch
 4. [Working with Units](#working-with-units)
 5. [Responding to Events](#responding-to-events)
 6. [Testing Your Mod](#testing-your-mod)
-7. [Next Steps](#next-steps)
+7. [Multiplayer Considerations](#multiplayer-considerations)
+8. [Common Pitfalls](#common-pitfalls)
+9. [Next Steps](#next-steps)
 
 ---
 
@@ -29,518 +29,808 @@ This tutorial will guide you through creating your first LuaAPI mod from scratch
 
 ### Prerequisites
 
-- **Red Alert 2: Yuri's Revenge** (version 1.001)
-- **LuaAPI release** (download from GitHub releases)
-- **Text editor** (VS Code, Notepad++, or any code editor)
+You need:
 
-### Installation Steps
+* **Red Alert 2: Yuri's Revenge 1.001**
+* **LuaAPI**
+* A text editor such as VS Code or Notepad++
 
-1. **Extract LuaAPI** to your game directory:
-   ```
-   C:\Games\Yuri's Revenge\
-   ├── gamemd.exe
-   ├── LuaAPI.dll
-   ├── injector.exe
-   └── scripts/
-       ├── init.lua
-       ├── active_mods.txt
-       └── mods/
-   ```
+### Installation
 
-2. **Verify installation** by running:
-   ```bash
-   injector.exe
-   ```
-   Then launch the game. Check `LuaAPI.log` for:
-   ```
-   [info] Lua engine initialized
-   [info] Universal ModLoader Online!
-   ```
+Extract the LuaAPI distribution into your Yuri's Revenge directory.
+
+A typical installation looks like:
+
+```text
+Yuri's Revenge/
+├── gamemd.exe
+├── LuaAPI.dll
+├── injector.exe
+└── scripts/
+    ├── init.lua
+    ├── active_mods.txt
+    └── mods/
+```
+
+Check the distribution package and project documentation for the exact injector workflow used by your LuaAPI build.
+
+After starting the game with LuaAPI, check `LuaAPI.log` for initialization messages.
 
 ---
 
-## Creating Your First Mod
+# Creating Your First Mod
 
-### Step 1: Create the Mod Directory
+## Step 1: Create the Mod Directory
 
-Navigate to `scripts/mods/` and create a new folder:
+Create a directory under:
 
+```text
+scripts/mods/
 ```
+
+For example:
+
+```text
 scripts/mods/my_first_mod/
 ```
 
-### Step 2: Create `main.lua`
+## Step 2: Create `main.lua`
 
-Create `scripts/mods/my_first_mod/main.lua` with this template:
+Create:
+
+```text
+scripts/mods/my_first_mod/main.lua
+```
+
+Start with:
 
 ```lua
 local MyFirstMod = {}
 
 function MyFirstMod.OnScenarioStart()
-    -- This runs when a match starts
     Engine.PrintMessage("MyFirstMod loaded!", 1)
 end
 
 function MyFirstMod.Update(frame)
-    -- This runs every logical frame
-    -- We'll add logic here later
+    -- Game logic goes here.
 end
 
 return MyFirstMod
 ```
 
-### Step 3: Enable the Mod
+The returned table is the mod's callback table. LuaAPI uses the functions defined on this table to dispatch supported events.
 
-Open `scripts/active_mods.txt` and add your mod name:
+## Step 3: Enable the Mod
 
+Open:
+
+```text
+scripts/active_mods.txt
 ```
-# scripts/active_mods.txt
+
+Add:
+
+```text
 my_first_mod
 ```
 
-**Important:** The mod name must exactly match the folder name (case-sensitive on Linux).
+The entry must correspond to the mod directory name.
 
-### Step 4: Test Your Mod
+For example:
 
-1. Launch the game via `injector.exe`
-2. Start a skirmish match
-3. Check the in-game message ticker for "MyFirstMod loaded!"
-
-If you see the message, congratulations! Your mod is working.
-
----
-
-## Understanding the API
-
-LuaAPI uses **namespaces** to organize functionality:
-
-### Core Namespaces
-
-| Namespace | Purpose | Example |
-|-----------|---------|---------|
-| **`House`** | Player and house management | `House.GetPlayer()` |
-| **`World`** | Global queries | `World.GetUnits()` |
-| **`Engine`** | Game engine functions | `Engine.PrintMessage()` |
-| **`Game`** | Game state | `Game.GetFrame()` |
-
-### Unit Methods
-
-When you get a unit from `World.GetUnits()`, you can call methods on it:
-
-```lua
-local unit = World.GetUnits()[1]
-if unit then
-    local owner = unit:GetOwner()      -- Returns HouseClass*
-    local typeName = unit:GetTypeName() -- Returns "HTNK", "E1", etc.
-    local health = unit:GetHealth()    -- Returns current HP
-    local pos = unit:GetPosition()     -- Returns {x=number, y=number}
-end
+```text
+scripts/mods/my_first_mod/
 ```
 
-**Important:** All methods include automatic validation. If a unit is destroyed between frames, methods return `nil` instead of crashing.
+corresponds to:
+
+```text
+my_first_mod
+```
+
+## Step 4: Start a Match
+
+Launch the game using your normal LuaAPI injector workflow and start a scenario.
+
+If the mod loads successfully, the game should display:
+
+```text
+MyFirstMod loaded!
+```
+
+through the in-game message system.
 
 ---
 
-## Working with Units
+# Understanding the API
 
-### Getting All Units
+LuaAPI organizes its functionality into namespaces.
+
+| Namespace | Purpose                          | Example                 |
+| --------- | -------------------------------- | ----------------------- |
+| `House`   | Player and house management      | `House.GetPlayer()`     |
+| `World`   | Global game-world queries        | `World.GetUnits()`      |
+| `Engine`  | Engine-level functions           | `Engine.PrintMessage()` |
+| `Game`    | Game state and frame information | `Game.GetFrame()`       |
+
+The API also exposes methods on game objects such as `TechnoClass` and `HouseClass`.
+
+For the authoritative list of currently exposed functions, see [`API.md`](../API.md).
+
+---
+
+# Working with Units
+
+## Getting Units
+
+You can retrieve units through `World.GetUnits()`:
 
 ```lua
 function MyFirstMod.Update(frame)
     local units = World.GetUnits()
-    
-    for i, unit in ipairs(units) do
+
+    for _, unit in ipairs(units) do
         if unit:IsAlive() then
             local typeName = unit:GetTypeName()
-            local owner = unit:GetOwner()
-            
             Engine.PrintMessage("Unit: " .. typeName, 1)
         end
     end
 end
 ```
 
-### Filtering Units
+Avoid printing every unit every frame in a real mod. The example is intentionally simple.
+
+A more practical approach is to run the operation periodically:
 
 ```lua
 function MyFirstMod.Update(frame)
-    local player = House.GetPlayer()
-    if not player then return end
-    
+    if frame % 60 ~= 0 then
+        return
+    end
+
     local units = World.GetUnits()
-    local playerUnits = {}
-    
+
     for _, unit in ipairs(units) do
-        if unit:IsAlive() and unit:GetOwner() == player then
-            table.insert(playerUnits, unit)
+        if unit:IsAlive() then
+            local typeName = unit:GetTypeName()
+            -- Your logic here.
         end
     end
-    
-    Engine.PrintMessage("You have " .. #playerUnits .. " units", 1)
 end
 ```
 
-### Spatial Queries
+`Update(frame)` is driven by the game's logical frame counter.
 
-Find units within a radius:
+---
+
+## Getting the Local Player
+
+Use:
 
 ```lua
-function MyFirstMod.Update(frame)
-    local player = House.GetPlayer()
-    if not player then return end
-    
-    -- Find player's base (first building)
-    local buildings = World.GetBuildings()
-    local basePos = nil
-    
-    for _, building in ipairs(buildings) do
-        if building:IsAlive() and building:GetOwner() == player then
-            basePos = building:GetPosition()
-            break
-        end
-    end
-    
-    if not basePos then return end
-    
-    -- Find all units within 10 cells of base
-    local nearbyUnits = World.GetUnitsInRadius(basePos.x, basePos.y, 10)
-    
-    Engine.PrintMessage(#nearbyUnits .. " units near base", 1)
+local player = House.GetPlayer()
+```
+
+Always handle the possibility that no player house is available in the current game state:
+
+```lua
+local player = House.GetPlayer()
+
+if not player then
+    return
+end
+```
+
+You can then compare a unit's owner with the player house:
+
+```lua
+if unit:IsAlive() and unit:GetOwner() == player then
+    -- Player-owned unit.
 end
 ```
 
 ---
 
-## Responding to Events
+## Getting Unit Information
 
-### OnScenarioStart
+Common operations include:
 
-Runs once when a match starts. Perfect for initialization:
+```lua
+local typeName = unit:GetTypeName()
+local health = unit:GetHealth()
+local maxHealth = unit:GetMaxHealth()
+local position = unit:GetPosition()
+local owner = unit:GetOwner()
+```
+
+For example:
+
+```lua
+function MyFirstMod.Update(frame)
+    if frame % 60 ~= 0 then
+        return
+    end
+
+    local units = World.GetUnits()
+
+    for _, unit in ipairs(units) do
+        if unit:IsAlive() then
+            local position = unit:GetPosition()
+
+            Engine.PrintMessage(
+                unit:GetTypeName()
+                .. " at "
+                .. position.x
+                .. ","
+                .. position.y,
+                1
+            )
+        end
+    end
+end
+```
+
+Consult [`API.md`](../API.md) for the complete object-method reference.
+
+---
+
+# Spatial Queries
+
+LuaAPI provides spatial queries through `World.GetUnitsInRadius()`.
+
+For example:
+
+```lua
+local nearbyUnits = World.GetUnitsInRadius(x, y, 10)
+```
+
+A practical example is finding units around one of the player's buildings:
+
+```lua
+function MyFirstMod.Update(frame)
+    if frame % 60 ~= 0 then
+        return
+    end
+
+    local player = House.GetPlayer()
+    if not player then
+        return
+    end
+
+    local basePosition = nil
+
+    for _, building in ipairs(World.GetBuildings()) do
+        if building:IsAlive() and building:GetOwner() == player then
+            basePosition = building:GetPosition()
+            break
+        end
+    end
+
+    if not basePosition then
+        return
+    end
+
+    local nearbyUnits = World.GetUnitsInRadius(
+        basePosition.x,
+        basePosition.y,
+        10
+    )
+
+    Engine.PrintMessage(
+        "Units near base: " .. #nearbyUnits,
+        1
+    )
+end
+```
+
+---
+
+# Responding to Events
+
+LuaAPI exposes callback events through functions on your mod table.
+
+A basic mod can look like this:
 
 ```lua
 local MyFirstMod = {}
-local initialized = false
 
 function MyFirstMod.OnScenarioStart()
-    Engine.PrintMessage("Match started! Initializing...", 1)
-    initialized = true
+    -- Scenario initialization.
+end
+
+function MyFirstMod.OnUnitDestroyed(victim, killer)
+    -- Destruction event.
+end
+
+function MyFirstMod.OnPreDamage(attacker, target, damage, dmgType, frame, subc)
+    -- Damage interception.
+    return damage
+end
+
+function MyFirstMod.OnDebugCommand(text)
+    -- Debug command handling.
 end
 
 function MyFirstMod.Update(frame)
-    if not initialized then return end
-    
-    -- Your game logic here
+    -- Per-logical-frame logic.
 end
 
 return MyFirstMod
 ```
 
-### OnUnitDestroyed
-
-Runs when any unit or building is destroyed:
-
-```lua
-function MyFirstMod.OnUnitDestroyed(victim, killer)
-    if not victim or not victim:IsAlive() then return end
-    
-    local victimType = victim:GetTypeName()
-    local killerType = killer and killer:GetTypeName() or "unknown"
-    
-    Engine.PrintMessage(victimType .. " destroyed by " .. killerType, 2)
-end
-```
-
-### OnPreDamage
-
-Intercepts damage before it's applied. Return modified damage or `0` to cancel:
-
-```lua
-function MyFirstMod.OnPreDamage(attacker, target, damage, dmgType, frame, subc)
-    -- Make player units take 50% less damage
-    local player = House.GetPlayer()
-    if not player then return damage end
-    
-    if target and target:GetOwner() == player then
-        return damage * 0.5 -- 50% damage reduction
-    end
-    
-    return damage -- Pass through unchanged
-end
-```
+The supported callback names and their exact arguments are documented in [`API.md`](../API.md).
 
 ---
 
-## Testing Your Mod
+## OnScenarioStart
 
-### Method 1: Development Tools (Recommended)
+`OnScenarioStart()` is intended for scenario initialization.
 
-Use `house:SpawnUnit()` for rapid testing:
+For example:
+
+```lua
+function MyFirstMod.OnScenarioStart()
+    Engine.PrintMessage("Scenario initialized.", 1)
+end
+```
+
+Use this callback for initialization that should happen once when the scenario starts.
+
+Do not assume that `OnScenarioStart()` is a general-purpose "Lua DLL loaded" callback. It is a gameplay/scenario lifecycle event.
+
+---
+
+## Update
+
+`Update(frame)` receives the current logical frame:
+
+```lua
+function MyFirstMod.Update(frame)
+    if frame % 300 == 0 then
+        Engine.PrintMessage("5 seconds elapsed.", 1)
+    end
+end
+```
+
+The exact relationship between logical frames and real-time seconds depends on the game's simulation timing. Avoid using wall-clock functions for deterministic gameplay logic.
+
+---
+
+## OnPreDamage
+
+`OnPreDamage()` can inspect or modify incoming damage:
+
+```lua
+function MyFirstMod.OnPreDamage(
+    attacker,
+    target,
+    damage,
+    dmgType,
+    frame,
+    subc
+)
+    local player = House.GetPlayer()
+
+    if not player then
+        return damage
+    end
+
+    if target and target:GetOwner() == player then
+        return damage * 0.5
+    end
+
+    return damage
+end
+```
+
+In this example, player-owned targets receive half of the incoming damage.
+
+The callback can return:
+
+* a number to replace the incoming damage value;
+* `0` to cancel the damage;
+* `nil` to leave the original damage unchanged.
+
+Use the behavior documented in [`API.md`](../API.md) as the authoritative contract.
+
+---
+
+## OnUnitDestroyed
+
+`OnUnitDestroyed(victim, killer)` is called when a supported unit or building destruction event occurs.
+
+The victim may no longer be considered alive when the callback executes. Therefore, do not require `victim:IsAlive()` before processing the destruction event.
+
+Example:
+
+```lua
+function MyFirstMod.OnUnitDestroyed(victim, killer)
+    if not victim then
+        return
+    end
+
+    local victimType = victim:GetTypeName()
+
+    local killerType = "unknown"
+
+    if killer then
+        killerType = killer:GetTypeName()
+    end
+
+    Engine.PrintMessage(
+        victimType .. " destroyed by " .. killerType,
+        2
+    )
+end
+```
+
+If you need to inspect the victim's state after destruction, rely only on operations that are explicitly documented as valid for that event.
+
+---
+
+## OnDebugCommand
+
+A mod can receive debug input through:
+
+```lua
+function MyFirstMod.OnDebugCommand(text)
+    Engine.PrintMessage("Command: " .. text, 1)
+end
+```
+
+The exact mechanism used to enter debug commands depends on the LuaAPI debug-console implementation. Refer to the project's current debug-console documentation for the input workflow.
+
+---
+
+# Testing Your Mod
+
+## Spawning Units
+
+LuaAPI exposes `SpawnUnit()` for development and gameplay scripting.
+
+A simple example:
 
 ```lua
 function MyFirstMod.OnScenarioStart()
     local player = House.GetPlayer()
-    if not player then return end
-    
-    -- Find player's base
-    local buildings = World.GetBuildings()
-    local basePos = nil
-    
-    for _, building in ipairs(buildings) do
-        if building:IsAlive() and building:GetOwner() == player then
-            basePos = building:GetPosition()
-            break
-        end
-    end
-    
-    if not basePos then return end
-    
-    -- Spawn 5 Apocalypses near base with hunt mission
-    local spawned = player:SpawnUnit("APOC", 5, basePos.x + 5, basePos.y + 5, 0, false, "hunt")
-    Engine.PrintMessage("Spawned " .. spawned .. " Apocalypses", 1)
-end
-```
 
-### Method 2: Debug Console
-
-Create a debug console mod to spawn units on-demand:
-
-```lua
--- scripts/mods/debug_console/main.lua
-local DebugConsole = {}
-
-function DebugConsole.OnDebugCommand(text)
-    -- Parse "5 APOC" or "3 LTNK"
-    local count, typeId = text:match("^(%d+)%s+(%u+)$")
-    if not count or not typeId then
-        Engine.PrintMessage("[DEBUG] Invalid command", 2)
+    if not player then
         return
     end
-    
-    count = tonumber(count)
-    local player = House.GetPlayer()
-    if not player then return end
-    
-    -- Find player's base
+
     local buildings = World.GetBuildings()
-    local basePos = nil
-    
+    local basePosition = nil
+
     for _, building in ipairs(buildings) do
         if building:IsAlive() and building:GetOwner() == player then
-            basePos = building:GetPosition()
+            basePosition = building:GetPosition()
             break
         end
     end
-    
-    if not basePos then return end
-    
-    -- Spawn with hunt mission
-    local spawned = player:SpawnUnit(typeId, count, basePos.x + 5, basePos.y + 5, 0, false, "hunt")
-    Engine.PrintMessage("[DEBUG] Spawned " .. spawned .. " " .. typeId, 1)
-end
 
-return DebugConsole
+    if not basePosition then
+        return
+    end
+
+    local spawned = player:SpawnUnit(
+        "APOC",
+        5,
+        basePosition.x + 5,
+        basePosition.y + 5,
+        0,
+        false,
+        "hunt"
+    )
+
+    Engine.PrintMessage(
+        "Spawned " .. spawned .. " Apocalypses.",
+        1
+    )
+end
 ```
 
-**Usage:**
-1. Enable both `my_first_mod` and `debug_console` in `active_mods.txt`
-2. In-game, press **Backspace** to toggle debug mode
-3. Type `5 APOC` and press **Enter**
-4. 5 Apocalypses spawn near your base and attack enemies
+The complete `SpawnUnit()` parameter and behavior reference is maintained in [`API.md`](../API.md).
 
 ---
 
-## Next Steps
+# Multiplayer Considerations
 
-### Explore More Examples
+LuaAPI gameplay code must remain deterministic when used in multiplayer.
 
-Check out the sample mods in `scripts/mods/`:
+Do not base gameplay decisions on wall-clock time:
 
-- **`multi_turret_battleship`** — Advanced multi-turret combat system
-- **`shield_overload`** — Sub-frame damage interception
-- **`bounty_hunter`** — Dynamic economy and rewards
-- **`damaged_fleet`** — Pre-damaged starting units
-
-### Read the Documentation
-
-- **[API.md](../API.md)** — Complete API reference with all methods
-- **[CAPABILITIES_AND_COOKBOOK.md](../PROJECT/CAPABILITIES_AND_COOKBOOK.md)** — Proven mechanics with copy-paste recipes
-- **[ENGINEERING_LESSONS.md](ENGINEERING_LESSONS.md)** — Technical deep-dives and pitfalls
-
-### Join the Community
-
-- Report issues on GitHub
-- Share your mods
-- Contribute to LuaAPI development
-
----
-
-## 🎯 Common Pitfalls
-
-### 1. Dead Units Cause nil Errors
-
-**Problem:**
 ```lua
-local unit = World.GetUnits()[1]
-local health = unit:GetHealth() -- Crashes if unit died this frame
-```
-
-**Solution:**
-```lua
-local unit = World.GetUnits()[1]
-if unit and unit:IsAlive() then
-    local health = unit:GetHealth()
+-- Avoid this in deterministic gameplay logic.
+if os.time() % 10 == 0 then
+    -- ...
 end
 ```
 
-### 2. Forgetting to Return from OnPreDamage
+Prefer the logical frame:
 
-**Problem:**
 ```lua
-function MyMod.OnPreDamage(attacker, target, damage, dmgType, frame, subc)
-    -- Forgot to return!
-    -- Damage becomes nil, causing undefined behavior
-end
-```
-
-**Solution:**
-```lua
-function MyMod.OnPreDamage(attacker, target, damage, dmgType, frame, subc)
-    return damage -- Always return something
-end
-```
-
-### 3. Using os.time() in Multiplayer
-
-**Problem:**
-```lua
-function MyMod.Update(frame)
-    if os.time() % 10 == 0 then -- Causes OOS in multiplayer!
-        -- Logic here
+function MyFirstMod.Update(frame)
+    if frame % 300 == 0 then
+        -- Deterministic frame-based logic.
     end
 end
 ```
 
-**Solution:**
+For random gameplay decisions, ensure that all clients execute the same deterministic sequence. Do not introduce external or client-specific sources of randomness into synchronized gameplay logic.
+
+Before releasing a multiplayer mod, test it on CnCNet and verify that no Out-of-Sync errors occur.
+
+For the current LuaAPI/CnCNet integration workflow, see the relevant section of [`API.md`](../API.md).
+
+---
+
+# Common Pitfalls
+
+## 1. Assuming Every Object Is Available
+
+Game objects are tied to the game's lifecycle. Always handle missing references:
+
 ```lua
-function MyMod.Update(frame)
-    if frame % 300 == 0 then -- Use logical frames instead
-        -- Logic here
+local player = House.GetPlayer()
+
+if not player then
+    return
+end
+```
+
+For objects obtained from world queries:
+
+```lua
+for _, unit in ipairs(World.GetUnits()) do
+    if unit:IsAlive() then
+        -- Safe place to perform operations that require a live unit.
     end
 end
 ```
 
-### 4. Not Enabling the Mod
-
-**Problem:** Mod folder exists but mod doesn't load.
-
-**Solution:** Check `scripts/active_mods.txt` contains your mod name (exact folder name match).
+Do not treat `IsAlive()` as a universal guarantee for every possible native operation. Follow the validity requirements documented for each API method.
 
 ---
 
-## 🚀 Advanced Topics
+## 2. Forgetting the `OnPreDamage` Return Value
 
-### Sub-Turrets
+If your callback is not intentionally changing or cancelling damage, pass the original value through:
 
-Create multi-turret units:
+```lua
+function MyFirstMod.OnPreDamage(
+    attacker,
+    target,
+    damage,
+    dmgType,
+    frame,
+    subc
+)
+    return damage
+end
+```
+
+Returning `nil` has a defined meaning for this callback: the original damage is preserved.
+
+---
+
+## 3. Using Wall-Clock Time for Gameplay Logic
+
+Avoid:
+
+```lua
+os.time()
+os.clock()
+```
+
+for synchronized gameplay decisions.
+
+Use:
+
+```lua
+function MyFirstMod.Update(frame)
+    if frame % 300 == 0 then
+        -- Periodic deterministic logic.
+    end
+end
+```
+
+---
+
+## 4. Running Expensive Logic Every Frame
+
+This is legal:
+
+```lua
+function MyFirstMod.Update(frame)
+    for _, unit in ipairs(World.GetUnits()) do
+        -- ...
+    end
+end
+```
+
+But it may become unnecessarily expensive in large matches.
+
+If the logic does not need to execute every frame, gate it:
+
+```lua
+function MyFirstMod.Update(frame)
+    if frame % 30 ~= 0 then
+        return
+    end
+
+    for _, unit in ipairs(World.GetUnits()) do
+        -- ...
+    end
+end
+```
+
+Choose the interval according to the actual gameplay requirement.
+
+---
+
+# Advanced Example: Sub-Turrets
+
+LuaAPI can expose advanced unit functionality such as sub-turrets.
+
+A minimal example:
+
+```lua
+function MyFirstMod.OnScenarioStart()
+    local player = House.GetPlayer()
+
+    if not player then
+        return
+    end
+
+    for _, unit in ipairs(World.GetUnits()) do
+        if unit:IsAlive()
+            and unit:GetOwner() == player
+            and unit:GetTypeName() == "DRED"
+        then
+            unit:AddSubTurret(
+                1,
+                40,
+                0,
+                15,
+                12,
+                90
+            )
+
+            unit:AddSubTurret(
+                2,
+                -40,
+                0,
+                15,
+                12,
+                90
+            )
+
+            unit:AddSubTurret(
+                3,
+                0,
+                40,
+                15,
+                12,
+                90
+            )
+        end
+    end
+end
+```
+
+For a complete multi-turret implementation, see:
+
+[`CAPABILITIES_AND_COOKBOOK.md`](../PROJECT/CAPABILITIES_AND_COOKBOOK.md)
+
+---
+
+# 📚 Quick Reference
+
+## Namespaces
+
+```lua
+House.GetPlayer()
+House.GetCount()
+House.GetByIndex(index)
+
+World.GetBuildings()
+World.GetUnits()
+World.GetAllUnits()
+World.GetUnitsInRadius(x, y, radius)
+World.GetWaypoint(id)
+
+Engine.PrintMessage(text, colorIndex)
+
+Game.GetFrame()
+Game.IsInMatch()
+```
+
+## Common Unit Methods
+
+```lua
+unit:GetOwner()
+unit:GetTypeName()
+unit:GetHealth()
+unit:GetMaxHealth()
+unit:IsAlive()
+unit:GetPosition()
+unit:GetDistanceTo(otherUnit)
+
+unit:IsAttacking()
+unit:TakeDamage(amount, warhead)
+unit:Disable(frames)
+```
+
+## House Methods
+
+```lua
+house:GetName()
+house:IsHuman()
+house:IsAlliedWith(otherHouse)
+house:GetCredits()
+house:AddCredits(amount)
+
+house:SpawnUnit(
+    typeId,
+    count,
+    x,
+    y,
+    facing,
+    force,
+    action
+)
+```
+
+## Events
 
 ```lua
 function MyMod.OnScenarioStart()
-    local player = House.GetPlayer()
-    if not player then return end
-    
-    for _, unit in ipairs(World.GetUnits()) do
-        if unit:IsAlive() and unit:GetOwner() == player then
-            if unit:GetTypeName() == "DRED" then
-                -- Add 3 sub-turrets
-                unit:AddSubTurret(1, 40, 0, 15, 12, 90)   -- Fore
-                unit:AddSubTurret(2, -40, 0, 15, 12, 90)  -- Aft
-                unit:AddSubTurret(3, 0, 40, 15, 12, 90)   -- Port
-            end
-        end
-    end
+end
+
+function MyMod.OnUnitDestroyed(victim, killer)
+end
+
+function MyMod.OnPreDamage(
+    attacker,
+    target,
+    damage,
+    dmgType,
+    frame,
+    subc
+)
+end
+
+function MyMod.OnDebugCommand(text)
+end
+
+function MyMod.Update(frame)
 end
 ```
 
-See **[CAPABILITIES_AND_COOKBOOK.md](../PROJECT/CAPABILITIES_AND_COOKBOOK.md)** for the complete multi-turret implementation.
-
-### CnCNet Multiplayer
-
-Test your mods in online matches:
-
-1. Both players install identical LuaAPI + scripts
-2. Both enable the same mods in `active_mods.txt`
-3. Launch via CnCNet client
-4. Run `injector.exe --attach` on each client
-5. Play and verify no OOS errors
-
-See **[API.md](../API.md)** section "CnCNet Determinism" for details.
+For complete signatures, parameters, return values, and behavioral constraints, use [`API.md`](../API.md).
 
 ---
 
-## 📚 Quick Reference
+# 🚀 Next Steps
 
-### Namespaces
+After completing this tutorial, explore:
 
-```lua
-House.GetPlayer()           -- Get local player house
-House.GetCount()            -- Total number of houses
-House.GetByIndex(i)         -- Get house by index
+* [`API.md`](../API.md) — Complete API reference
+* [`CAPABILITIES_AND_COOKBOOK.md`](../PROJECT/CAPABILITIES_AND_COOKBOOK.md) — Proven mechanics and practical recipes
+* [`ENGINEERING_LESSONS.md`](ENGINEERING_LESSONS.md) — Native-engine and implementation lessons
+* [`MOD_MANAGER.md`](MOD_MANAGER.md) — Mod loading and distribution
+* [`ROADMAP.md`](ROADMAP.md) — Project development status
 
-World.GetBuildings()        -- All buildings
-World.GetUnits()            -- All units
-World.GetUnitsInRadius(x, y, r) -- Units in radius
+The recommended progression is:
 
-Engine.PrintMessage(text, color) -- Print to HUD
-Game.GetFrame()             -- Current logical frame
+```text
+Tutorial
+   ↓
+API Reference
+   ↓
+Cookbook / Examples
+   ↓
+Advanced Mod Development
 ```
 
-### Unit Methods
-
-```lua
-unit:GetOwner()             -- Returns HouseClass*
-unit:GetTypeName()          -- Returns "HTNK", "E1", etc.
-unit:GetHealth()            -- Current HP
-unit:GetMaxHealth()         -- Maximum HP
-unit:IsAlive()              -- Is unit alive?
-unit:GetPosition()          -- Returns {x, y}
-unit:IsAttacking()          -- Is unit in Attack mission?
-unit:TakeDamage(amount, warhead) -- Apply damage
-```
-
-### House Methods
-
-```lua
-house:GetName()             -- House name
-house:IsHuman()             -- Is human-controlled?
-house:IsAlliedWith(other)   -- Alliance check
-house:GetCredits()          -- Current credits
-house:AddCredits(amount)    -- Add/subtract credits
-house:SpawnUnit(typeId, count, x, y, facing, force, action) -- Spawn units
-```
-
-### Events
-
-```lua
-function MyMod.OnScenarioStart() end
-function MyMod.OnUnitDestroyed(victim, killer) end
-function MyMod.OnPreDamage(attacker, target, damage, dmgType, frame, subc) end
-function MyMod.OnDebugCommand(text) end
-function MyMod.Update(frame) end
-```
-
----
-
-## 🎓 You're Ready!
-
-You now have the foundation to create powerful LuaAPI mods. Start simple, test often, and gradually add complexity.
-
-**Remember:**
-- Always validate pointers with `IsAlive()` checks
-- Use `Engine.PrintMessage()` for debugging
-- Test in both single-player and multiplayer
-- Read the logs in `LuaAPI.log` when things go wrong
-
-Happy modding! 🎮
-```
-
-Следующий шаг: **README.md** — отделить v1.0 stable от v1.1 development. Делаю?
+Start with small deterministic scripts, validate game objects before operating on them, and test gameplay changes in both single-player and multiplayer environments.
