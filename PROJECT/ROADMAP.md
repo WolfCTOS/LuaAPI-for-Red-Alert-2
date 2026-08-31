@@ -4,7 +4,7 @@
 > **Repository:** https://github.com/WolfCTOS/LuaAPI-for-Red-Alert-2  
 > **Current Release:** `v1.0.0` Production Release  
 > **Current Development:** Milestone 12  
-> **Last Updated:** August 31, 2026
+> **Last Updated:** September 1, 2026
 
 This roadmap tracks the evolution of LuaAPI from runtime embedding to safe native bindings, CnCNet integration, advanced combat systems, and Lua-driven tactical gameplay.
 
@@ -272,7 +272,7 @@ Fixed mod/script path resolution so the loader resolves paths relative to the Lu
 
 # 🔵 Milestone 12 — Unit Control API & Tactical AI
 
-> **Status:** 🔵 **CURRENT DEVELOPMENT**  
+> **Status:** 🔵 **IN PROGRESS**  
 > **Goal:** Expose safe unit-control primitives and use them to build higher-level tactical behavior without immediately replacing the native AI.
 
 The current development loop is:
@@ -306,20 +306,29 @@ unit:IsIdle()
 
 `Attack()` uses the native target-assignment and attack-mission path without relying on the disabled `ActiveClickWith` hook.
 
-Added the `patrol_demo` showcase.
+Fixed house userdata caching (`PushHouse` caches `HouseClass* → Lua registry ref`), so `unit:GetOwner() == House.GetPlayer()` evaluates correctly instead of always being `false` due to fresh userdata per call.
+
+Added the `patrol_demo` showcase: anchors a combat unit (skips MCV), patrols between two points, engages enemies in radius with a 100-frame cooldown, ignores neutrals/civilians/vehicles.
 
 **Implementation status:** ✅ COMPLETE  
-**Runtime showcase status:** ⚠️ VERIFICATION PENDING / DEBUGGING
+**Runtime verification:** ✅ VERIFIED
 
-The current build exposed Lua-side errors in the first showcase pass. Runtime movement and attack behavior must be re-tested after those errors are corrected.
+### [x] Gate 12.2 — Dynamic Objective Defense
 
-### [ ] Gate 12.2 — Dynamic Objective Defense
+Created `dynamic_objective_defense`, a public showcase mod that:
 
-Create a Lua-driven tactical showcase that detects important objectives, selects nearby friendly units, moves them toward the objective, scans for enemies, attacks them, and continuously re-evaluates the situation.
+1. Scans `World.GetBuildings()` for an oil derrick (`CAOILD`).
+2. Picks the player's first combat unit (skips MCV) or spawns an LTNK near the derrick via `house:SpawnUnit`.
+3. Patrols two points on either side of the derrick (offset ±6 cells).
+4. When an enemy enters the defense radius (15 cells), issues `unit:Attack` with a 100-frame cooldown. Ignores neutrals and civilians.
+5. After the target dies, calls `unit:Stop` and resumes patrol.
 
-**Target showcase:** `dynamic_objective_defense`
+All decisions run in `Update()` each logic frame. No event hooks.
 
-The first version should use the minimum existing API surface. New bindings should only be added when a concrete missing primitive is demonstrated.
+Full walkthrough: `docs/SHOWCASE_DYNAMIC_DEFENSE.md`.
+
+**Implementation status:** ✅ COMPLETE  
+**Runtime verification:** ✅ VERIFIED
 
 ### [ ] Gate 12.3 — Miner Self-Preservation / Threat Avoidance
 
@@ -435,7 +444,7 @@ Milestone 11
 ████████████████████ 100% ✅
 
 Milestone 12
-███░░░░░░░░░░░░░░░░░  Current development 🔵
+████████░░░░░░░░░░░░  12.1, 12.2 done 🔵
 ```
 
 Milestone 12 is intentionally iterative. Individual gates should only be marked verified after implementation and runtime testing against the current build.
