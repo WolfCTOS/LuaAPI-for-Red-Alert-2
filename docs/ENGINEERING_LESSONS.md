@@ -83,7 +83,9 @@ Crash we shipped to production: a delayed-explosion registry held
 2. **Array membership** — compare the pointer by address against all active
    engine arrays (`BuildingClass::Array`, `UnitClass::Array`,
    `InfantryClass::Array`, `AircraftClass::Array`). The engine removes dead
-   objects from these arrays; a pointer absent from all of them is freed.
+   objects from these arrays; a pointer absent from all of them is **not an active
+   engine object and must not be dereferenced**. Array absence alone is not a
+   formal proof that the memory has already been freed.
    Address comparison only — never dereference during the check.
 3. `ptr->Health > 0` (and `!InLimbo` where relevant)
 
@@ -99,12 +101,12 @@ frame and produce phantom "death" events.
 ## 4. MinHook on Win32: Protection & Convention Nuances
 
 - **`MH_ERROR_NOT_EXECUTABLE (7)`** means MinHook's `VirtualQuery` check found
-  the target page non-executable — usually meaning *the address isn't mapped in
-  this process at all*. Our occurrence was self-inflicted: the injector had
-  attached to `RA2MD.exe` (an 84 KB launcher stub) instead of `gamemd.exe`.
+  the target page non-executable. It does **not by itself prove that the address
+  is unmapped**. Our occurrence was self-inflicted: the injector had attached to
+  `RA2MD.exe` (an 84 KB launcher stub) instead of `gamemd.exe`.
   `VirtualProtect` there returns `ERROR_INVALID_ADDRESS (487)` — if your
-  pre-flight `VirtualProtect` fails with 487, you're in the wrong process;
-  fix targeting, don't fight permissions.
+  pre-flight `VirtualProtect` fails with 487, investigate process/module
+  targeting before changing memory protections.
 - Validate targets strictly: match process **name** AND confirm the base
   module via module enumeration before injecting. Launcher stubs love sharing
   names with the real thing.
@@ -130,8 +132,9 @@ frame and produce phantom "death" events.
   `std::call_once` — no races, no menu-time interference.
 - Guard all tick dispatch behind an in-match check
   (`ScenarioClass::Instance && HouseClass::CurrentPlayer &&
-  CurrentFrame > 0`). Without it, calling game APIs from the main menu freezes
-  input handling.
+  CurrentFrame > 0`). This is a lifecycle guard; keep the exact condition
+  synchronized with the current implementation rather than treating this
+  historical expression as an immutable API contract.
 - Loggers: rotating sink, mutex-protected, **flush per line** — a buffered log
   lost to a crash is a log you never had. This single change cut our
   mean-time-to-diagnosis dramatically.
@@ -168,10 +171,17 @@ injector/GUI ──► gamemd.exe (CREATE_SUSPENDED)
         scripts/mods/<name>/main.lua   ← pure Lua gameplay modules
 ```
 
-Frozen C++ host, hot-swappable pure-Lua gameplay, `pcall` isolation between
-mods, and liveness-checked bindings as the only bridge between the two worlds.
-Everything above exists because something crashed, silently did nothing, or
-dealt zero damage first. Keep the lessons, skip the crashes.
+The C++ host provides the native safety boundary while continuing to evolve as
+engine integration work is added; gameplay behavior is hot-swappable in pure
+Lua, with `pcall` isolation between mods and liveness-checked bindings as the
+bridge between the two worlds. Everything above exists because something
+crashed, silently did nothing, or dealt zero damage first. Keep the lessons,
+skip the crashes.
+
+> **Current API note:** Multi-turret targeting/firing uses the verified Lua
+> bindings `SetSplitTargets` and `FireSplitSalvo`. Older names such as
+> `SetSubTurretTarget` and `FireSubTurret` are historical and are not part of
+> the current API contract.
 
 ---
 
@@ -209,7 +219,7 @@ For the actual verified diagnosis and current status, see Section 9.
 
 ---
 
-## 9. The ActiveClickWith Detour Crash: MinHook Mechanism Bug, Not an Engine Limitation
+## 9. The ActiveClickWith Detour Crash: Detour Fault Domain Identified
 
 ### Final diagnosis
 
