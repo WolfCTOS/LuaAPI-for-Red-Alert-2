@@ -1,8 +1,10 @@
 # Engineering Lessons — Building a Scripting Runtime for Yuri's Revenge 1.001
 
-A technical retrospective on LuaPI: what the YR engine actually is, which
+A technical retrospective on LuaAPI: what the YR engine actually is, which
 approaches failed, why they failed, and what the final architecture looks like.
 Written for future maintainers and anyone extending similar 2000-era Win32 games.
+
+> **Evidence policy:** Historical hypotheses that were later disproven are explicitly marked as such. The final verified conclusion always takes precedence over an earlier failed hypothesis.
 
 ---
 
@@ -173,133 +175,133 @@ dealt zero damage first. Keep the lessons, skip the crashes.
 
 ---
 
-## 8. Spawner Attack Orders: The ActiveClickWith Crash for Buildings
+## 8. Spawner Attack Orders: Historical Failed Hypothesis (FALSIFIED)
 
-### The problem
+> **Status: FALSIFIED.** This section is retained only as debugging history.
+> The original engine-limitation hypothesis was disproven by the test described
+> in Section 9 and must not be treated as an architectural constraint.
 
-When hooking `UnitClass::Active_Click_With` to control the target of spawner units (Dreadnought, Aircraft Carrier), the game crashes when attacking buildings. The crash happens inside the original `ActiveClickWith` or immediately after it returns.
+### Initial hypothesis
 
-### What we tried
+Early testing appeared to show that spawner units such as Dreadnought and
+Aircraft Carrier crashed when attacking buildings through
+`UnitClass::Active_Click_With`. The working hypothesis was that the native
+RA2/YR 1.001 attack-order path could not safely handle building targets for
+spawner units.
 
-1. **Block the original ActiveClickWith** → the game crashes because `SpawnManager` is not initialized, and on the next tick the engine crashes when trying to read `Owner->Target` (which is `nullptr`).
+### What was tried
 
-2. **Call the original for all cases** → the game crashes when attacking buildings (but works for units). The native `QueueMission(Attack)` logic crashes inside the engine.
+1. Block the original `ActiveClickWith`.
+2. Call the original for all cases.
+3. Manually set `pShip->Target` before calling the original.
+4. Disable `QueueMission(Attack)` in `ManagePrimaryAttackTarget` for spawner units.
 
-3. **Manually set `pShip->Target` before calling the original** → still crashes. The problem is not `nullptr`, but the `QueueMission` logic itself.
+These approaches did not isolate the fault. They therefore could not establish
+an engine limitation.
 
-4. **Disable `QueueMission(Attack)` in `ManagePrimaryAttackTarget` for spawner units** → the crash still happens because the original `ActiveClickWith` itself calls `QueueMission` internally.
+### Superseded solution
 
-### The root cause
+The previous proposal to bypass native `ActiveClickWith` and manually create
+missiles was based on the failed engine-limitation hypothesis. It is **not** the
+current architectural solution and should not be copied as a verified pattern.
 
-The RA2/YR 1.001 engine cannot correctly handle an attack-building order for spawner units through `ActiveClickWith`. This is a fundamental problem in the native engine logic, not our code.
-
-### Solution: Manual missile salvo
-
-For spawner attacks on buildings we **do not call** the original `ActiveClickWith`. Instead:
-
-1. **Block the original** in the hook for spawner units when attacking buildings
-2. **Manually set `pShip->Target`** (without `QueueMission`)
-3. **Create missiles manually** via `BulletClass::Create` or a direct spawn call with the correct parameters
-4. **Intercept the missiles** in `ProcessSpawnedMissiles` (already implemented) and redirect them to the cached target
-
-This approach bypasses the native `ActiveClickWith` and `QueueMission` logic, which crash for spawner attacks on buildings.
-
-### Code example
-
-```cpp
-// In the ActiveClickWith hook for spawner attacks on buildings:
-if (isSpawner && IsBuilding(pTargetTechno)) {
-    // Do NOT call the original
-    pShip->Target = pTargetTechno;  // only hold the target
-    g_PlayerTargetOverride[pShip] = static_cast<AbstractClass*>(pTarget);
-    
-    // Create missiles manually (next step)
-    // BulletClass::Create(...);
-    return;
-}
-
-// For normal units and spawner attacks on units — call the original
-if (g_pOriginalActiveClickWith) {
-    g_pOriginalActiveClickWith(pThis, action, pTarget);
-}
-```
+For the actual verified diagnosis and current status, see Section 9.
 
 ---
 
-## 9. The ActiveClickWith Detour Crash: A MinHook Mechanism Bug, Not an Engine Limitation
+## 9. The ActiveClickWith Detour Crash: MinHook Mechanism Bug, Not an Engine Limitation
 
-### The initial misdiagnosis
+### Final diagnosis
 
-Early testing showed that spawner units (Dreadnought, Aircraft Carrier) crashed when attacking buildings or units via player click, while terrain attacks worked fine. We spent multiple iterations testing spawner-specific theories: blocking the original call, manually setting `pShip->Target`, calling the original once to initialize `SpawnManager`, and various combinations.
+The decisive test was to **completely disable the MinHook detour on
+`ActiveClickWith`** at `0x4D74E0` and run the game using native logic only.
 
-All six approaches crashed immediately after the hook returned, before a single `Update` tick. We documented this as "fundamental engine limitation for spawner TechnoClass targets" in an earlier version of this section.
+Result: **DRED, APOC, spawner units, and non-spawner units could attack buildings
+and units without crashing.**
 
-### The breakthrough: disabling the hook entirely
+This falsified the earlier claim that RA2/YR itself could not process building
+attack orders for spawner units. The evidence instead points to the **detour
+mechanism** as the fault domain.
 
-The diagnostic breakthrough came from a simple test: **completely disable the MinHook detour on `ActiveClickWith`** (address `0x4D74E0`) and run the game with native logic only.
+### Current hook status
 
-Result: **all units (DRED, APOC, any spawner or non-spawner) attack buildings and units without crashing**.
+The `ActiveClickWith` hook remains **disabled** (`kDisableActiveClickHook=true`).
+The diagnosis has been corrected, but no replacement interception point has
+been verified and enabled yet.
 
-This single test invalidated the entire "engine limitation" theory. The problem was not in the engine's handling of spawner combat orders, nor in our state management logic. The problem was in the **MinHook detour mechanism itself**.
+Therefore:
 
-### Why the detour crashes
+- Native player and AI attack orders remain functional.
+- Programmatic interception of `ActiveClickWith` is currently unavailable.
+- `ProcessSpawnedMissiles` remains the verified mechanism for missile-side
+  redirection after launch.
+- Any claim that an alternative `SetTarget`, `QueueMission`, mouse-input, or
+  Ares/Phobos interception point is already implemented is **UNVERIFIED**.
 
-When the hook is active, even a trivial detour that immediately returns without reading arguments or calling the original still crashes the game:
+### Why the detour is suspected
+
+When the hook is active, even a trivial detour that immediately returns without
+reading arguments or calling the original still crashes the game:
 
 ```cpp
 void __fastcall Hooked_ActiveClickWith(FootClass* pThis, void* /*edx*/, int action, void* pTarget) {
     if (action == 0x5) {  // Attack
         LUA_LOG_WARN("[EventHook] ATTACK action detected, returning WITHOUT calling original");
         LUA_FLUSH_LOG();
-        return;  // trivial return, no state changes
+        return;
     }
-    // ...
 }
 ```
 
-This crash pattern (immediate crash after trivial return, no argument reads, no original call) points to a MinHook trampoline issue, not a signature mismatch or logic bug. Possible causes:
+The observed pattern is consistent with a MinHook trampoline/prologue/address
+problem. Candidate causes include:
 
-- Wrong hook address: `0x4D74E0` may not be the function entry point but somewhere in the middle
-- SEH frame interference: the function may have a Structured Exception Handler frame that MinHook cannot correctly relocate
-- Prologue incompatibility: MinHook's trampoline may not correctly handle the function's prologue bytes
+- wrong or non-entry hook address;
+- SEH frame interference;
+- incompatible prologue relocation.
 
-### The diagnostic matrix that led to the truth
+These are **possible causes, not individually proven root causes**. The proven
+fact is narrower: disabling the detour restores native attack behavior.
+
+### Diagnostic matrix
 
 | Test | Result | Interpretation |
 |------|--------|----------------|
-| Block original, no state writes | Crash after return | Not a state management issue |
-| Call original with passthrough | Crash after return | Not a signature mismatch (if it were, call would crash inside) |
-| Set pShip->Target before original | Crash inside original | Not a Target write issue |
-| Call original once for SpawnManager init | Crash on next tick | Not a SpawnManager initialization issue |
-| Disable hook entirely | Works perfectly | Problem is in the detour mechanism |
+| Block original, no state writes | Crash after return | Not a state-management issue |
+| Call original with passthrough | Crash after return | Detour remains implicated |
+| Set `pShip->Target` before original | Crash inside original | Target write alone does not solve it |
+| Call original once for SpawnManager init | Crash on next tick | SpawnManager initialization does not solve it |
+| Disable hook entirely | Works | Native engine path is functional; detour is the fault domain |
 
-### Why ActiveClickWith has no YRpp signature
+### Why `ActiveClickWith` remains unresolved
 
-The YR++ header library does not declare `UnitClass::Active_Click_With` (or `ActiveClickWith`). The class declaration `class NOVTABLE UnitClass : public FootClass` (UnitClass.h:13) confirms ABI compatibility with `FootClass*`, but the function itself is community-documented.
+The YR++ headers do not provide a canonical declaration for
+`UnitClass::Active_Click_With`. The project therefore cannot currently treat
+its exact ABI/signature or a safe MinHook interception point as fully verified.
 
-We used the community signature: `void __thiscall Active_Click_With(ActionType action, ObjectClass* target)`, mapped to a `__fastcall` detour with `FootClass* pThis` (ECX), `int action` (stack+4), `void* pTarget` (stack+8), and `void* /*edx*/` as a placeholder.
+The strategic decision is to keep the hook disabled until an alternative
+interception method is experimentally validated.
 
-The ABI mapping was correct, but the detour mechanism itself was the problem.
+### Strategic decision
 
-### Strategic decision for Gate 10.4
+For the current milestone, native attack orders are preserved rather than
+risking a process-wide crash for programmatic target interception.
 
-With the hook disabled, native attack orders work for all units including spawners. The showcase mod `multi_turret_battleship` functions with:
+The next investigation belongs to a future milestone. Candidate approaches
+include:
 
-- Native attack orders (player clicks, AI targeting)
-- Sub-turret system (visual multi-turret rendering)
-- Split-salvo missile redirection via `ProcessSpawnedMissiles`
+- `SetTarget` interception;
+- `QueueMission` interception;
+- UI/mouse input interception;
+- integration with existing Ares/Phobos extension points.
 
-The trade-off: we lose programmatic control over the target selection (cannot force a ship to stay on one target across Rearm cycles). For Gate 10.4, this is acceptable.
-
-### Future work: alternative hook points (Milestone 11)
-
-For Milestone 11 architectural improvements, we should explore alternative interception points that do not suffer from the MinHook trampoline issue:
-
-- `SetTarget` detour: intercept the target assignment rather than the click action
-- `QueueMission` detour: intercept mission changes (Attack, Guard, etc.)
-- Mouse input chain: intercept at the UI layer before the click reaches the unit
-- Ares/Phobos integration: leverage community engine extensions that may have solved this problem
+These candidates are **research targets, not current capabilities**.
 
 ### Lesson learned
 
-When a hook crashes immediately after a trivial return (no argument reads, no original call), the problem is almost certainly in the detour mechanism (trampoline, address, SEH), not in the detour's logic or the engine's behavior. Always test with the hook completely disabled before concluding that the engine has a limitation.
+When a hook crashes immediately after a trivial return, disable the hook
+completely before attributing the behavior to the engine. A working native path
+with the detour removed is strong evidence against an engine limitation, but it
+does not by itself prove which internal MinHook mechanism is defective.
+
+---
