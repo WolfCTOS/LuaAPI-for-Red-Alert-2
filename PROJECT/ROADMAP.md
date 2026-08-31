@@ -360,7 +360,7 @@ Implemented the native interception path required to prevent `SpawnManagerClass`
 
 The system can detach the spawned missile from the parent spawn manager and redirect its trajectory through the native locomotor interface.
 
-This solves a fundamental limitation of spawned `DMISL`-style projectiles.
+This solves the spawned-missile targeting problem addressed by the current implementation.
 
 **Status:** ✅ VERIFIED
 
@@ -424,7 +424,9 @@ SetSplitTargets()
 Multi-turret execution
 ```
 
-The objective is to make multi-target control usable through normal player interaction rather than only through scripted commands.
+**Status:** UNVERIFIED / RESEARCH REQUIRED
+
+No current implementation or verified hook for `PlanningModeClass` is claimed here.
 
 ---
 
@@ -443,8 +445,6 @@ Turret 3 → Target C
              ↓
         Target B / C
 ```
-
-The system should avoid wasted salvos and dynamically redistribute available firepower.
 
 ---
 
@@ -655,80 +655,33 @@ Milestone 10
 ██████████████████░░  Core complete 🟡
 
 Milestone 11
-████░░░░░░░░░░░░░░░░  In development 🔵
+████░░░░░░░░░░░░░░░░  Current development 🔵
 ```
 
-### Proven foundation
-
-LuaAPI currently provides the architectural foundation for:
-
-- Native Lua 5.4 scripting
-- Safe engine-backed object access
-- Scenario lifecycle callbacks
-- Destruction events
-- Spatial queries
-- Economy manipulation
-- HUD messages
-- Sub-frame damage interception
-- Multi-turret state management
-- Split-target combat
-- Spawned missile interception
-- CnCNet-oriented execution
-- Logical-frame scripting
+Milestone 11 is intentionally open-ended. Individual gates should only be marked complete after implementation and verification against the current build.
 
 ---
 
-# 🛣️ Development Direction
+# 🎯 Roadmap Philosophy
 
-The project is moving from:
+LuaAPI should evolve in the following order:
 
 ```text
-Engine Hook
-     ↓
-Lua Runtime
-     ↓
-Safe API
-     ↓
-Gameplay Events
-     ↓
-Advanced Combat
-     ↓
-Tactical Systems
-     ↓
-Programmable AI
+Reverse Engineering
+        ↓
+Safe Native Primitive
+        ↓
+Lua Binding
+        ↓
+Small Prototype
+        ↓
+Stress Test
+        ↓
+Verified Capability
+        ↓
+Documentation
+        ↓
+Higher-Level Systems
 ```
 
-The long-term objective is not simply to expose more functions.
-
-It is to establish a stable abstraction layer that allows modders to implement mechanics that previously required hardcoded engine modifications.
-
----
-
-# 📌 Documentation Synchronization
-
-When the public API changes, the following documents should be reviewed together:
-
-- `README.md` — Project overview
-- `API.md` — Lua API reference
-- `TUTORIAL.md` — Modder tutorial
-- `CAPABILITIES.md` — Verified capabilities and recipes
-- `PROJECT/ENGINEERING_CONTEXT.md` — Technical history and engine lessons
-- `PROJECT/ROADMAP.md` — Development milestones and gates
-
-A capability should not be marked **VERIFIED** in documentation until it has been implemented and tested against the current build.
-
----
-
-# 🎓 Engineering Philosophy
-
-> **Build small.**
->
-> **Verify against the real engine.**
->
-> **Keep unsafe work native.**
->
-> **Keep gameplay logic scriptable.**
->
-> **Document failures, not only successes.**
->
-> **Do not call an engine limitation solved until the implementation survives real gameplay.**
+The roadmap should describe what is **actually proven**, not what is merely technically imaginable.
