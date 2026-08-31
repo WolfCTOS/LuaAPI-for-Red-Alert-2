@@ -509,7 +509,7 @@ Do not interpret benchmark results from an older release as a permanent guarante
 
 ### 🔧 Project Documentation
 
-[`PROJECT/`](PROJECT/) — Architecture, roadmap, milestones, gates, and engineering documentation.
+[`PROJECT/`](PROJECT/) — Architecture, roadmap, milestones, and engineering documentation.
 
 ### 📊 Benchmark
 
@@ -651,3 +651,5 @@ If you are new to LuaAPI:
 Yuri's Revenge is a trademark of Electronic Arts.
 
 Developed for the C&C modding community.
+
+For engineering history and debugging notes, see [`ENGINEERING_LESSONS.md`](docs/ENGINEERING_LESSONS.md).
