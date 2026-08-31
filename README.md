@@ -498,11 +498,11 @@ Do not interpret benchmark results from an older release as a permanent guarante
 
 ### 🎓 Tutorial
 
-[`TUTORIAL.md`](TUTORIAL.md) — Beginner guide for creating and testing a LuaAPI mod.
+[`TUTORIAL.md`](docs/TUTORIAL.md) — Beginner guide for creating and testing a LuaAPI mod.
 
 ### 💡 Capabilities & Cookbook
 
-[`CAPABILITIES.md`](CAPABILITIES.md) — Verified capabilities, case studies, reusable recipes, and engineering lessons.
+[`CAPABILITIES.md`](PROJECT/CAPABILITIES.md) — Verified capabilities, case studies, reusable recipes, and engineering lessons.
 
 ### 🔧 Project Documentation
 
@@ -634,9 +634,9 @@ Red Alert 2 Engine
 
 If you are new to LuaAPI:
 
-**1.** Read [`TUTORIAL.md`](TUTORIAL.md)  
+**1.** Read [`TUTORIAL.md`](docs/TUTORIAL.md)  
 **2.** Use [`API.md`](API.md) as the technical reference  
-**3.** Study [`CAPABILITIES.md`](CAPABILITIES.md) for verified examples  
+**3.** Study [`CAPABILITIES.md`](PROJECT/CAPABILITIES.md) for verified examples  
 **4.** Explore the sample mods under `scripts/mods/`
 
 > 🛠️ **Build small. Test frequently. Verify before documenting.**
