@@ -113,6 +113,40 @@ int Techno_GetMaxHealth(lua_State* L) {
     return 1;
 }
 
+// obj:GetVeterancy() -> string ("rookie" | "veteran" | "elite")
+// Читает TechnoClass::Veterancy (VeterancyStruct). SEH-защищённый доступ.
+// Безопасен для Building/Unit/Infantry/Aircraft.
+int Techno_GetVeterancy(lua_State* L) {
+    auto* pTechno = CheckTechno(L, 1);
+    if (!ValidateTechno(pTechno)) { lua_pushliteral(L, "rookie"); return 1; }
+
+    __try {
+        auto& v = pTechno->Veterancy;
+        if (v.IsElite())   lua_pushliteral(L, "elite");
+        else if (v.IsVeteran()) lua_pushliteral(L, "veteran");
+        else               lua_pushliteral(L, "rookie");
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        lua_pushliteral(L, "rookie");
+    }
+    return 1;
+}
+
+// obj:GetAmmo() -> int
+// Читает TechnoClass::Ammo. SEH-защищённый доступ; безопасен для всех техно.
+int Techno_GetAmmo(lua_State* L) {
+    auto* pTechno = CheckTechno(L, 1);
+    if (!ValidateTechno(pTechno)) { lua_pushinteger(L, 0); return 1; }
+
+    int ammo = 0;
+    __try {
+        ammo = pTechno->Ammo;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        ammo = 0;
+    }
+    lua_pushinteger(L, ammo);
+    return 1;
+}
+
 // obj:GetOwner() -> house | nil
 int Techno_GetOwner(lua_State* L) {
     auto* pTechno = CheckTechno(L, 1);
@@ -378,6 +412,85 @@ int Techno_Hunt(lua_State* L) {
 
     pFoot->QueueMission(Mission::Hunt, true);
     return 0;
+}
+
+// obj:GetMission() -> string | number
+// Читает текущую миссию через нативное поле TechnoClass::CurrentMission.
+// Возвращает строковое имя ("Guard", "Move", "Attack", "Stop", ...) через
+// MissionControlClass::FindName, либо числовой код Mission, если имя недоступно.
+int Techno_GetMission(lua_State* L) {
+    auto* pTechno = CheckTechno(L, 1);
+    if (!ValidateTechno(pTechno)) { lua_pushnil(L); return 1; }
+
+    Mission m = Mission::None;
+    const char* name = nullptr;
+    __try {
+        m = pTechno->CurrentMission;
+        name = MissionControlClass::FindName(m);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        m = Mission::None;
+        name = nullptr;
+    }
+
+    if (name) {
+        lua_pushstring(L, name);
+    } else {
+        lua_pushinteger(L, static_cast<int>(m));
+    }
+    return 1;
+}
+
+// obj:Attack(target) -> bool
+// Нативный приказ атаки на конкретную цель: TechnoClass::SetTarget +
+// QueueMission(Mission::Attack). НЕ использует хук ActiveClickWith.
+// Возвращает true, если цель валидна и команда принята.
+int Techno_Attack(lua_State* L) {
+    auto* pTechno = CheckTechno(L, 1);
+    if (!ValidateTechno(pTechno)) { lua_pushboolean(L, 0); return 1; }
+
+    FootClass* pFoot = AsFoot(pTechno);
+    if (!pFoot) { lua_pushboolean(L, 0); return 1; }
+
+    void* ud = luaL_testudata(L, 2, kMetaName);
+    TechnoClass* pTarget = ud ? *static_cast<TechnoClass**>(ud) : nullptr;
+    if (!pTarget || !ValidateTechno(pTarget)) { lua_pushboolean(L, 0); return 1; }
+
+    __try {
+        pFoot->SetTarget(pTarget);
+        pFoot->QueueMission(Mission::Attack, true);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+
+    LUA_LOG_INFO("[Nav] {} ordered to attack {}", pTechno->GetType()->get_ID(),
+                 pTarget->GetType()->get_ID());
+    lua_pushboolean(L, 1);
+    return 1;
+}
+
+// obj:Stop() -> bool
+// Нативная остановка: сбрасывает цель и пункт назначения, затем ставит миссию
+// Mission::Stop через нативный QueueMission. Возвращает true для мобильного юнита.
+int Techno_Stop(lua_State* L) {
+    auto* pTechno = CheckTechno(L, 1);
+    if (!ValidateTechno(pTechno)) { lua_pushboolean(L, 0); return 1; }
+
+    FootClass* pFoot = AsFoot(pTechno);
+    if (!pFoot) { lua_pushboolean(L, 0); return 1; }
+
+    __try {
+        pFoot->SetTarget(nullptr);
+        pFoot->Destination = nullptr;
+        pFoot->QueueMission(Mission::Stop, true);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+
+    LUA_LOG_INFO("[Nav] {} stopped", pTechno->GetType()->get_ID());
+    lua_pushboolean(L, 1);
+    return 1;
 }
 
 // obj:IsIdle() -> bool (Guard / Stop / Sleep missions)
@@ -656,10 +769,119 @@ int Techno_FireSplitSalvo(lua_State* L) {
     return 1;
 }
 
+// Одноразовый лог, что переопределение урона неприменимо (нет проектеля у оружия).
+bool g_damageOverrideUnavailableLogged = false;
+
+// techno:FireProjectile(weaponTypeId, target [, damage [, flightId]]) -> bool
+// Спавнит BulletClass от юнита к цели через нативный BulletTypeClass::CreateBullet
+// (путь Gate 10.2).
+//   weaponTypeId — даёт урон И warhead (AoE), напр. BlimpBomb.
+//   damage       — необязательный рычаг баланса: переопределяет урон снаряда.
+//   flightId     — необязательный: проектilе (полёт: Speed, ROT/homing) берётся
+//                  из этого оружия (напр. Maverick — быстрая самонаводящаяся
+//                  ракета), если передан и существует; иначе из weaponTypeId.
+// Возвращает boolean. SEH-обёртка + ValidateTechno.
+int Techno_FireProjectile(lua_State* L) {
+    auto* pTechno = CheckTechno(L, 1);
+    if (!ValidateTechno(pTechno)) { lua_pushboolean(L, 0); return 1; }
+
+    const char* weaponId = luaL_checkstring(L, 2);
+    if (!weaponId || !*weaponId) { lua_pushboolean(L, 0); return 1; }
+
+    void* ud = luaL_testudata(L, 3, kMetaName);
+    TechnoClass* pTarget = ud ? *static_cast<TechnoClass**>(ud) : nullptr;
+    if (!pTarget || !ValidateTechno(pTarget)) { lua_pushboolean(L, 0); return 1; }
+
+    int damageOverride = static_cast<int>(luaL_optinteger(L, 4, -1)); // <0 = нет override
+    const char* flightId = luaL_optstring(L, 5, nullptr);
+
+    bool ok = false;
+    __try {
+        // Урон + warhead (AoE) — из weaponId.
+        WeaponTypeClass* pWeapon = WeaponTypeClass::Find(weaponId);
+        if (!pWeapon) { lua_pushboolean(L, 0); return 1; }
+        WarheadTypeClass* pWH = pWeapon->Warhead;
+        if (!pWH) { lua_pushboolean(L, 0); return 1; }
+
+        // Проектиль (полёт/скорость/homing) — из flightId, иначе из weaponId.
+        BulletTypeClass* pBulletType = nullptr;
+        WeaponTypeClass* pFlight = nullptr;
+        if (flightId && *flightId) {
+            pFlight = WeaponTypeClass::Find(flightId);
+            if (pFlight && pFlight->Projectile) pBulletType = pFlight->Projectile;
+        }
+        if (!pBulletType && !pWeapon->Projectile) {
+            if (!g_damageOverrideUnavailableLogged) {
+                g_damageOverrideUnavailableLogged = true;
+                LUA_LOG_WARN("[FireProjectile] weapon '{}' has no projectile/warhead; override skipped", weaponId);
+            }
+            lua_pushboolean(L, 0);
+            return 1;
+        }
+        if (!pBulletType) pBulletType = pWeapon->Projectile;
+
+        int damage = (damageOverride >= 0) ? damageOverride : pWeapon->Damage;
+        int speed = 40;
+        if (pFlight && pFlight->Speed > 0) speed = pFlight->Speed;
+        else if (pWeapon->Speed > 0) speed = pWeapon->Speed;
+
+        BulletClass* pBullet = pBulletType->CreateBullet(pTarget, pTechno, damage, pWH, speed, true);
+        if (!pBullet) { lua_pushboolean(L, 0); return 1; }
+
+        pBullet->SetTarget(pTarget);
+        pBullet->SetWeaponType(pWeapon);
+
+        // Направляем снаряд от юнита к цели (видимый полёт, тот же путь, что в sub_turret).
+        CoordStruct muzzle = pTechno->GetCoords();
+        CoordStruct dest = pTarget->GetCoords();
+        double dx = static_cast<double>(dest.X - muzzle.X);
+        double dy = static_cast<double>(dest.Y - muzzle.Y);
+        double dz = static_cast<double>(dest.Z - muzzle.Z);
+        double len = std::sqrt(dx * dx + dy * dy + dz * dz);
+        if (len < 1.0) len = 1.0;
+        BulletVelocity vel{ dx / len * speed, dy / len * speed, dz / len * speed };
+        pBullet->MoveTo(muzzle, vel);
+
+        ok = true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        ok = false;
+    }
+
+    lua_pushboolean(L, ok ? 1 : 0);
+    return 1;
+}
+
+// techno:IronCurtain(durationFrames) -> bool
+// Применяет нативный эффект Железного занавеса (тёмный оттенок + временная
+// неуязвимость) тем же путём, что супероружие Советов: ObjectClass::IronCurtain
+// (ForceShield=true). Источник — владелец юнита. Успех проверяем по IsIronCurtained().
+// SEH-обёртка + ValidateTechno.
+int Techno_IronCurtain(lua_State* L) {
+    auto* pTechno = CheckTechno(L, 1);
+    if (!ValidateTechno(pTechno)) { lua_pushboolean(L, 0); return 1; }
+
+    int duration = static_cast<int>(luaL_checkinteger(L, 2));
+    if (duration <= 0) { lua_pushboolean(L, 0); return 1; }
+
+    bool ok = false;
+    __try {
+        HouseClass* pSource = pTechno->Owner;
+        pTechno->IronCurtain(duration, pSource, true);
+        ok = pTechno->IsIronCurtained();
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        ok = false;
+    }
+
+    lua_pushboolean(L, ok ? 1 : 0);
+    return 1;
+}
+
 const luaL_Reg kTechnoMethods[] = {
     { "GetTypeName",   Techno_GetTypeName   },
     { "GetHealth",     Techno_GetHealth     },
     { "GetMaxHealth",  Techno_GetMaxHealth  },
+    { "GetVeterancy",  Techno_GetVeterancy  },
+    { "GetAmmo",       Techno_GetAmmo       },
     { "GetOwner",      Techno_GetOwner      },
     { "GetPosition",   Techno_GetPosition   },
     { "IsAlive",       Techno_IsAlive       },
@@ -669,6 +891,9 @@ const luaL_Reg kTechnoMethods[] = {
     { "Scatter",       Techno_Scatter       },
     { "MoveTo",        Techno_MoveTo        },
     { "Hunt",          Techno_Hunt          },
+    { "Attack",        Techno_Attack        },
+    { "Stop",          Techno_Stop          },
+    { "GetMission",    Techno_GetMission    },
     { "IsIdle",        Techno_IsIdle        },
     { "IsAttacking",   Techno_IsAttacking   },
     { "GetTarget",     Techno_GetTarget     },
@@ -684,6 +909,8 @@ const luaL_Reg kTechnoMethods[] = {
     { "ClearSubTurrets", Techno_ClearSubTurrets },
     { "SetSplitTargets", Techno_SetSplitTargets },
     { "FireSplitSalvo", Techno_FireSplitSalvo },
+    { "FireProjectile", Techno_FireProjectile },
+    { "IronCurtain",    Techno_IronCurtain    },
     { nullptr, nullptr }
 };
 
@@ -736,6 +963,57 @@ int World_GetAllUnits(lua_State* L) {
         PushTechno(L, pItem);
         lua_seti(L, -2, ++n);
     }
+    return 1;
+}
+
+// World.GetSelectedUnits() -> table of TechnoClass (только боевые юниты).
+// Читает текущее выделение движка (ObjectClass::CurrentObjects = список
+// выбранных объектов). Пустая таблица, если ничего не выделено. Здания и
+// пехоту пропускаем — возвращаем только UnitClass.
+int World_GetSelectedUnits(lua_State* L) {
+    lua_createtable(L, ObjectClass::CurrentObjects.Count, 0);
+    int n = 0;
+    for (int i = 0; i < ObjectClass::CurrentObjects.Count; ++i) {
+        ObjectClass* pObj = ObjectClass::CurrentObjects.GetItem(i);
+        if (!pObj)
+            continue;
+        __try {
+            AbstractType what = pObj->WhatAmI();
+            if (what != AbstractType::Unit)
+                continue;
+            auto* pTechno = static_cast<TechnoClass*>(pObj);
+            if (pTechno->Health <= 0)
+                continue;
+            PushTechno(L, pTechno);
+            lua_seti(L, -2, ++n);
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            continue;
+        }
+    }
+    return 1;
+}
+
+// Предыдущее состояние клавиш для edge-детекта (Input.WasKeyPressed).
+bool g_keyPrevState[256] = { false };
+
+// Input.WasKeyPressed(vk) -> bool
+// Возвращает true ОДИН раз на переход "не нажата -> нажата" (edge-triggered),
+// затем false, пока клавиша удерживается. SEH-защищённый опрос GetAsyncKeyState.
+int Input_WasKeyPressed(lua_State* L) {
+    int vk = static_cast<int>(luaL_checkinteger(L, 1));
+    if (vk < 0 || vk > 255) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+    bool pressed = false;
+    __try {
+        pressed = (GetAsyncKeyState(vk) & 0x8000) != 0;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        pressed = false;
+    }
+    bool edge = pressed && !g_keyPrevState[vk];
+    g_keyPrevState[vk] = pressed;
+    lua_pushboolean(L, edge ? 1 : 0);
     return 1;
 }
 
@@ -816,7 +1094,15 @@ void RegisterTechnoBindings(lua_State* L) {
     lua_setfield(L, -2, "GetWaypoint");
     lua_pushcfunction(L, game_GetUnitsInRadius);
     lua_setfield(L, -2, "GetUnitsInRadius");
+    lua_pushcfunction(L, World_GetSelectedUnits);
+    lua_setfield(L, -2, "GetSelectedUnits");
     lua_setglobal(L, "World");
+
+    // Global "Input" namespace
+    lua_newtable(L);
+    lua_pushcfunction(L, Input_WasKeyPressed);
+    lua_setfield(L, -2, "WasKeyPressed");
+    lua_setglobal(L, "Input");
 
     // Global "game" namespace
     lua_newtable(L);

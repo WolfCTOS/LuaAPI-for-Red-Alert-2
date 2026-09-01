@@ -1,0 +1,8 @@
+{
+  "id": "vet_diag",
+  "name": "Veterancy Diagnostic",
+  "version": "1.0.0",
+  "author": "LuaAPI",
+  "description": "Read-only diagnostic: prints veterancy (rookie/veteran/elite) and ammo of the player's first combat vehicle.",
+  "conflicts": []
+}

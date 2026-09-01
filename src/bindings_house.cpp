@@ -1,6 +1,8 @@
 #include <LuaAPI/bindings_house.hpp>
 #include <LuaAPI/logger.hpp>
 
+#include <unordered_map>
+
 extern "C" {
 #include <lua.h>
 #include <lauxlib.h>
@@ -38,11 +40,37 @@ HouseClass** NewHouse(lua_State* L, HouseClass* pHouse) {
 
 } // anonymous namespace
 
+// Кэш userdata для домов: HouseClass* -> реестровая Lua-ссылка.
+// Дома живут весь матч, поэтому один и тот же HouseClass* надёжно возвращает
+// ОДИН И ТОТ ЖЕ userdata — это даёт истинное `a == b` для GetPlayer()/GetOwner().
+// Обнуляется в ResetSession (см. ClearHouseCache).
+static std::unordered_map<HouseClass*, int> g_houseCache;
+
 int PushHouse(lua_State* L, HouseClass* pHouse) {
     if (!pHouse)
         return 0;
+
+    // Уже создан — вернуть тот же самый объект из реестра.
+    auto it = g_houseCache.find(pHouse);
+    if (it != g_houseCache.end()) {
+        lua_rawgeti(L, LUA_REGISTRYINDEX, it->second);
+        return 1;
+    }
+
+    // Новый: создаём userdata и кладём в реестр, чтобы переиспользовать.
     NewHouse(L, pHouse);
+    int ref = luaL_ref(L, LUA_REGISTRYINDEX);      // убирает userdata со стека в реестр
+    g_houseCache.emplace(pHouse, ref);
+    lua_rawgeti(L, LUA_REGISTRYINDEX, ref);        // вернуть тот же объект
     return 1;
+}
+
+void ClearHouseCache(lua_State* L) {
+    for (auto& kv : g_houseCache) {
+        if (L)
+            luaL_unref(L, LUA_REGISTRYINDEX, kv.second);
+    }
+    g_houseCache.clear();
 }
 
 namespace {
@@ -53,8 +81,7 @@ int House_GetPlayer(lua_State* L) {
     if (!pHouse)
         return 0; // nil
 
-    NewHouse(L, pHouse);
-    return 1;
+    return PushHouse(L, pHouse);
 }
 
 // House.GetCount() -> int
@@ -75,8 +102,7 @@ int House_GetByIndex(lua_State* L) {
     if (!pHouse)
         return 0;
 
-    NewHouse(L, pHouse);
-    return 1;
+    return PushHouse(L, pHouse);
 }
 
 // --- instance methods ------------------------------------------------------

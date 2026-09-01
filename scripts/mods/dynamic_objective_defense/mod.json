@@ -1,0 +1,8 @@
+{
+  "id": "dynamic_objective_defense",
+  "name": "Dynamic Objective Defense",
+  "version": "1.0.0",
+  "author": "LuaAPI",
+  "description": "Showcase: guard an Oil Derrick (CAOILD). Patrol its flanks and attack any enemy that approaches.",
+  "conflicts": []
+}

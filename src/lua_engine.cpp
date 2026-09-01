@@ -188,6 +188,10 @@ int LuaPrint(lua_State* L) {
     return 0;
 }
 
+// Глобальный флаг: выключает экранный вывод HUD-сообщений и их звук, но
+// запись в файл лога продолжается. Переключается клавишей ` (VK 0xC0).
+static bool g_hudMuted = false;
+
 int Engine_PrintMessage(lua_State* L) {
     const char* msg = luaL_checkstring(L, 1);
     if (!msg || !*msg)
@@ -200,16 +204,71 @@ int Engine_PrintMessage(lua_State* L) {
     std::wstring wide(static_cast<size_t>(wlen), L'\0');
     MultiByteToWideChar(CP_UTF8, 0, msg, -1, &wide[0], wlen);
 
-    MessageListClass::Instance.PrintMessage(wide.c_str());
+    // Мьют (клавиша `) : экран + звук пропускаем, файл-лог пишем всегда.
+    if (!g_hudMuted)
+        MessageListClass::Instance.PrintMessage(wide.c_str());
     LUA_LOG_INFO("[HUD] {}", msg);
     return 0;
 }
+
+// Edge-triggered опрос клавиши ` (VK 0xC0): переключает g_hudMuted.
+// В файл лога пишется всегда; на экране — только если лог остался включён.
+void PollHudMuteToggle() {
+    static bool prev = false;
+    bool down = (GetAsyncKeyState(0xC0) & 0x8000) != 0;
+    bool edge = down && !prev;
+    prev = down;
+    if (!edge)
+        return;
+
+    g_hudMuted = !g_hudMuted;
+    LUA_LOG_INFO("[HUD] HUD output {}", g_hudMuted ? "muted" : "unmuted");
+    if (!g_hudMuted) {
+        // После включения показываем на экране (иначе сообщение не появится).
+        MessageListClass::Instance.PrintMessage(L"HUD output unmuted");
+    }
+}
+
+// Engine.SetHudMuted(bool) -> nil
+int Engine_SetHudMuted(lua_State* L) {
+    g_hudMuted = lua_toboolean(L, 1) != 0;
+    LUA_LOG_INFO("[HUD] HUD output {}", g_hudMuted ? "muted" : "unmuted");
+    return 0;
+}
+
+// Engine.IsHudMuted() -> bool
+int Engine_IsHudMuted(lua_State* L) {
+    lua_pushboolean(L, g_hudMuted ? 1 : 0);
+    return 1;
+}
+
+// HUD-текст дебаг-консоли (глобал). Обновляется каждый логический кадр в
+// OnGameFrame; пуст, когда режим ввода выключен. Объявлен до первого
+// использования (Engine_GetDebugHudText / DrawDebugHud).
+std::string g_debugHudText;
 
 // Game.GetDebugHudText() -> string
 // Lua-доступ к тексту HUD-индикатора дебаг-консоли (fallback, если прямой HUD-
 // механизм не даёт видимого результата в данной сборке/ранере).
 int Engine_GetDebugHudText(lua_State* L) {
     lua_pushlstring(L, g_debugHudText.c_str(), g_debugHudText.size());
+    return 1;
+}
+
+// Engine.WeaponExists(id) -> bool
+// Проверяет существование оружия в rules: WeaponTypeClass::Find(id) != null.
+// SEH-обёртка; возвращает false при ошибке или если id пуст.
+int Engine_WeaponExists(lua_State* L) {
+    const char* id = luaL_checkstring(L, 1);
+    if (!id || !*id) { lua_pushboolean(L, 0); return 1; }
+
+    bool exists = false;
+    __try {
+        exists = WeaponTypeClass::Find(id) != nullptr;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        exists = false;
+    }
+    lua_pushboolean(L, exists ? 1 : 0);
     return 1;
 }
 
@@ -230,6 +289,12 @@ lua_State* CreateEngine() {
 
     lua_pushcfunction(L, Engine_PrintMessage);
     lua_setfield(L, -2, "PrintMessage");
+    lua_pushcfunction(L, Engine_WeaponExists);
+    lua_setfield(L, -2, "WeaponExists");
+    lua_pushcfunction(L, Engine_SetHudMuted);
+    lua_setfield(L, -2, "SetHudMuted");
+    lua_pushcfunction(L, Engine_IsHudMuted);
+    lua_setfield(L, -2, "IsHudMuted");
 
     lua_setglobal(L, "Engine");
 
@@ -289,10 +354,6 @@ struct DebugInputState {
 };
 DebugInputState g_debugInput;
 
-// Текст, отображаемый на экране (HUD-индикатор дебаг-консоли). Обновляется
-// каждый логический кадр в OnGameFrame; пуст, когда режим ввода выключен.
-std::string g_debugHudText;
-
 // Узкая строка -> широкая (для TextPrint / DrawText), SEH-не требуется.
 static std::wstring ToWide(const std::string& s) {
     if (s.empty())
@@ -307,6 +368,18 @@ static std::wstring ToWide(const std::string& s) {
     return w;
 }
 
+// Rисует уже подготовленную широкую HUD-строку. Вынесена в отдельную функцию
+// БЕЗ C++-объектов, чтобы SEH __try не конфликтовал с unwinding (C2712).
+static void DrawHudText(const wchar_t* wtext) {
+    __try {
+        DSurface* pSurface = DSurface::Primary;
+        if (pSurface)
+            pSurface->DrawText(wtext, 12, 42, 0xFFFF00 /* yellow */);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        // Not fatal for a debug indicator; silently skip.
+    }
+}
+
 // Рисует g_debugHudText на видимом кадре каждый логический кадр (TextPrint-
 // механизм через DSurface::DrawText). SEH-безопасно, best-effort.
 static void DrawDebugHud() {
@@ -315,13 +388,7 @@ static void DrawDebugHud() {
     std::wstring wtext = ToWide(g_debugHudText);
     if (wtext.empty())
         return;
-    __try {
-        DSurface* pSurface = DSurface::Primary;
-        if (pSurface)
-            pSurface->DrawText(wtext.c_str(), 12, 42, 0xFFFF00 /* yellow */);
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        // Not fatal for a debug indicator; silently skip.
-    }
+    DrawHudText(wtext.c_str());
 }
 
 // Детект перехода "отпущена -> нажата" для клавиши, с хранением prev-состояния.
@@ -610,6 +677,11 @@ int ref = luaL_ref(g_L, LUA_REGISTRYINDEX);
     if (!g_L || !g_scriptReady)
         return;
 
+    // Переключатель HUD-лога на клавишу ` (VK 0xC0). Не обрабатываем, пока
+    // активен режим ввода отладочной консоли (чтобы тильда не сбивала набор).
+    if (!g_debugInput.mode)
+        PollHudMuteToggle();
+
     // Дебаг-консоль (dev-команды ИИ): опрос клавиш раз в логический кадр.
     ProcessDebugInput(g_L);
 
@@ -652,6 +724,7 @@ void ResetSession() {
 
     // 2. Reset the Lua VM state for a new match.
     if (g_L) {
+        LuaAPI::ClearHouseCache(g_L);   // освободить реестровые ссылки домов до закрытия VM
         lua_close(g_L);
         g_L = nullptr;
     }

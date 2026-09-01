@@ -1,8 +1,8 @@
 {
   "id": "smart_ai",
-  "name": "Smart AI Commander",
+  "name": "Smart AI",
   "version": "1.0.0",
-  "author": "NiTeMind",
-  "description": "Dynamic base flank defense and threat response",
+  "author": "LuaAPI",
+  "description": "MVP AI provider: commands enemy jets that carry the disable/EMP capability to attack the player's densest vehicle cluster.",
   "conflicts": []
 }

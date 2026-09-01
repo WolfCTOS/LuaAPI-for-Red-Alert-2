@@ -9,7 +9,12 @@ namespace LuaAPI {
 void RegisterHouseBindings(lua_State* L);
 
 // Pushes a userdata wrapping pHouse onto the stack (or nothing if null).
-// Returns the number of values pushed (1 or 0).
+// Returns the number of values pushed (1 or 0). Uses a per-state cache so the
+// same HouseClass* always maps to the same userdata (`==` works).
 int PushHouse(lua_State* L, HouseClass* pHouse);
+
+// Releases every cached house userdata reference and empties the cache.
+// Call BEFORE lua_close() during a session reset, so refs die with the VM.
+void ClearHouseCache(lua_State* L);
 
 } // namespace LuaAPI

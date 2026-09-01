@@ -1,0 +1,8 @@
+{
+  "id": "jet_veterancy",
+  "name": "Jet Veterancy",
+  "version": "1.0.0",
+  "author": "LuaAPI",
+  "description": "Showcase: fires a bonus electric projectile (FireProjectile) on each shot by veteran/elite Hornet/Orca jets; rookies stay vanilla.",
+  "conflicts": []
+}

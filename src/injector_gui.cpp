@@ -1,4 +1,4 @@
-﻿// RA2 Yuri's Revenge — LuaAPI Injector (modern dark Win32 GUI, no console)
+// RA2 Yuri's Revenge — LuaAPI Injector (modern dark Win32 GUI, no console)
 #ifndef UNICODE
 #define UNICODE
 #endif
@@ -28,36 +28,90 @@
 // Глобальные функции, определённые ниже на уровне файла; видимы и из анонимного namespace.
 void RecalcLayout();
 void ToggleFullscreen();
+// CardActionAt определён в анонимном namespace ниже; виден по всему translation unit.
 
 namespace {
 
 // ---------------------------------------------------------------------------
-// Theme
+// DESIGN TOKENS — единый источник значений цвета/размера/типографики.
+// Всё визуальное для лаунчера берётся ТОЛЬКО отсюда; ниже по файлу нет хардкода.
 // ---------------------------------------------------------------------------
-constexpr COLORREF kBg        = RGB(17, 20, 26);    // #11141A
-constexpr COLORREF kSurface   = RGB(27, 32, 43);    // #1B202B
-constexpr COLORREF kHover     = RGB(37, 44, 61);    // #252C3D
-constexpr COLORREF kRed       = RGB(229, 62, 62);   // #E53E3E
-constexpr COLORREF kBlue      = RGB(49, 130, 206);  // #3182CE
-constexpr COLORREF kGreen     = RGB(47, 133, 90);   // #2F855A
-constexpr COLORREF kGreenHover= RGB(56, 161, 105);
-constexpr COLORREF kText      = RGB(247, 250, 252); // #F7FAFC
-constexpr COLORREF kDim       = RGB(160, 174, 192); // #A0AEC0
-constexpr COLORREF kBadge     = RGB(74, 85, 104);   // #4A5568
-constexpr COLORREF kOrange    = RGB(237, 137, 54);
-constexpr COLORREF kOk        = RGB(72, 187, 120);
+namespace Tok {
+// Фон
+constexpr COLORREF WindowBg    = RGB(14, 17, 22);     // окно      #0E1116
+constexpr COLORREF Card        = RGB(22, 27, 34);     // карточка  #161B22
+constexpr COLORREF CardHover   = RGB(28, 34, 43);     // hover     #1C222B
+constexpr COLORREF Surface     = RGB(30, 37, 47);     // подложка пилюль/компакт-кнопок
+constexpr COLORREF SurfaceHov  = RGB(46, 55, 68);
+// Текст
+constexpr COLORREF Text        = RGB(230, 237, 243);  // основной   #E6EDF3
+constexpr COLORREF TextDim     = RGB(139, 148, 158);  // вторичный  #8B949E
+// Акцент (включено / активно)
+constexpr COLORREF Accent      = RGB(63, 185, 80);    // #3FB950
+constexpr COLORREF AccentHover = RGB(91, 204, 111);
+// Кнопки действий
+constexpr COLORREF Launch     = RGB(218, 54, 51);     // #DA3633
+constexpr COLORREF LaunchHov  = RGB(240, 84, 82);
+constexpr COLORREF Inject     = RGB(31, 111, 235);    // #1F6FEB
+constexpr COLORREF InjectHov  = RGB(76, 148, 242);
+// Семантика статусов
+constexpr COLORREF Warn        = RGB(236, 137, 36);
+constexpr COLORREF Ok          = RGB(63, 185, 80);
+constexpr COLORREF Error       = RGB(218, 54, 51);
+// Muted / границы / скролл
+constexpr COLORREF Chip        = RGB(48, 54, 64);
+constexpr COLORREF Border      = RGB(58, 68, 80);
+constexpr COLORREF Divider     = RGB(44, 52, 63);
+constexpr COLORREF Disabled    = RGB(52, 60, 72);
+constexpr COLORREF ScrollTrack = RGB(36, 43, 53);
+constexpr COLORREF ScrollThumb = RGB(88, 97, 108);
+// Радиусы
+constexpr int RadiusCard = 8;
+constexpr int RadiusBtn  = 6;
+constexpr int RadiusPill = 12;
+// Сетка отступов (8 / 12 / 16 / 24 / 32 / 40)
+constexpr int S8  = 8;
+constexpr int S12 = 12;
+constexpr int S16 = 16;
+constexpr int S24 = 24;
+constexpr int S32 = 32;
+constexpr int S40 = 40;
+// Типографика (pt; используется с MulDiv(pt, dpi, 72))
+constexpr int FontTitle = 20;
+constexpr int FontCard  = 14;
+constexpr int FontBody  = 12;
+constexpr int FontSmall = 11;
+// Прочее
+constexpr int HoverMs = 120;   // плавный переход hover-подсветки, мс
+} // namespace Tok
+
+// Псевдонимы токенов — нижележащий код опирается только на эти значения.
+constexpr COLORREF kBg        = Tok::WindowBg;
+constexpr COLORREF kSurface   = Tok::Card;
+constexpr COLORREF kSurfaceHov= Tok::SurfaceHov;
+constexpr COLORREF kHover     = Tok::CardHover;
+constexpr COLORREF kRed       = Tok::Launch;
+constexpr COLORREF kBlue      = Tok::Inject;
+constexpr COLORREF kGreen     = Tok::Accent;
+constexpr COLORREF kGreenHover= Tok::AccentHover;
+constexpr COLORREF kText      = Tok::Text;
+constexpr COLORREF kDim       = Tok::TextDim;
+constexpr COLORREF kBadge     = Tok::Chip;
+constexpr COLORREF kOrange    = Tok::Warn;
+constexpr COLORREF kOk        = Tok::Ok;
 
 constexpr const wchar_t* kWindowClass = L"LuaAPIInjectorWnd";
 constexpr const wchar_t* kWindowTitle = L"RA2 Yuri's Revenge - LuaAPI Engine";
 
 constexpr int kDefaultClientW = 580;
 constexpr int kDefaultClientH = 640;
-constexpr int kMaxContentWidth = 640;  // Максимальная ширина контента (центрируется на широких мониторах)
-constexpr int kPad = 20;
-constexpr int kCardH = 76;     // Высота карточки
-constexpr int kCardGap = 8;    // Зазор между карточками
-constexpr int kCardStep = 84;  // Полный шаг цикла (76 + 8)
-constexpr int kScrollW = 8;    // Ширина скроллбара
+constexpr int kPad = Tok::S24;        // внешний отступ окна (сетка 8 → 24)
+constexpr int kMaxContentWidth = 1200; // cap контентной области; шире — центрируем
+constexpr int kCardH = 80;            // высота карточки
+constexpr int kCardGap = Tok::S8;     // отступ между карточками (8)
+constexpr int kCardStep = kCardH + kCardGap;
+constexpr int kCardInner = Tok::S16;  // внутренний отступ карточки (16)
+constexpr int kScrollW = 6;           // тонкий скроллбар
 
 constexpr const wchar_t* kGameProcess = L"gamemd.exe";
 
@@ -95,7 +149,7 @@ const wchar_t* Str_ModsHeader() { return L10N(
     L"INSTALLED MODS"); }
 const wchar_t* Str_SaveBtn() { return L10N(
     L"Сохранить и применить",
-    L"Save & Apply"); }
+    L"Save Apply"); }
 std::wstring Str_ActiveCount(int active, int total) {
     return g_isRussian
         ? L"\u0410\u043A\u0442\u0438\u0432\u043D\u043E: " + std::to_wstring(active) + L" \u0438\u0437 " + std::to_wstring(total)
@@ -108,10 +162,43 @@ std::wstring Str_ActiveCount(int active, int total) {
 enum class AppState { Ready, Busy, StatusError, Injected };
 
 HWND g_hwnd = nullptr;
-HFONT g_fontTitle = nullptr;   // 16pt bold
-HFONT g_fontHeader = nullptr;  // card titles, 11pt bold
-HFONT g_fontReg = nullptr;     // 12pt
-HFONT g_fontSmall = nullptr;   // 10pt
+HFONT g_fontTitle = nullptr;   // заголовок окна (20pt bold)
+HFONT g_fontCard  = nullptr;   // заголовок карточки (14pt semibold)
+HFONT g_fontBody  = nullptr;   // описание/основной текст (12pt)
+HFONT g_fontSmall = nullptr;   // мелкие подписи / бейдж (11pt)
+
+// Текущий DPI окна (GetDpiForWindow, fallback на LOGPIXELSX).
+int WinDpi() {
+    static auto pFn = reinterpret_cast<UINT(WINAPI*)(HWND)>(
+        GetProcAddress(GetModuleHandleW(L"user32.dll"), "GetDpiForWindow"));
+    if (pFn && g_hwnd) {
+        UINT d = pFn(g_hwnd);
+        if (d) return static_cast<int>(d);
+    }
+    HDC dc = GetDC(nullptr);
+    int dpi = dc ? GetDeviceCaps(dc, LOGPIXELSX) : 96;
+    if (dc) ReleaseDC(nullptr, dc);
+    return dpi ? dpi : 96;
+}
+
+// Создаёт шрифт Segoe UI заданного pt-размера (точки → логические единицы через DPI).
+HFONT CreateFontToken(int pt, int weight) {
+    return CreateFontW(-MulDiv(pt, WinDpi(), 72), 0, 0, 0, weight, FALSE, FALSE, FALSE,
+                       DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                       CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+}
+
+// Пересоздаёт все шрифты из токенов (при старте и при смене DPI).
+void RecreateFonts() {
+    if (g_fontTitle) DeleteObject(g_fontTitle);
+    if (g_fontCard)  DeleteObject(g_fontCard);
+    if (g_fontBody)  DeleteObject(g_fontBody);
+    if (g_fontSmall) DeleteObject(g_fontSmall);
+    g_fontTitle = CreateFontToken(Tok::FontTitle, FW_BOLD);
+    g_fontCard  = CreateFontToken(Tok::FontCard,  FW_SEMIBOLD);
+    g_fontBody  = CreateFontToken(Tok::FontBody,  FW_NORMAL);
+    g_fontSmall = CreateFontToken(Tok::FontSmall, FW_NORMAL);
+}
 
 DWORD g_gamePid = 0;
 bool g_skipInjection = false;
@@ -126,6 +213,7 @@ bool g_injecting = false;
 constexpr UINT WM_APP_LAUNCH_DONE = WM_APP + 1;
 constexpr UINT WM_APP_INJECT_DONE = WM_APP + 2;
 constexpr UINT kToastTimerId = 1;
+constexpr UINT kHoverTimerId = 2;   // анимация hover-подсветки карточек (плавный переход)
 
 // Translatable status: store the KEY, localize at paint time so the
 // RU/EN switch instantly re-translates even previously shown statuses.
@@ -152,17 +240,36 @@ struct ModEntry {
 
 std::vector<ModEntry> g_mods;
 
+// Построение видимого (отфильтрованного) подмножества модов; см. определение ниже.
+void RebuildVisible();
+
 RECT g_rcLaunch{};
 RECT g_rcInject{};
 RECT g_rcSave{};
 RECT g_rcLang{};
-RECT g_rcFs{};
 bool g_hoverLaunch = false;
 bool g_hoverInject = false;
 bool g_hoverSave = false;
 bool g_hoverLang = false;
-bool g_hoverFs = false;
 bool g_trackingMouse = false;
+// Hover-состояние кнопок быстрого доступа на карточке мода (0=нет, 1=папка, 2=карандаш).
+int g_hoverActionCard = -1;
+int g_hoverActionBtn  = 0;
+// Плавная анимация подсветки карточки (pressed-состояние кнопок).
+int   g_hoverCardIdx = -1;   // карточка под курсором (для hover-анимации)
+float g_hoverFade    = 0.f;  // 0..1 — текущая фаза перехода
+bool  g_down         = false; // ЛКМ удерживается (для pressed-вида кнопок)
+bool  g_hoverWasCard = false; // был ли зафиксирован карточный hover (для плавного выхода)
+// Тултипы кнопок быстрого доступа.
+std::wstring g_tooltipText;
+RECT g_tooltipAnchor{0,0,0,0};
+bool g_tooltipVisible = false;
+// Поиск/фильтр по модам.
+RECT g_rcSearch{};
+bool g_searchFocused = false;
+bool g_hoverSearch = false;
+std::wstring g_searchQuery;
+std::vector<int> g_visible;   // индексы в g_mods, прошедшие фильтр (пусто = всё)
 bool g_headless = false;
 bool g_fullscreen = false;
 RECT g_windowedRect{};  // исходная геометрия окна для возврата из полного экрана
@@ -189,13 +296,13 @@ struct InjectResult {
 
 // Layout centralization - single source of truth
 struct Layout {
-    RECT launch, inject, lang, fs, save, list;
+    RECT launch, inject, lang, search, save, list;
     int footerTop, footerBottom, bannerTop, bannerBottom;
 };
 Layout ComputeLayout(int w, int h) {
     Layout l{};
-    // Ограничиваем ширину контента и центрируем его, чтобы в fullscreen на широких
-    // мониторах кнопки/карточки не растягивались на весь экран, оставляя пустые поля.
+    // Контентная область ограничена сверху kMaxContentWidth и центрируется на широких
+    // окнах; на окнах ≤1200px работает прежнее растяжение с отступами по краям.
     int effW = std::min(w, kMaxContentWidth);
     int xOffset = (w - effW) / 2;
 
@@ -203,13 +310,31 @@ Layout ComputeLayout(int w, int h) {
     l.launch = RECT{ xOffset + kPad, 96, xOffset + kPad + btnWidth, 140 };
     l.inject = RECT{ xOffset + kPad + btnWidth + 12, 96, xOffset + effW - kPad, 140 };
     l.lang   = RECT{ xOffset + effW - 110, 16, xOffset + effW - 20, 44 };
-    l.fs     = RECT{ xOffset + effW - 176, 16, xOffset + effW - 120, 44 };   // кнопка полноэкранного режима (слева от RU/EN)
-    // list area строго ПОД заголовком секции "МОДЫ" (g_rcLaunch.bottom+36), не перекрывает кнопки
+    // Заголовок секции и список — строго под кнопкой Launch (не перекрывают кнопки).
     int sectionBottom = l.launch.bottom + 36; // y=176 при дефолте
-    l.list   = RECT{ xOffset + kPad, sectionBottom + 8, xOffset + effW - kPad, h - kPad * 3 - 80 };
-    l.footerTop = h - 136; l.footerBottom = h - 92;
-    l.bannerTop = h - 92; l.bannerBottom = h - 68;
-    l.save = RECT{ xOffset + effW - kPad - 200, h - 55, xOffset + effW - kPad, h - 17 };
+    // Поле поиска — на строке заголовка секции, справа.
+    int secTop = l.launch.bottom + 16;
+    int secBot = l.launch.bottom + 36;
+    l.search = RECT{ xOffset + effW - kPad - 250, secTop, xOffset + effW - kPad, secBot };
+
+    // Футер — единая планка у нижнего края окна (sock: сетка 8, высота 56).
+    constexpr int kFooterH = 56;
+    l.footerTop   = h - kPad - kFooterH;
+    l.footerBottom = h - kPad;
+
+    // Список заполняет ВСЁ пространство от заголовка SECTION до футера (без мёртвой зоны).
+    l.list = RECT{ xOffset + kPad, sectionBottom + Tok::S8,
+                   xOffset + effW - kPad, l.footerTop - Tok::S8 };
+
+    // Баннер конфликтов — сразу над футер-планкой.
+    l.bannerTop    = l.footerTop - 24;
+    l.bannerBottom = l.footerTop;
+
+    // Кнопка Save — справа внутри футер-планки, по вертикальному центру.
+    constexpr int kSaveH = 38;
+    int saveTop = l.footerTop + (kFooterH - kSaveH) / 2;
+    l.save = RECT{ xOffset + effW - kPad - 220, saveTop,
+                   xOffset + effW - kPad, saveTop + kSaveH };
     return l;
 }
 RECT ListRect() {
@@ -218,7 +343,7 @@ RECT ListRect() {
 inline void ClampScroll() {
     Layout l = ComputeLayout(g_clientW, g_clientH);
     int listHeight = l.list.bottom - l.list.top;
-    int totalModHeight = static_cast<int>(g_mods.size()) * kCardStep;
+    int totalModHeight = static_cast<int>(g_visible.size()) * kCardStep;
     int maxScroll = std::max(0, totalModHeight - listHeight);
     g_scroll = std::max(0, std::min(g_scroll, maxScroll));
 }
@@ -305,8 +430,80 @@ void DrawTextR(HDC dc, const std::wstring& text, RECT rc, HFONT font, COLORREF c
     HFONT old = static_cast<HFONT>(SelectObject(dc, font));
     SetTextColor(dc, color);
     SetBkMode(dc, TRANSPARENT);
-    DrawTextW(dc, text.c_str(), -1, &rc, flags | DT_END_ELLIPSIS);
+    // DT_NOPREFIX: `&` в метках выводится буквально, а не как mnemonic (иначе «Save Apply» даёт «Save _Apply»).
+    DrawTextW(dc, text.c_str(), -1, &rc, flags | DT_END_ELLIPSIS | DT_NOPREFIX);
     SelectObject(dc, old);
+}
+
+// Две маленькие кнопки быстрого доступа справа на карточке мода: папка (открыть
+// директорию мода) и карандаш (открыть main.lua). Ректы вычисляются из ректа карточки.
+void CardActionButtons(const RECT& rcCard, RECT* folder, RECT* pencil) {
+    constexpr int kIconW = 26;
+    constexpr int kGap = 6;
+    constexpr int kPadR = 12;
+    pencil->right = rcCard.right - kPadR;
+    pencil->left  = pencil->right - kIconW;
+    folder->right = pencil->left - kGap;
+    folder->left  = folder->right - kIconW;
+    int cy = (rcCard.top + rcCard.bottom) / 2;
+    folder->top = pencil->top = cy - kIconW / 2;
+    folder->bottom = pencil->bottom = cy + kIconW / 2;
+}
+
+// Маленькая залитая иконка папки в прямоугольнике r цветом color.
+void DrawFolderIcon(HDC dc, const RECT& r, COLORREF color) {
+    HBRUSH brush = CreateSolidBrush(color);
+    HPEN pen = CreatePen(PS_SOLID, 1, color);
+    auto oldBrush = SelectObject(dc, brush);
+    auto oldPen = SelectObject(dc, pen);
+    RoundRect(dc, r.left + 2, r.top + 6, r.right - 2, r.bottom - 2, 3, 3); // корпус
+    Rectangle(dc, r.left + 2, r.top + 3, r.left + 10, r.top + 8);          // язычок (выступает над корпусом)
+    SelectObject(dc, oldPen);
+    SelectObject(dc, oldBrush);
+    DeleteObject(pen);
+    DeleteObject(brush);
+}
+
+// Маленькая залитая иконка карандаша в прямоугольнике r цветом color.
+void DrawPencilIcon(HDC dc, const RECT& r, COLORREF color) {
+    HBRUSH brush = CreateSolidBrush(color);
+    HPEN pen = CreatePen(PS_SOLID, 1, color);
+    auto oldBrush = SelectObject(dc, brush);
+    auto oldPen = SelectObject(dc, pen);
+    POINT body[4] = {                                  // диагональное тело
+        {r.left + 3,  r.bottom - 4},
+        {r.left + 7,  r.bottom - 8},
+        {r.right - 8, r.top + 6},
+        {r.right - 4, r.top + 2}
+    };
+    Polygon(dc, body, 4);
+    POINT tip[3] = {                                   // остриё сверху-справа
+        {r.right - 2, r.top},
+        {r.right - 10, r.top + 1},
+        {r.right - 5, r.top + 6}
+    };
+    Polygon(dc, tip, 3);
+    SelectObject(dc, oldPen);
+    SelectObject(dc, oldBrush);
+    DeleteObject(pen);
+    DeleteObject(brush);
+}
+
+// Стилизованный чекбокс: при включении — заливка акцентом (#3FB950) + галочка,
+// при выключении — контурная рамка. Никакого стандартного квадрата.
+void DrawCheckbox(HDC dc, const RECT& box, bool enabled) {
+    if (enabled) {
+        FillRoundRect(dc, box, Tok::Accent, 5);
+        HPEN pen = CreatePen(PS_SOLID, 2, Tok::Text);
+        auto oldPen = SelectObject(dc, pen);
+        MoveToEx(dc, box.left + 4,  box.top + 10, nullptr);
+        LineTo(dc,   box.left + 8,  box.top + 14);
+        LineTo(dc,   box.left + 16, box.top + 5);
+        SelectObject(dc, oldPen);
+        DeleteObject(pen);
+    } else {
+        FillRoundRect(dc, box, Tok::Card, 5, Tok::Border, true);
+    }
 }
 
 bool FileExists(const std::wstring& path) {
@@ -971,6 +1168,7 @@ void ScanMods() {
         }
         g_mods = std::move(ordered);
     }
+    RebuildVisible();
 }
 
 void SaveMods() {
@@ -1008,6 +1206,30 @@ int EnabledModCount() {
     return n;
 }
 
+// Поиск без учёта регистра (строчные копии). Используется для имени/автора/описания.
+bool MatchesFilter(const ModEntry& m, const std::wstring& q) {
+    if (q.empty()) return true;
+    std::wstring needle = q;
+    for (auto& c : needle) c = towlower(c);
+    auto contains = [&](const std::wstring& s) -> bool {
+        std::wstring t = s;
+        for (auto& c : t) c = towlower(c);
+        return t.find(needle) != std::wstring::npos;
+    };
+    return contains(m.name) || contains(m.author) || contains(m.description) || contains(m.id);
+}
+
+// Пересчёт видимого (отфильтрованного) подмножества модов.
+void RebuildVisible() {
+    g_visible.clear();
+    for (size_t i = 0; i < g_mods.size(); ++i) {
+        if (MatchesFilter(g_mods[i], g_searchQuery))
+            g_visible.push_back(static_cast<int>(i));
+    }
+    // При изменении фильтра показываем список с начала.
+    g_scroll = 0;
+}
+
 std::vector<std::pair<size_t, size_t>> DetectConflicts() {
     std::vector<std::pair<size_t, size_t>> hits;
     for (size_t i = 0; i < g_mods.size(); ++i) {
@@ -1041,120 +1263,180 @@ void PaintAll(HDC dc) {
     DeleteObject(bg);
 
     int w = g_clientW;
+    // Контентная область: до 1200px — растягивается, шире — центрируется (то же, что в ComputeLayout).
     int effW = std::min(w, kMaxContentWidth);
     int xOffset = (w - effW) / 2;
 
-    // ---- Header ----
+    // ---- Header: заголовок + подзаголовок слева, RU/EN справа (одна базовая линия) ----
     DrawTextR(dc, L"RED ALERT 2 - LUA ENGINE",
-              RECT{xOffset + kPad, 14, xOffset + effW - 186, 42}, g_fontTitle, kText);
+              RECT{xOffset + kPad, 14, xOffset + effW - 150, 44}, g_fontTitle, kText);
+    DrawTextR(dc, Str_Subtitle(), RECT{xOffset + kPad, 44, xOffset + effW - kPad, 62}, g_fontSmall, kDim);
 
-    // Fullscreen toggle (top right, слева от RU/EN)
-    FillRoundRect(dc, g_rcFs, g_hoverFs ? kHover : kSurface, 14);
-    DrawTextR(dc, L"\u26F6", g_rcFs, g_fontSmall,
-              g_hoverFs ? kText : kDim, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-
-    // Language toggle (top right)
-    FillRoundRect(dc, g_rcLang, g_hoverLang ? kHover : kSurface, 14);
-    DrawTextR(dc, L"RU / EN", g_rcLang, g_fontSmall,
-              g_hoverLang ? kText : kDim, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-
-    DrawTextR(dc, Str_Subtitle(), RECT{xOffset + kPad, 44, xOffset + effW - kPad, 64}, g_fontSmall, kDim);
+    // Сегментированный переключатель языка RU/EN (активный сегмент — акцентная подсветка).
+    {
+        RECT r = g_rcLang;
+        FillRoundRect(dc, r, g_hoverLang ? kSurfaceHov : kSurface, Tok::RadiusPill);
+        int half = (r.right - r.left) / 2;
+        RECT ru{ r.left, r.top, r.left + half + 2, r.bottom };
+        RECT en{ r.left + half - 2, r.top, r.right, r.bottom };
+        RECT act = g_isRussian ? ru : en;
+        FillRoundRect(dc, act, kSurfaceHov, Tok::RadiusPill - 2);
+        {
+            HPEN pen = CreatePen(PS_SOLID, 2, Tok::Accent);
+            auto oldPen = SelectObject(dc, pen);
+            int ax = (act.left + act.right) / 2 - 10;
+            MoveToEx(dc, ax, act.bottom - 6, nullptr);
+            LineTo(dc, ax + 20, act.bottom - 6);
+            SelectObject(dc, oldPen);
+            DeleteObject(pen);
+        }
+        DrawTextR(dc, L"RU", ru, g_fontSmall, g_isRussian ? kText : kDim, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        DrawTextR(dc, L"EN", en, g_fontSmall, g_isRussian ? kDim : kText, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    }
 
     // ---- Status row ----
     {
         int dotX = xOffset + kPad + 6;
-        int cy = 82;
+        int cy = 84;
         DrawCircle(dc, dotX, cy, 5, CurrentStatusColor());
-        DrawTextR(dc, CurrentStatusText(), RECT{xOffset + kPad + 18, cy - 12, xOffset + effW - kPad, cy + 12}, g_fontReg, kText);
+        DrawTextR(dc, CurrentStatusText(), RECT{xOffset + kPad + 18, cy - 12, xOffset + effW - kPad, cy + 12}, g_fontBody, kText);
     }
 
-    // ---- Action buttons ----
+    // ---- Action buttons (Launch / Inject): одинаковая высота, radius 6, hover + pressed ----
     {
         bool launchEnabled = FileExists(GetExeDirectory() + L"\\gamemd.exe");
-        COLORREF fill = !launchEnabled ? kBadge
-                      : (g_hoverLaunch ? LerpColor(kRed, kText, 0.15f) : kRed);
-        FillRoundRect(dc, g_rcLaunch, fill, 10);
-        DrawTextR(dc, Str_LaunchBtn(), g_rcLaunch, g_fontHeader, kText,
-                  DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        bool launchDown = g_down && g_hoverLaunch;
+        COLORREF launchFill = !launchEnabled ? Tok::Disabled
+                            : (launchDown ? LerpColor(kRed, kBg, 0.22f)
+                            : (g_hoverLaunch ? Tok::LaunchHov : Tok::Launch));
+        FillRoundRect(dc, g_rcLaunch, launchFill, Tok::RadiusBtn);
+        DrawTextR(dc, Str_LaunchBtn(), g_rcLaunch, g_fontCard,
+                  !launchEnabled ? kDim : kText, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 
-        COLORREF blueFill = g_injecting ? kBadge : (g_hoverInject ? LerpColor(kBlue, kText, 0.15f) : kBlue);
-        FillRoundRect(dc, g_rcInject, blueFill, 10);
-        DrawTextR(dc, Str_InjectBtn(), g_rcInject, g_fontHeader, g_injecting ? kDim : kText,
+        bool injectDown = g_down && g_hoverInject;
+        COLORREF injectFill = g_injecting ? Tok::Disabled
+                            : (injectDown ? LerpColor(kBlue, kBg, 0.22f)
+                            : (g_hoverInject ? Tok::InjectHov : Tok::Inject));
+        FillRoundRect(dc, g_rcInject, injectFill, Tok::RadiusBtn);
+        DrawTextR(dc, Str_InjectBtn(), g_rcInject, g_fontCard, g_injecting ? kDim : kText,
                   DT_CENTER | DT_VCENTER | DT_SINGLELINE);
     }
 
-    // ---- Section label ----
-    DrawTextR(dc, Str_ModsHeader(), RECT{xOffset + kPad, g_rcLaunch.bottom + 16, xOffset + 260, g_rcLaunch.bottom + 36},
-              g_fontSmall, kDim);
+    // ---- Section label + счётчик модов (слева) и поиск (справа) ----
+    {
+        int secTop = g_rcLaunch.bottom + 16;
+        int secBot = g_rcLaunch.bottom + 36;
+        std::wstring header = std::wstring(Str_ModsHeader()) + L" (" + std::to_wstring(static_cast<int>(g_mods.size())) + L")";
+        if (!g_searchQuery.empty())
+            header += L"  \u00B7  " + std::to_wstring(static_cast<int>(g_visible.size())) + L" " +
+                      L10N(L"\u043F\u043E\u043A\u0430\u0437\u0430\u043D\u043E", L"shown");
+        DrawTextR(dc, header, RECT{xOffset + kPad, secTop, g_rcSearch.left - Tok::S12, secBot},
+                  g_fontSmall, kDim);
+
+        // Поле поиска (правая часть строки заголовка).
+        RECT s = g_rcSearch;
+        bool sHover = g_hoverSearch;
+        FillRoundRect(dc, s, sHover ? kHover : kSurface, Tok::RadiusBtn,
+                      g_searchFocused ? Tok::Accent : Tok::Border, true);
+        if (!g_searchQuery.empty()) {
+            // Текст запроса.
+            DrawTextR(dc, g_searchQuery, RECT{s.left + Tok::S12, s.top, s.right - 24, s.bottom},
+                      g_fontSmall, kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+            // Кнопка-очистка "×".
+            RECT clear{ s.right - 20, s.top, s.right - 4, s.bottom };
+            DrawTextR(dc, L"\u00D7", clear, g_fontSmall, sHover ? kText : kDim, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        } else {
+            DrawTextR(dc, L10N(L"\u041F\u043E\u0438\u0441\u043A \u043C\u043E\u0434\u043E\u0432\u2026", L"Search mods\u2026"),
+                      RECT{s.left + Tok::S12, s.top, s.right - 12, s.bottom},
+                      g_fontSmall, kDim, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        }
+    }
 
     // ---- Mod cards ---- (СТРОГО внутри маски списка)
     Layout l = ComputeLayout(g_clientW, g_clientH);
-    // Сохраняем контекст и ставим жесткую маску отсечения по границам списка
     int savedDC = SaveDC(dc);
     IntersectClipRect(dc, l.list.left, l.list.top, l.list.right, l.list.bottom);
 
-    POINT cursor;
-    GetCursorPos(&cursor);
-    ScreenToClient(g_hwnd, &cursor);
-
-    // Empty state UX: show hint when no mods detected (внутри маски)
+    // Empty state UX (внутри маски)
     if (g_mods.empty()) {
-        DrawTextR(dc, L10N(L"Моды не найдены — поместите папки в scripts/mods/", L"No mods found — place folders in scripts/mods/"),
-                  RECT{xOffset + kPad, l.list.top + 20, xOffset + effW - kPad, l.list.top + 44}, g_fontSmall, kDim, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        DrawTextR(dc, L10N(L"\u041C\u043E\u0434\u044B \u043D\u0435 \u0443\u0441\u0442\u0430\u043D\u043E\u0432\u043B\u0435\u043D\u044B", L"No mods installed"),
+                  RECT{xOffset + kPad, l.list.top + 20, xOffset + effW - kPad, l.list.top + 44}, g_fontCard, kDim, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        DrawTextR(dc, L10N(L"\u041F\u043E\u043C\u0435\u0441\u0442\u0438\u0442\u0435 \u043F\u0430\u043F\u043A\u0438 \u0432 scripts/mods/ \u0438 \u043F\u0435\u0440\u0435\u0437\u0430\u043F\u0443\u0441\u0442\u0438\u0442\u0435",
+                           L"Place folders in scripts/mods/ and restart"),
+                  RECT{xOffset + kPad, l.list.top + 48, xOffset + effW - kPad, l.list.top + 70}, g_fontBody, kDim, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    } else if (g_visible.empty()) {
+        DrawTextR(dc, L10N(L"\u041D\u0438\u0447\u0435\u0433\u043E \u043D\u0435 \u043D\u0430\u0439\u0434\u0435\u043D\u043E \u043F\u043E \u0437\u0430\u043F\u0440\u043E\u0441\u0443",
+                           L"No mods match your search"),
+                  RECT{xOffset + kPad, l.list.top + 24, xOffset + effW - kPad, l.list.top + 48}, g_fontBody, kDim, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
     }
 
-    // Отрисовка карточек модов с учетом скролла (kCardH=76, kCardGap=8, шаг 84, отступ под скроллбар)
+    // Отрисовка карточек модов с учётом скролла и фильтра (шаг = kCardH + kCardGap).
     int listH = l.list.bottom - l.list.top;
-    int totalH = static_cast<int>(g_mods.size()) * kCardStep;
+    int totalH = static_cast<int>(g_visible.size()) * kCardStep;
     int cardW = (l.list.right - l.list.left) - (totalH > listH ? (kScrollW + 8) : 0);
     int yPos = l.list.top + 4 - g_scroll;
-    for (size_t i = 0; i < g_mods.size(); ++i) {
-        auto& m = g_mods[i];
-        // Рисуем только если карточка попадает в видимую область списка
+    for (size_t i = 0; i < g_visible.size(); ++i) {
+        const ModEntry& m = g_mods[g_visible[i]];
+        int idx = static_cast<int>(i);   // видимый индекс (позиция в списке)
         if (yPos + kCardH >= l.list.top && yPos <= l.list.bottom) {
             RECT rcCard = { l.list.left, yPos, l.list.left + cardW, yPos + kCardH };
-            RECT card = rcCard; // для hover/клика
-            bool hovered = PtInRect(&card, cursor);
-            bool isDrag = g_dragState.dragging && g_dragState.dragIndex == static_cast<int>(i);
+            bool isDrag = g_dragState.dragging && g_dragState.dragIndex == idx;
 
-            FillRoundRect(dc, card, isDrag ? kBlue : (hovered ? kHover : kSurface), 10,
-                          m.enabled ? kGreen : kBadge, m.enabled);
-
-            RECT box{ rcCard.left + 12, yPos + 16, rcCard.left + 32, yPos + 36 };
-            FillRoundRect(dc, box, m.enabled ? kGreen : kBg, 4, m.enabled ? kGreen : kBadge, true);
-            if (m.enabled) {
-                HFONT old = static_cast<HFONT>(SelectObject(dc, g_fontReg));
-                SetTextColor(dc, kText);
-                SetBkMode(dc, TRANSPARENT);
-                if (m.enabled) {
-                    HPEN pen = CreatePen(PS_SOLID, 2, kText);
-                    HPEN old = static_cast<HPEN>(SelectObject(dc, pen));
-                    MoveToEx(dc, box.left + 4,  box.top + 10, nullptr);
-                    LineTo(dc,   box.left + 8,  box.top + 14);
-                    LineTo(dc,   box.left + 16, box.top + 5);
-                    SelectObject(dc, old);
-                    DeleteObject(pen);
-                }
-                SelectObject(dc, old);
+            // Hover-подсветка карточки с плавным переходом (~120 мс).
+            // Рамка включённой карточки смягчена до нейтральной, а состояние отмечено
+            // тонкой акцентной полосой слева (чтобы не спорила с hover-подсветкой).
+            float hf = (idx == g_hoverCardIdx) ? g_hoverFade : 0.f;
+            COLORREF cardFill = isDrag ? kBlue : LerpColor(kSurface, kHover, hf);
+            FillRoundRect(dc, rcCard, cardFill, Tok::RadiusCard, Tok::Border, true);
+            if (m.enabled && !isDrag) {
+                RECT bar{ rcCard.left + 1, rcCard.top + 10, rcCard.left + 4, rcCard.bottom - 10 };
+                FillRoundRect(dc, bar, kGreen, 2);
             }
 
-            int tx = rcCard.left + 42;
-            DrawTextR(dc, m.name, RECT{tx, yPos + 10, tx + 200, yPos + 30}, g_fontHeader, kText);
+            // Всё в едином «хэдэр-строке» карточки: чекбокс, имя, автор, бейдж, иконки.
+            int rowTop = yPos + 12;
+            int rowBot = yPos + 36;
+            int rowCy  = (rowTop + rowBot) / 2;   // y+24
 
-            std::wstring badge = L"[v" + m.version + L"]";
-            HFONT measureFont = static_cast<HFONT>(SelectObject(dc, g_fontSmall));
-            SIZE sz{};
-            GetTextExtentPoint32W(dc, badge.c_str(), static_cast<int>(badge.size()), &sz);
-            SelectObject(dc, measureFont);
-            RECT badgeRc{ tx + 200, yPos + 10, tx + 208 + sz.cx, yPos + 30 };
-            FillRoundRect(dc, badgeRc, kBadge, 6);
+            RECT box{ rcCard.left + kCardInner, rowCy - 9, rcCard.left + kCardInner + 18, rowCy + 9 };
+            DrawCheckbox(dc, box, m.enabled);
+            int tx = rcCard.left + kCardInner + 18 + 12;   // контент после чекбокса
+
+            // Правый блок, вся строка: [имя ▲][author][бейдж][иконки], выровнен по rowCy.
+            RECT rowRect{ rcCard.left, rowTop, rcCard.right, rowBot };
+            RECT folderBtn, pencilBtn;
+            CardActionButtons(rowRect, &folderBtn, &pencilBtn);
+
+            std::wstring badge = L"v" + m.version;
+            HFONT mfont = static_cast<HFONT>(SelectObject(dc, g_fontSmall));
+            SIZE bsz{};
+            GetTextExtentPoint32W(dc, badge.c_str(), static_cast<int>(badge.size()), &bsz);
+            SelectObject(dc, mfont);
+            int badgeRight = folderBtn.left - Tok::S8;
+            RECT badgeRc{ badgeRight - bsz.cx - 16, rowCy - 10, badgeRight, rowCy + 10 };
+            int authorRight = badgeRc.left - Tok::S8;
+            int authorMax = 120;
+            int nameRight = std::max(tx + 80, authorRight - authorMax - Tok::S8);
+
+            DrawTextR(dc, m.name, RECT{tx, rowTop, nameRight, rowBot}, g_fontCard, kText);
+            FillRoundRect(dc, badgeRc, kBadge, 5);
             DrawTextR(dc, badge, badgeRc, g_fontSmall, kText, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+            DrawTextR(dc, L"by " + m.author, RECT{authorRight - authorMax, rowCy - 10, authorRight, rowCy + 10},
+                      g_fontSmall, kDim, DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
 
-            DrawTextR(dc, L"by " + m.author, RECT{badgeRc.right + 8, yPos + 10, rcCard.right - 10, yPos + 30},
-                      g_fontSmall, kDim);
+            // Описание (12pt, вторичный цвет) — полная строка под хэдэр-строкой.
+            DrawTextR(dc, m.description, RECT{tx, yPos + 42, rcCard.right - kCardInner, yPos + 66},
+                      g_fontBody, kDim, DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS);
 
-            DrawTextR(dc, m.description, RECT{rcCard.left + 40, yPos + 36, rcCard.right - 12, yPos + 68},
-                      g_fontSmall, kDim, DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS);
+            // Кнопки быстрого доступа (папка / карандаш) — на той же строке, справа.
+            {
+                bool folderHov = (g_hoverActionCard == idx && g_hoverActionBtn == 1);
+                bool pencilHov = (g_hoverActionCard == idx && g_hoverActionBtn == 2);
+                FillRoundRect(dc, folderBtn, folderHov ? kHover : kSurface, Tok::RadiusBtn, Tok::Border, true);
+                DrawFolderIcon(dc, folderBtn, folderHov ? kText : kDim);
+                FillRoundRect(dc, pencilBtn, pencilHov ? kHover : kSurface, Tok::RadiusBtn, Tok::Border, true);
+                DrawPencilIcon(dc, pencilBtn, pencilHov ? kText : kDim);
+            }
         }
         yPos += kCardStep;
     }
@@ -1173,73 +1455,72 @@ void PaintAll(HDC dc) {
                 warning += L";  ";
         }
         Layout bl = ComputeLayout(g_clientW, g_clientH);
-        int bannerTop = bl.bannerTop;
-        int bannerBottom = bl.bannerBottom;
-        int listBottom = bl.list.bottom;
-        if (bannerTop < listBottom + 8) { // ensure gap from list
-            bannerTop = listBottom + 8;
-            bannerBottom = bannerTop + 24;
-        }
-        int modSectionTop = bl.launch.bottom + 16;
-        if (bannerTop < modSectionTop) {
-            bannerTop = modSectionTop;
-            bannerBottom = bannerTop + 24;
-        }
-        // clamp banner inside footer area
-        if (bannerBottom > g_clientH - kPad - 38) {
-            bannerBottom = g_clientH - kPad - 38;
-            bannerTop = bannerBottom - 24;
-        }
+        int bannerTop = bl.bannerTop, bannerBottom = bl.bannerBottom;
+        // Не заходить ниже футер-планки (разделитель на footerTop).
+        if (bannerBottom > bl.footerTop) { bannerBottom = bl.footerTop; bannerTop = bannerBottom - 24; }
+        if (bannerTop < bl.list.top) { bannerTop = bl.list.top; bannerBottom = bannerTop + 24; }
         DrawTextR(dc, warning, RECT{xOffset + kPad, bannerTop, xOffset + effW - kPad, bannerBottom}, g_fontSmall, kOrange);
     }
 
-    // ---- Footer ----
-    Layout fl = ComputeLayout(g_clientW, g_clientH);
-    DrawTextR(dc, Str_ActiveCount(EnabledModCount(), static_cast<int>(g_mods.size())),
-              RECT{xOffset + kPad, fl.footerTop, xOffset + 280, fl.footerBottom}, g_fontReg, kDim);
-
-    // Save button is already computed in ComputeLayout and synced in RecalcLayout/Clamp
-    // Apply same clamping as layout to handle banner overlap, then sync global
+    // ---- Footer: единая планка (Active X of Y слева, Save Apply справа, разделитель сверху) ----
     {
-        Layout sl = ComputeLayout(g_clientW, g_clientH);
-        int saveTop = sl.save.top, saveBottom = sl.save.bottom;
-        int bannerBottom = sl.bannerBottom;
-        if (saveTop < bannerBottom + 8) {
-            saveTop = bannerBottom + 8;
-            saveBottom = saveTop + 38;
+        Layout fl = ComputeLayout(g_clientW, g_clientH);
+        // Тонкий разделитель над футер-планкой.
+        {
+            HPEN pen = CreatePen(PS_SOLID, 1, Tok::Divider);
+            auto oldPen = SelectObject(dc, pen);
+            MoveToEx(dc, xOffset + kPad, fl.footerTop, nullptr);
+            LineTo(dc, xOffset + effW - kPad, fl.footerTop);
+            SelectObject(dc, oldPen);
+            DeleteObject(pen);
         }
-        if (saveBottom > g_clientH - kPad) {
-            saveBottom = g_clientH - kPad;
-            saveTop = saveBottom - 38;
-        }
-        g_rcSave = RECT{ xOffset + effW - kPad - 200, saveTop, xOffset + effW - kPad, saveBottom };
+        // Active X of Y — слева, по вертикальному центру планки.
+        DrawTextR(dc, Str_ActiveCount(EnabledModCount(), static_cast<int>(g_mods.size())),
+                  RECT{xOffset + kPad, fl.footerTop, xOffset + kPad + 320, fl.footerBottom},
+                  g_fontBody, kDim, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        // Save & Apply — справа (g_rcSave выровнен по планке из ComputeLayout).
+        bool saveDown = g_down && g_hoverSave;
+        COLORREF saveFill = g_launching ? Tok::Disabled
+                          : (saveDown ? LerpColor(kGreen, kBg, 0.22f)
+                          : (g_hoverSave ? kGreenHover : kGreen));
+        FillRoundRect(dc, fl.save, saveFill, Tok::RadiusBtn);
+        DrawTextR(dc, Str_SaveBtn(), fl.save, g_fontCard, g_launching ? kDim : kText,
+                  DT_CENTER | DT_VCENTER | DT_SINGLELINE);
     }
-    // Dim save button when launching
-    COLORREF saveFill = g_launching ? kBadge : (g_hoverSave ? kGreenHover : kGreen);
-    if (g_launching) {
-        // still draw but with disabled look
-    }
-    FillRoundRect(dc, g_rcSave, saveFill, 10);
-    DrawTextR(dc, Str_SaveBtn(), g_rcSave, g_fontHeader, g_launching ? kDim : kText,
-              DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 
-    // ---- Minimal scrollbar (kScrollW=8, dark theme) - строго в диапазоне l.list.top..bottom
+    // ---- Тонкий скроллбар в тему (kScrollW=6, в диапазоне l.list.top..bottom)
     {
         Layout l = ComputeLayout(g_clientW, g_clientH);
         int listHeight = l.list.bottom - l.list.top;
-        int totalModHeight = static_cast<int>(g_mods.size()) * kCardStep;
+        int totalModHeight = static_cast<int>(g_visible.size()) * kCardStep;
         if (totalModHeight > listHeight) {
             int maxScroll = totalModHeight - listHeight;
             int trackH = listHeight - 8;
             int trackX = l.list.right - kScrollW;
             int trackY = l.list.top + 4;
-            // track (ширина kScrollW)
-            FillRoundRect(dc, RECT{trackX, trackY, trackX + kScrollW, trackY+trackH}, kBadge, 3);
-            // thumb
+            FillRoundRect(dc, RECT{trackX, trackY, trackX + kScrollW, trackY + trackH}, Tok::ScrollTrack, 3);
             int thumbH = std::max(20, trackH * listHeight / totalModHeight);
             int thumbY = trackY + (maxScroll ? (g_scroll * (trackH - thumbH) / maxScroll) : 0);
-            FillRoundRect(dc, RECT{trackX, thumbY, trackX + kScrollW, thumbY+thumbH}, kDim, 3);
+            FillRoundRect(dc, RECT{trackX, thumbY, trackX + kScrollW, thumbY + thumbH}, Tok::ScrollThumb, 3);
         }
+    }
+
+    // ---- Тултип для кнопок быстрого доступа (папка / карандаш)
+    if (g_tooltipVisible) {
+        RECT t = g_tooltipAnchor;
+        SIZE sz{};
+        HFONT oldf = static_cast<HFONT>(SelectObject(dc, g_fontSmall));
+        GetTextExtentPoint32W(dc, g_tooltipText.c_str(), static_cast<int>(g_tooltipText.size()), &sz);
+        SelectObject(dc, oldf);
+        int padX = Tok::S12, padY = Tok::S8;
+        int w = sz.cx + padX * 2;
+        int h = sz.cy + padY * 2;
+        int lx = (t.left + t.right) / 2 - w / 2;
+        int ly = t.top - h - 6;
+        if (ly < 0) ly = t.bottom + 6;   // сверху нет места — показываем под кнопкой
+        RECT box{ lx, ly, lx + w, ly + h };
+        FillRoundRect(dc, box, Tok::Surface, 4, Tok::Border, true);
+        DrawTextR(dc, g_tooltipText, box, g_fontSmall, Tok::Text, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
     }
 }
 
@@ -1249,20 +1530,43 @@ void PaintAll(HDC dc) {
 
 bool PointIn(const RECT& r, POINT p) { return PtInRect(&r, p) != FALSE; }
 
-// Возвращает индекс карточки мода под курсором (с учётом скролла) или -1.
+// Возвращает ВИДИМЫЙ индекс карточки под курсором (с учётом скролла и фильтра) или -1.
 int CardIndexAt(POINT pt) {
     Layout l = ComputeLayout(g_clientW, g_clientH);
     if (pt.y < l.list.top || pt.y > l.list.bottom) return -1;
     int listH = l.list.bottom - l.list.top;
-    int totalH = static_cast<int>(g_mods.size()) * kCardStep;
+    int totalH = static_cast<int>(g_visible.size()) * kCardStep;
     int cardW = (l.list.right - l.list.left) - (totalH > listH ? (kScrollW + 8) : 0);
     int yPos = l.list.top + 4 - g_scroll;
-    for (size_t i = 0; i < g_mods.size(); ++i) {
+    for (size_t i = 0; i < g_visible.size(); ++i) {
         RECT rcCard = { l.list.left, yPos, l.list.left + cardW, yPos + kCardH };
         if (PointIn(rcCard, pt)) return static_cast<int>(i);
         yPos += kCardStep;
     }
     return -1;
+}
+
+// Хит-тест кнопок быстрого доступа на карточке: 1 = папка, 2 = карандаш, 0 = нет.
+// Возвращает ВИДИМЫЙ индекс мода через *outIdx. Проверяет ТОЛЬКО две маленькие кнопки,
+// поэтому клик по ним не попадает в общую логику click/drag карточки.
+int CardActionAt(POINT pt, int* outIdx) {
+    Layout l = ComputeLayout(g_clientW, g_clientH);
+    int listH = l.list.bottom - l.list.top;
+    int totalH = static_cast<int>(g_visible.size()) * kCardStep;
+    int cardW = (l.list.right - l.list.left) - (totalH > listH ? (kScrollW + 8) : 0);
+    int yPos = l.list.top + 4 - g_scroll;
+    for (size_t i = 0; i < g_visible.size(); ++i) {
+        RECT rcCard = { l.list.left, yPos, l.list.left + cardW, yPos + kCardH };
+        // Кнопки выровнены по «хэдэр-строке» карточки (ty+12..ty+36) — та же зона, что в PaintAll.
+        RECT rowRc{ rcCard.left, yPos + 12, rcCard.right, yPos + 36 };
+        RECT folder, pencil;
+        CardActionButtons(rowRc, &folder, &pencil);
+        if (PointIn(folder, pt)) { if (outIdx) *outIdx = static_cast<int>(i); return 1; }
+        if (PointIn(pencil, pt)) { if (outIdx) *outIdx = static_cast<int>(i); return 2; }
+        yPos += kCardStep;
+    }
+    if (outIdx) *outIdx = -1;
+    return 0;
 }
 
 POINT CursorInClient() {
@@ -1279,9 +1583,40 @@ void OnLeftDown(POINT pt) {
         InvalidateRect(g_hwnd, nullptr, TRUE);
         return;
     }
-    if (PointIn(g_rcFs, pt)) {
-        ToggleFullscreen();
+
+    // Клик вне поля поиска снимает с него фокус ввода.
+    if (!PointIn(g_rcSearch, pt))
+        g_searchFocused = false;
+
+    // Поле поиска: захват фокуса ввода (или очистка по клику на «×»).
+    if (PointIn(g_rcSearch, pt)) {
+        if (!g_searchQuery.empty() && pt.x >= g_rcSearch.right - 24) {
+            // клик по «×» — очистить запрос
+            g_searchQuery.clear();
+            RebuildVisible();
+            ClampScroll();
+        }
+        g_searchFocused = true;
+        InvalidateRect(g_hwnd, nullptr, TRUE);
         return;
+    }
+
+    // Кнопки быстрого доступа на карточке мода: открыть папку или main.lua.
+    // Возвращаемся сразу — НЕ включаем pendingClick/drag, поэтому WM_LBUTTONUP
+    // не тронет чекбокс и не начнёт перетаскивание.
+    {
+        int actIdx = -1;   // видимый индекс
+        int act = CardActionAt(pt, &actIdx);
+        if (act != 0 && actIdx >= 0 && actIdx < static_cast<int>(g_visible.size())) {
+            const ModEntry& m = g_mods[g_visible[actIdx]];   // реальный индекс через фильтр
+            std::wstring modDir = GetExeDirectory() + L"\\scripts\\mods\\" + m.dir;
+            if (act == 1) {
+                ShellExecuteW(g_hwnd, L"explore", modDir.c_str(), nullptr, nullptr, SW_SHOW);
+            } else {
+                ShellExecuteW(g_hwnd, L"open", (modDir + L"\\main.lua").c_str(), nullptr, nullptr, SW_SHOW);
+            }
+            return;
+        }
     }
     if (g_launching || g_injecting) return; // disable clicks while busy
     if (PointIn(g_rcLaunch, pt)) { DoLaunchGame(); return; }
@@ -1289,7 +1624,7 @@ void OnLeftDown(POINT pt) {
     if (PointIn(g_rcSave, pt)) { SaveMods(); return; }
 
     // Клик по карточке: держим захват мыши, чтобы отличить обычный клик (тоггл чекбокса)
-    // от перетаскивания (сдвиг > 6px) в WM_MOUSEMOVE.
+    // от перетаскивания (сдвиг > 6px) в WM_MOUSEMOVE. При активном фильтре drag отключён.
     int idx = CardIndexAt(pt);
     if (idx >= 0) {
         g_dragState.pendingClick = true;
@@ -1297,7 +1632,8 @@ void OnLeftDown(POINT pt) {
         g_dragState.downPos = pt;
         g_dragState.dragging = false;
         g_dragState.dragIndex = -1;
-        SetCapture(g_hwnd);
+        if (g_searchQuery.empty())
+            SetCapture(g_hwnd);
     }
 }
 
@@ -1309,7 +1645,7 @@ void RecalcLayout() {
     g_rcLaunch = l.launch;
     g_rcInject = l.inject;
     g_rcLang = l.lang;
-    g_rcFs = l.fs;
+    g_rcSearch = l.search;
     g_rcSave = l.save;
     // keep clamped
     ClampScroll();
@@ -1381,9 +1717,56 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         ClampScroll();
         InvalidateRect(hwnd, nullptr, TRUE);
         return 0;
+    case WM_SETCURSOR:
+        if (LOWORD(lParam) == HTCLIENT) {
+            POINT pt;
+            GetCursorPos(&pt);
+            ScreenToClient(hwnd, &pt);
+            bool overCard = CardIndexAt(pt) >= 0;
+            bool overBtn = PointIn(g_rcLaunch, pt) || PointIn(g_rcInject, pt) ||
+                           PointIn(g_rcSave, pt) || PointIn(g_rcLang, pt) || PointIn(g_rcSearch, pt);
+            // При активном фильтре над карточкой — курсор «запрещено» (drag недоступен).
+            if (!g_searchQuery.empty() && overCard) {
+                SetCursor(LoadCursor(nullptr, IDC_NO));
+                return TRUE;
+            }
+            if (overCard || overBtn) {
+                SetCursor(LoadCursor(nullptr, IDC_HAND));
+                return TRUE;
+            }
+        }
+        return DefWindowProcW(hwnd, msg, wParam, lParam);
+    case WM_CHAR:
+        // Ввод в поле поиска; BM_CHAR приходит когда окно в фокусе.
+        if (g_searchFocused) {
+            wchar_t c = static_cast<wchar_t>(wParam);
+            if (c == 8) {                       // backspace
+                if (!g_searchQuery.empty()) {
+                    g_searchQuery.pop_back();
+                    RebuildVisible();
+                    ClampScroll();
+                    InvalidateRect(hwnd, nullptr, TRUE);
+                }
+            } else if (c >= 0x20 && c != 0x7F) { // печатный символ
+                g_searchQuery.push_back(c);
+                RebuildVisible();
+                ClampScroll();
+                InvalidateRect(hwnd, nullptr, TRUE);
+            }
+            return 0;
+        }
+        break;
     case WM_KEYDOWN:
         if (wParam == VK_F11) {
             ToggleFullscreen();
+            return 0;
+        }
+        if (g_searchFocused && wParam == VK_ESCAPE) {
+            g_searchQuery.clear();
+            g_searchFocused = false;
+            RebuildVisible();
+            ClampScroll();
+            InvalidateRect(hwnd, nullptr, TRUE);
             return 0;
         }
         if (wParam == VK_ESCAPE && g_fullscreen) {
@@ -1398,7 +1781,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             if (g_dragState.pendingClick) {
                 long adx = pt.x - g_dragState.downPos.x; adx = adx < 0 ? -adx : adx;
                 long ady = pt.y - g_dragState.downPos.y; ady = ady < 0 ? -ady : ady;
-                if (adx > 6 || ady > 6) {
+                // Reorder-перетаскивание доступно только когда фильтр поиска не активен.
+                if ((adx > 6 || ady > 6) && g_searchQuery.empty()) {
                     g_dragState.dragging = true;
                     g_dragState.pendingClick = false;
                     g_dragState.dragIndex = g_dragState.pendingIndex;
@@ -1426,16 +1810,14 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         bool hI = (!g_launching && !g_injecting) && PointIn(g_rcInject, pt);
         bool hS = (!g_launching && !g_injecting) && PointIn(g_rcSave, pt);
         bool hG = PointIn(g_rcLang, pt);
-        bool hF = PointIn(g_rcFs, pt);
         bool overList = false;
         // Only invalidate overList if it changes hover state of cards - throttle
         if ((hL != g_hoverLaunch) || (hI != g_hoverInject) ||
-            (hS != g_hoverSave) || (hG != g_hoverLang) || (hF != g_hoverFs)) {
+            (hS != g_hoverSave) || (hG != g_hoverLang)) {
             g_hoverLaunch = hL;
             g_hoverInject = hI;
             g_hoverSave = hS;
             g_hoverLang = hG;
-            g_hoverFs = hF;
             InvalidateRect(hwnd, nullptr, TRUE);
         } else {
             // check card hover without invalidating every move: only if card under cursor changed
@@ -1443,11 +1825,74 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             int idx = -1;
             Layout hl = ComputeLayout(g_clientW, g_clientH);
             int hListH = hl.list.bottom - hl.list.top;
-            int hTotalH = (int)g_mods.size() * kCardStep;
+            int hTotalH = (int)g_visible.size() * kCardStep;
             int hCardW = (hl.list.right - hl.list.left) - (hTotalH > hListH ? (kScrollW + 8) : 0);
             int yPos2 = hl.list.top + 4 - g_scroll;
-            for (size_t i=0;i<g_mods.size();++i){ RECT card{ hl.list.left, yPos2, hl.list.left + hCardW, yPos2 + kCardH }; if (PointIn(card, pt)) { idx=(int)i; break; } yPos2+=kCardStep; }
+            for (size_t i=0;i<g_visible.size();++i){ RECT card{ hl.list.left, yPos2, hl.list.left + hCardW, yPos2 + kCardH }; if (PointIn(card, pt)) { idx=(int)i; break; } yPos2+=kCardStep; }
             if (idx != lastHoverIdx) { lastHoverIdx = idx; InvalidateRect(hwnd, nullptr, TRUE); }
+        }
+        // Hover-состояние кнопок быстрого доступа (папка/карандаш) + тултип.
+        {
+            int actIdx = -1;
+            int act = CardActionAt(pt, &actIdx);
+            if (act != g_hoverActionBtn || actIdx != g_hoverActionCard) {
+                g_hoverActionBtn = act;
+                g_hoverActionCard = actIdx;
+                InvalidateRect(hwnd, nullptr, TRUE);
+                // Пересчёт якоря и текста тултипа под наведённой кнопкой.
+                g_tooltipVisible = false;
+                if (act != 0 && actIdx >= 0 && actIdx < static_cast<int>(g_mods.size())) {
+                    Layout tl = ComputeLayout(g_clientW, g_clientH);
+                    int tH = static_cast<int>(g_visible.size()) * kCardStep;
+                    int tListH = tl.list.bottom - tl.list.top;
+                    int tW = (tl.list.right - tl.list.left) - (tH > tListH ? (kScrollW + 8) : 0);
+                    int ty = tl.list.top + 4 - g_scroll + actIdx * kCardStep;
+                    RECT cc{ tl.list.left, ty + 12, tl.list.left + tW, ty + 36 };   // хэдэр-строка (та же, что в отрисовке)
+                    RECT fb, pb;
+                    CardActionButtons(cc, &fb, &pb);
+                    g_tooltipAnchor = (act == 1) ? fb : pb;
+                    g_tooltipText = (act == 1)
+                        ? L10N(L"\u041E\u0442\u043A\u0440\u044B\u0442\u044C \u043F\u0430\u043F\u043A\u0443 \u043C\u043E\u0434\u0430", L"Open mod folder")
+                        : L10N(L"\u041E\u0442\u043A\u0440\u044B\u0442\u044C main.lua", L"Open main.lua");
+                    g_tooltipVisible = true;
+                }
+            }
+        }
+        // Плавная подсветка карточки (hover-переход 120 мс).
+        {
+            int cardIdx = CardIndexAt(pt);
+            if (cardIdx != g_hoverCardIdx) {
+                g_hoverCardIdx = cardIdx;
+                SetTimer(hwnd, kHoverTimerId, 15, nullptr);
+                InvalidateRect(hwnd, nullptr, TRUE);
+            }
+            g_hoverWasCard = (cardIdx >= 0);
+        }
+        // Подсказка «перетаскивание отключено» при активном фильтре поиска.
+        {
+            bool wantHint = (!g_searchQuery.empty() && g_hoverActionBtn == 0 && g_hoverCardIdx >= 0);
+            if (wantHint) {
+                Layout hl = ComputeLayout(g_clientW, g_clientH);
+                int hH = hl.list.bottom - hl.list.top;
+                int hT = static_cast<int>(g_visible.size()) * kCardStep;
+                int hW = (hl.list.right - hl.list.left) - (hT > hH ? (kScrollW + 8) : 0);
+                int hy = hl.list.top + 4 - g_scroll + g_hoverCardIdx * kCardStep;
+                g_tooltipAnchor = RECT{ hl.list.left, hy, hl.list.left + hW, hy + kCardH };
+                g_tooltipText = L10N(L"\u041F\u0435\u0440\u0435\u0442\u0430\u0441\u043A\u0438\u0432\u0430\u043D\u0438\u0435 \u043E\u0442\u043A\u043B\u044E\u0447\u0435\u043D\u043E \u043F\u0440\u0438 \u043F\u043E\u0438\u0441\u043A\u0435",
+                                     L"Drag disabled while searching");
+                if (!g_tooltipVisible) { g_tooltipVisible = true; InvalidateRect(hwnd, nullptr, TRUE); }
+            } else if (g_hoverActionBtn == 0 && g_tooltipVisible) {
+                g_tooltipVisible = false;
+                InvalidateRect(hwnd, nullptr, TRUE);
+            }
+        }
+        // Hover поля поиска.
+        {
+            bool hSearch = PointIn(g_rcSearch, pt);
+            if (hSearch != g_hoverSearch) {
+                g_hoverSearch = hSearch;
+                InvalidateRect(hwnd, nullptr, TRUE);
+            }
         }
         if (!g_trackingMouse) {
             TRACKMOUSEEVENT tme{ sizeof(tme), TME_LEAVE, hwnd, 0 };
@@ -1458,7 +1903,17 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     }
     case WM_MOUSELEAVE:
         g_trackingMouse = false;
-        g_hoverLaunch = g_hoverInject = g_hoverSave = g_hoverLang = g_hoverFs = false;
+        g_hoverLaunch = g_hoverInject = g_hoverSave = g_hoverLang = false;
+        g_hoverSearch = false;
+        g_hoverActionBtn = 0;
+        g_hoverActionCard = -1;
+        g_tooltipVisible = false;
+        g_down = false;
+        if (g_hoverCardIdx >= 0) {
+            g_hoverCardIdx = -1;
+            SetTimer(hwnd, kHoverTimerId, 15, nullptr);
+        }
+        g_hoverWasCard = false;
         InvalidateRect(hwnd, nullptr, TRUE);
         return 0;
     case WM_MOUSEWHEEL: {
@@ -1470,16 +1925,18 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         return 0;
     }
     case WM_LBUTTONDOWN: {
+        g_down = true; // pressed-состояние кнопок
         OnLeftDown(POINT{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) });
         return 0;
     }
     case WM_LBUTTONUP: {
+        g_down = false;
         bool pending = g_dragState.pendingClick;
         bool dragging = g_dragState.dragging;
         if (pending && !dragging) {
-            int idx = g_dragState.pendingIndex;
-            if (idx >= 0 && idx < static_cast<int>(g_mods.size())) {
-                g_mods[idx].enabled = !g_mods[idx].enabled;
+            int idx = g_dragState.pendingIndex;   // видимый индекс
+            if (idx >= 0 && idx < static_cast<int>(g_visible.size())) {
+                g_mods[g_visible[idx]].enabled = !g_mods[g_visible[idx]].enabled;
                 g_dirty = true;
             }
         }
@@ -1526,6 +1983,20 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         if (wParam == kToastTimerId) {
             KillTimer(hwnd, kToastTimerId);
             SetStatusKey(StatusKey::Ready);
+            return 0;
+        }
+        if (wParam == kHoverTimerId) {
+            // Плавный переход hover-подсветки карточки за ~120 мс (шаг ~15 мс).
+            float target = (g_hoverCardIdx >= 0) ? 1.f : 0.f;
+            float step = 15.f / static_cast<float>(Tok::HoverMs);
+            if (g_hoverFade < target) g_hoverFade = std::min(target, g_hoverFade + step);
+            else                      g_hoverFade = std::max(target, g_hoverFade - step);
+            InvalidateRect(hwnd, nullptr, TRUE);
+            if (std::abs(g_hoverFade - target) < (step / 2.f)) {
+                g_hoverFade = target;
+                KillTimer(hwnd, kHoverTimerId);
+            }
+            return 0;
         }
         return 0;
     case WM_APP_LAUNCH_DONE: {
@@ -1575,14 +2046,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     case WM_DPICHANGED: {
         // wParam loword = new DPI x, hiword = y
         RECT* const prc = reinterpret_cast<RECT*>(lParam);
-        // Recreate fonts scaled to new DPI
-        int dpi = HIWORD(wParam);
-        if (dpi==0) dpi=96;
-        DeleteObject(g_fontTitle); DeleteObject(g_fontHeader); DeleteObject(g_fontReg); DeleteObject(g_fontSmall);
-        g_fontTitle = CreateFontW(-MulDiv(16, dpi, 72), 0,0,0,FW_BOLD, FALSE,FALSE,FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH|FF_DONTCARE, L"Segoe UI");
-        g_fontHeader= CreateFontW(-MulDiv(11, dpi, 72),0,0,0,FW_SEMIBOLD,FALSE,FALSE,FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH|FF_DONTCARE, L"Segoe UI");
-        g_fontReg   = CreateFontW(-MulDiv(12, dpi, 72),0,0,0,FW_NORMAL,FALSE,FALSE,FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH|FF_DONTCARE, L"Segoe UI");
-        g_fontSmall = CreateFontW(-MulDiv(10, dpi, 72),0,0,0,FW_NORMAL,FALSE,FALSE,FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH|FF_DONTCARE, L"Segoe UI");
+        // Recreate fonts from tokens scaled to new DPI
+        RecreateFonts();
         g_clientW = prc->right - prc->left; g_clientH = prc->bottom - prc->top;
         RecalcLayout(); ClampScroll();
         SetWindowPos(hwnd, nullptr, prc->left, prc->top, g_clientW, g_clientH, SWP_NOZORDER|SWP_NOACTIVATE);
@@ -1591,6 +2056,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     }
     case WM_DESTROY:
         KillTimer(hwnd, kToastTimerId);
+        KillTimer(hwnd, kHoverTimerId);
         PostQuitMessage(0);
         return 0;
     default:
@@ -1756,18 +2222,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
     if (!g_hwnd)
         return 1;
 
-    g_fontTitle = CreateFontW(-21, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
-                              DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-                              CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
-    g_fontHeader = CreateFontW(-15, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
-                               DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-                               CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
-    g_fontReg = CreateFontW(-16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
-                            DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-                            CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
-    g_fontSmall = CreateFontW(-13, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
-                              DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-                              CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+    RecreateFonts();
 
     ShowWindow(g_hwnd, nCmdShow);
     UpdateWindow(g_hwnd);
@@ -1779,8 +2234,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
     }
 
     DeleteObject(g_fontTitle);
-    DeleteObject(g_fontHeader);
-    DeleteObject(g_fontReg);
+    DeleteObject(g_fontCard);
+    DeleteObject(g_fontBody);
     DeleteObject(g_fontSmall);
     return static_cast<int>(msg.wParam);
 }
