@@ -147,6 +147,25 @@ int Techno_GetAmmo(lua_State* L) {
     return 1;
 }
 
+// obj:GetCost() -> int
+// Стоимость постройки юнита (TechnoTypeClass::Cost), напр. Rhino (HTNK) = 700.
+// SEH-обёртка + ValidateTechno; при ошибке 0.
+int Techno_GetCost(lua_State* L) {
+    auto* pTechno = CheckTechno(L, 1);
+    if (!ValidateTechno(pTechno)) { lua_pushinteger(L, 0); return 1; }
+
+    int cost = 0;
+    __try {
+        auto* pType = static_cast<TechnoTypeClass*>(pTechno->GetType());
+        if (pType)
+            cost = pType->Cost;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        cost = 0;
+    }
+    lua_pushinteger(L, cost);
+    return 1;
+}
+
 // obj:GetOwner() -> house | nil
 int Techno_GetOwner(lua_State* L) {
     auto* pTechno = CheckTechno(L, 1);
@@ -882,6 +901,7 @@ const luaL_Reg kTechnoMethods[] = {
     { "GetMaxHealth",  Techno_GetMaxHealth  },
     { "GetVeterancy",  Techno_GetVeterancy  },
     { "GetAmmo",       Techno_GetAmmo       },
+    { "GetCost",       Techno_GetCost       },
     { "GetOwner",      Techno_GetOwner      },
     { "GetPosition",   Techno_GetPosition   },
     { "IsAlive",       Techno_IsAlive       },
