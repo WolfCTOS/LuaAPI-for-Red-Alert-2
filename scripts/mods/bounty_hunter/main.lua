@@ -1,43 +1,66 @@
--- Bounty Hunter mod: awards +50 credits to the player on combat hit.
--- Subscribes to OnPreDamage event and tracks damage for credit assignment.
+-- Bounty Hunter: awards the player 50% of a destroyed enemy unit's build cost.
+--
+-- The engine destroy event is not wired up, so we poll. Track live enemy units
+-- (by UniqueID) and, when one disappears, pay half its base cost as a bounty.
+-- Featured APIs:
+--   House.GetPlayer / house:AddCredits / unit:GetOwner / house:IsAlliedWith
+--   unit:GetId / unit:GetTypeName / unit:GetCost / unit:IsAlive
+--   World.GetUnits
 
 local BountyHunter = {}
 
--- References to techno damaged and the frame when damage occurred.
-local lastDamagedTechno = nil
-local damageDealerHouse = nil
+local SCAN_EVERY = 10           -- frames between bounty checks
+local BOUNTY_RATIO = 0.5        -- 50% of the unit's cost
 
--- OnPreDamage callback: called before damage is applied to a techno.
--- This gives the mod a chance to react to incoming damage.
--- @param techno   the techno receiving damage
--- @param damage   incoming damage amount
--- @param warhead  warhead type name (e.g. "Fire", "C4")
-function BountyHunter.OnPreDamage(techno, damage, warhead)
-    -- Store the techno that will receive damage so we can credit the dealer after resolution.
-    lastDamagedTechno = techno
-    -- We cannot reliably determine the attacker at pre-damage time without
-    -- engine integration, so we defer credit assignment to the Update loop
-    -- where we can inspect the damage context.
-    damageDealerHouse = nil
+local seen = {}                 -- unitId -> { cost = int, type = string }
+
+local function isEnemyOf(player, unit)
+    if not unit or not unit:IsAlive() then return false end
+    local owner = unit:GetOwner()
+    if not owner then return false end
+    return owner ~= player and not owner:IsAlliedWith(player)
 end
 
--- OnTick is called every game frame; used to process deferred actions.
 function BountyHunter.Update(frame)
-    if not lastDamagedTechno then return end
+    if frame % SCAN_EVERY ~= 0 then return end
 
-    -- After damage is applied, credit the player who damaged the techno.
-    -- For this demo, we award the owner of the damaged techno's house +50$.
-    -- A full implementation would resolve the actual damage dealer from the
-    -- game's combat event system.
-    if lastDamagedTechno and lastDamagedTechno.Owner then
-        local ownerHouse = lastDamagedTechno.Owner
-        house_AddCredits(ownerHouse, 50)
-        Engine.PrintMessage("[Bounty] +$50 for combat hit!")
+    local player = House.GetPlayer()
+    if not player then return end
+
+    local units = World.GetUnits()   -- excludes buildings (mobile units only)
+    if not units then return end
+
+    -- Currently alive enemy units.
+    local aliveNow = {}
+    for _, u in ipairs(units) do
+        if u:IsAlive() and isEnemyOf(player, u) then
+            aliveNow[u:GetId()] = true
+        end
     end
 
-    -- Clear state for the next cycle.
-    lastDamagedTechno = nil
-    damageDealerHouse = nil
+    -- Remember cost/type for newly seen enemies.
+    for _, u in ipairs(units) do
+        local id = u:GetId()
+        if u:IsAlive() and isEnemyOf(player, u) and not seen[id] then
+            seen[id] = { cost = u:GetCost() or 0, type = tostring(u:GetTypeName()) }
+        end
+    end
+
+    -- Pay bounties for tracked enemies that are no longer alive.
+    for id, entry in pairs(seen) do
+        if not aliveNow[id] then
+            local bounty = math.floor((entry.cost or 0) * BOUNTY_RATIO)
+            if bounty > 0 then
+                local ok, err = pcall(function() player:AddCredits(bounty) end)
+                if ok then
+                    Engine.PrintMessage(string.format("[Bounty] +$%d for %s", bounty, entry.type), 1)
+                else
+                    Engine.PrintMessage(string.format("[Bounty] grant failed: %s", tostring(err)), 1)
+                end
+            end
+            seen[id] = nil
+        end
+    end
 end
 
 return BountyHunter
