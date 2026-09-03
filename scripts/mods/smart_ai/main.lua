@@ -91,6 +91,14 @@ local HIGH_THREAT = {
     HTNK = true,   -- Rhino Tank
 }
 
+-- Veteran priority: elites/veterans are engaged before rookies.
+local function vetBonus(unit)
+    local v = unit:GetVeterancy()
+    if v == "elite" then return 800 end
+    if v == "veteran" then return 400 end
+    return 0
+end
+
 local function threatScore(unit, fromX, fromY)
     local t = unit:GetTypeName()
     local base = 1000
@@ -101,7 +109,7 @@ local function threatScore(unit, fromX, fromY)
     local dx, dy = ux - fromX, uy - fromY
     local distCells2 = dx * dx + dy * dy        -- positions are in cells
     local proximity = 500 / (1 + distCells2 / 100)
-    return base + proximity
+    return base + vetBonus(unit) + proximity
 end
 
 local function selectBestTarget(jet, candidates)
