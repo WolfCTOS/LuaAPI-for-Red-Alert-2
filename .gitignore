@@ -107,3 +107,11 @@ ntuser.ini
 *.temp
 *.swp
 *~
+# RA2/YR local launcher and runtime artifacts
+*.256
+*.016
+creditsmd.txt
+ddraw.ini
+game.fnt
+launcher.bmp
+launchermd.bmp
