@@ -648,7 +648,15 @@ If you are new to LuaAPI:
 
 ## 📜 License & Credits
 
-Yuri's Revenge is a trademark of Electronic Arts.
+LuaAPI is licensed under the **MIT License**.
+
+Copyright (c) 2026 NiTeMind
+
+See [`LICENSE`](LICENSE) for the full license text.
+
+Third-party components distirbuted with or used by LuaAPI are distributed under their respective licenses. See the relevant license files and notices for details.
+
+Red Alert 2 and Yuri's Revenge are proprietary software and trademarks of Electronic Arts. LuaAPI is an independent community project and is not affiliated with or endorsed by Electronic Arts.
 
 Developed for the C&C modding community.
 
