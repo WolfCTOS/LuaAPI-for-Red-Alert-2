@@ -6,6 +6,29 @@ The changelog follows the project's verified milestone history. Features are lis
 
 ---
 
+## [Unreleased] — Milestone 14 Runtime Research — 2026-09-06
+
+### Changed
+
+- **Milestone 14 direction:** shifted from building a general Lua-side gameplay framework toward finding the real runtime boundary between LuaAPI and Ares/Phobos.
+- **Research focus:** programmable runtime decision-making is now the primary hypothesis.
+- **AI research:** target selection, information and memory, multi-AI coordination, dynamic alliances, and event-driven behaviour are candidate areas.
+- **Comparison rule:** candidate behaviour must first be tested against Ares/Phobos and classified as naturally supported, workaround-heavy, or lacking a suitable existing model.
+- **API strategy:** defer broad API cleanup or removal until a real runtime capability boundary is established.
+- **Community validation:** concrete runtime examples should be challenged against experienced Ares/Phobos modders instead of relying on theoretical comparisons.
+
+### Research Candidates
+
+- AI target selection that reacts to changing game state.
+- Runtime observations with timestamps and changing confidence.
+- Several AI controllers operating as one coordinated side.
+- AI alliance changes during a match.
+- Runtime systems such as Empowerment-style accumulation.
+
+These are research candidates and are not verified LuaAPI capabilities.
+
+---
+
 ## [1.1.0] — Milestone 10 Core / Milestone 11 Complete / Milestone 12 Development — 2026-08-31
 
 ### Added
@@ -147,6 +170,5 @@ The changelog follows the project's verified milestone history. Features are lis
 
 - `v1.0.0` remains the current **production release baseline**.
 - `1.1.0` represents the current API/development line associated with Milestone 10 core, completed Milestone 11 tooling, and Milestone 12 development.
-- Milestone 11 is engineering-complete, but full two-client online multiplayer validation is not claimed.
-- Milestone 12 is development work and must not be described as production-complete until separately verified.
+- Milestone 14 is currently research work and must not be described as a verified capability.
 - `PROJECT/ROADMAP.md`, `PROJECT/CAPABILITIES.md`, and `API.md` should be updated alongside significant API or milestone changes to keep documentation synchronized.
