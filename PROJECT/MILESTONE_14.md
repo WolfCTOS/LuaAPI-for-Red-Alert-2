@@ -1,297 +1,256 @@
-# Milestone 14 — Gameplay Abstractions
+# Milestone 14 — Runtime Gameplay & Decision-Making
 
-> **Goal:** Build a small Lua-side gameplay framework on top of the existing LuaAPI primitives.
+> **Goal:** Explore and prove where Lua can provide programmable runtime gameplay logic beyond the natural abstractions of Ares and Phobos.
 >
-> **Principle:** C++ provides engine primitives. Lua provides gameplay abstractions.
+> **Principle:** Ares and Phobos extend the engine. LuaAPI makes gameplay programmable.
 
 ## Why This Milestone Exists
 
-LuaAPI has reached the point where adding another low-level binding is not always the best next step.
+LuaAPI has reached the point where adding another low-level engine binding is not always the best next step.
 
-The next layer should make existing primitives easier to compose into real gameplay systems.
+The original question is no longer simply:
 
-The target is not to hide the engine. The target is to give modders useful building blocks so they do not need to reimplement the same control logic in every mod.
+> What mechanic can LuaAPI add?
+
+The more useful question is:
+
+> What kind of runtime gameplay logic can a modder define with Lua that is difficult to express naturally with Ares and Phobos?
+
+Recent community discussion suggests that the most promising area may be runtime decision-making: systems that continuously observe the game, keep their own state, react to events, and change behaviour over time.
+
+This is a hypothesis, not a verified capability claim.
 
 ## Scope
 
-Milestone 14 focuses on five Lua-side abstractions:
+Milestone 14 is an investigation first and an implementation milestone second.
+
+The first target is a small AI decision-making problem. The goal is to replace one part of vanilla AI handling with Lua while keeping existing INI data and engine functionality available.
+
+Potential areas include:
 
 ```text
-Gameplay Framework
+Runtime Decision-Making
 │
-├── EventBus
-├── Timer
-├── Query
-├── Task
-└── UnitController
+├── Target selection
+├── Information and memory
+├── Production decisions
+├── Multi-AI coordination
+├── Dynamic alliances
+└── Event-driven behaviour
 ```
 
-These systems should use existing LuaAPI functionality wherever possible.
+Do not build a complete replacement AI during this milestone.
 
-New C++ bindings are justified only when a real framework requirement cannot be implemented from the current API.
+## M14.1 — Define the Runtime Boundary
 
-## M14.1 — EventBus
+Identify one decision currently handled by vanilla AI and describe what information it uses.
 
-Create a common event subscription layer for Lua gameplay code.
+The first candidate is target selection in a multi-player situation where vanilla AI may continue focusing on one player despite another player becoming a larger threat.
 
-Target interface:
+The experiment should answer:
 
-```lua
-Events.On("unit_destroyed", function(unit, killer)
-    -- React to the event.
-end)
-```
+- What does vanilla AI currently consider?
+- What information would a Lua decision system need?
+- Which part of the decision can Lua replace?
+- Can the result be observed clearly in-game?
 
-Required behavior:
+## M14.2 — Ares/Phobos Comparison
 
-- Multiple subscribers can listen to the same event.
-- `Events.On()` returns a subscription handle or ID.
-- `Events.Off()` removes a subscription.
-- Lua callback errors must not crash the game.
-- Subscriptions are cleaned up during session reset.
-- Event dispatch must have a defined execution order.
-- Event dispatch must remain safe when callbacks invalidate engine objects.
-- Re-entrant event behavior must be defined before implementation is marked complete.
+Before implementing the Lua solution, attempt to model the same behaviour using existing Ares and Phobos functionality.
 
-The EventBus is a Lua abstraction. Native hooks remain responsible for obtaining engine events.
-
-## M14.2 — Timer
-
-Create a logical-frame timer abstraction.
-
-Target interface:
-
-```lua
-Timer.After(60, function()
-    -- Run once after 60 logical frames.
-end)
-```
-
-```lua
-local timer = Timer.Every(30, function()
-    -- Run every 30 logical frames.
-end)
-
-timer:Cancel()
-```
-
-Required behavior:
-
-- Timers use logical game frames.
-- Timers are deterministic for gameplay use.
-- Timers are cleaned up on session reset.
-- Cancelled timers must not execute again.
-- Timer callbacks must be protected from Lua errors.
-- Destroyed engine objects must not be kept alive only by timer state.
-
-Do not introduce wall-clock timing for deterministic gameplay systems.
-
-## M14.3 — Query
-
-Create reusable Lua query helpers on top of existing world and object APIs.
-
-Initial examples:
-
-```lua
-local enemies = Query.Enemies(unit)
-local nearby = Query.Nearby(unit, 300)
-local target = Query.NearestEnemy(unit)
-```
-
-The Query layer should remain composable.
-
-Complex decisions should stay in Lua instead of becoming large native query bindings.
-
-Example:
-
-```lua
-local target = Query.NearestEnemy(unit)
-
-if target and target:GetHealth() < 100 then
-    unit:Attack(target)
-end
-```
-
-The exact query set should be driven by showcase requirements rather than by an attempt to expose every possible engine filter.
-
-## M14.4 — Task
-
-Create a minimal abstraction for actions that may take multiple logical frames.
-
-Initial target interface:
-
-```lua
-Task.MoveTo(unit, position)
-Task.Attack(unit, target)
-Task.Wait(60)
-```
-
-Tasks should provide a small lifecycle model:
+Classify the result as:
 
 ```text
-Pending → Running → Completed
-                 └→ Failed
-                 └→ Cancelled
+Already natural
+        ↓
+Possible with workarounds
+        ↓
+No suitable model found
 ```
 
-Where useful, tasks may expose completion callbacks:
+The comparison must focus on the conceptual model and required systems, not raw line count.
 
-```lua
-local task = Task.MoveTo(unit, position)
+A feature should not be presented as a LuaAPI advantage merely because the Ares/Phobos implementation is longer.
 
-task:OnComplete(function()
-    -- Continue behavior.
-end)
-```
+## M14.3 — Runtime State & Information
 
-Milestone 14 should not build a full behavior-tree or AI scheduler. Keep the task system minimal until real gameplay use proves the need for more.
+Investigate whether Lua can naturally maintain state that changes during the game.
 
-## M14.5 — UnitController
-
-Create a small Lua abstraction that composes unit state, tasks, and commands.
-
-Example:
-
-```lua
-local controller = UnitController.New(unit)
-
-controller:MoveTo(position)
-controller:Attack(target)
-controller:Stop()
-```
-
-The controller must not become a second native AI.
-
-Its role is to coordinate Lua gameplay behavior using existing unit-control primitives.
-
-## M14.6 — Framework Integration
-
-The abstractions must work together.
-
-Expected flow:
+Example concept:
 
 ```text
-Native engine event
+AI observes 5 Apocalypse tanks
         ↓
-LuaAPI event layer
+Stores the observation and its time
         ↓
-EventBus
+No evidence of losses appears
         ↓
-Query / decision logic
+AI continues to assume at least 5 exist
         ↓
-UnitController
+New information arrives
         ↓
-Task
-        ↓
-Existing LuaAPI command
+Belief is updated
 ```
 
-Timer should provide delayed or repeated logical-frame execution where an event-driven flow is not sufficient.
+The purpose is to test whether Lua can define its own runtime information model rather than relying only on predefined engine states.
 
-## M14.7 — Showcase: Tactical Patrol
+This is an investigation target, not a requirement to build a complete AI memory system in M14.
 
-Build one real showcase that exercises the framework rather than isolated API tests.
+## M14.4 — Lua Decision Prototype
 
-Target behavior:
+Implement the smallest useful Lua prototype for the selected decision.
 
-```text
-Unit patrols
-    ↓
-Enemy detected
-    ↓
-Target selected
-    ↓
-Attack task started
-    ↓
-Enemy destroyed
-    ↓
-Event received
-    ↓
-Unit returns to patrol
-```
+The prototype should:
 
-The showcase should use the framework for coordination and should minimize direct polling logic in the final implementation.
+- observe relevant game state;
+- maintain any required Lua-side state;
+- make a decision during runtime;
+- issue an existing engine command or use an existing LuaAPI primitive;
+- produce a visible and reproducible result.
 
-The purpose of the showcase is to discover missing primitives and framework problems.
+The prototype should avoid adding native functionality unless the experiment proves that an existing LuaAPI primitive is insufficient.
+
+## M14.5 — Community Challenge
+
+Show the concrete result to experienced Ares/Phobos modders and ask how they would implement the same behaviour without Lua.
+
+The question should be concrete:
+
+> How would you implement this exact runtime behaviour with Ares/Phobos?
+
+Do not ask whether Lua is "better" in general.
+
+The purpose is to test the boundary with real implementations and find cases where Lua provides a different programming model.
+
+## M14.6 — Candidate Runtime Systems
+
+After the first decision prototype, investigate larger systems only if the first case confirms the direction.
+
+Potential candidates:
+
+### Multi-AI Coordination
+
+Several independent AI controllers operate as one team while keeping separate roles and production behaviour.
+
+### Dynamic Alliances
+
+AI relationships can change during a match based on runtime conditions. Human players may also interact with these relationships.
+
+### Event-Driven AI Behaviour
+
+AI reacts to events instead of relying only on predefined TeamTypes, AITriggers, and static priorities.
+
+### Runtime Information / Memory
+
+AI keeps observations, timestamps, assumptions, and updates its internal state when new evidence appears.
+
+### Empowerment-Style Systems
+
+A runtime value changes as the player destroys units or structures and continuously affects gameplay. This is a candidate for comparison, not yet a verified LuaAPI-exclusive capability.
+
+## M14.7 — What This Milestone Is Not
+
+M14 is not intended to:
+
+- reimplement Ares or Phobos in Lua;
+- replace INI as the configuration layer;
+- build a complete general-purpose AI immediately;
+- add mechanics only because they are easier to write in Lua;
+- claim that Ares or Phobos cannot do something without testing the alternative;
+- optimize or remove existing API functions before the runtime boundary is established.
 
 ## Completion Criteria
 
-Milestone 14 is complete only when:
+Milestone 14 is complete when:
 
-- EventBus works with real LuaAPI events.
-- Timer works using logical frames.
-- Query provides useful reusable world/object queries.
-- Task supports at least one multi-frame gameplay action.
-- UnitController composes existing unit commands without duplicating native AI.
-- Session reset cleans framework state.
-- Lua callback errors are isolated from the game process.
-- Engine object invalidation is handled safely.
-- The Tactical Patrol showcase works in the real game.
-- Existing verified functionality does not regress.
+- one concrete vanilla AI decision has been identified;
+- its Ares/Phobos implementation path has been investigated;
+- the result has been classified as natural, workaround-heavy, or unsupported by a suitable model;
+- a minimal Lua prototype exists for a promising case;
+- the runtime behaviour is reproducible in-game;
+- the result has been reviewed by experienced modders where possible;
+- the project can state a more precise answer to what LuaAPI adds beyond Ares/Phobos.
+
+If the investigation shows that a candidate is already natural in Ares/Phobos, discard it and test another candidate.
+
+If no meaningful boundary is found, record that result instead of forcing a justification for LuaAPI.
 
 ## Development Rule
 
-Use a vertical slice for each abstraction:
+Use a vertical slice:
 
 ```text
-Gameplay need
-      ↓
-Try existing primitive
-      ↓
-Lua abstraction
-      ↓
-Showcase consumer
-      ↓
-Runtime test
-      ↓
-Identify real limitation
-      ↓
-Minimal native change if required
+Real gameplay problem
+        ↓
+Understand vanilla behaviour
+        ↓
+Test Ares/Phobos model
+        ↓
+Classify the boundary
+        ↓
+Lua prototype
+        ↓
+In-game verification
+        ↓
+Community challenge
+        ↓
+Document the result
 ```
 
-Do not add framework features because they look useful in theory.
+Do not build abstractions before a real gameplay problem requires them.
 
-## Architecture Boundary
+## Architecture Direction
+
+The intended long-term boundary is:
 
 ```text
                  C++
 ┌──────────────────────────────────────┐
-│ Engine hooks                         │
+│ Engine integration                   │
+│ Hooks                                │
 │ Pointer safety                       │
 │ Lifecycle                            │
 │ Native state                         │
-│ Performance-critical primitives      │
+│ Engine primitives                    │
 └──────────────────┬───────────────────┘
                    │
                    ▼
-                 Lua
+                 LuaAPI
 ┌──────────────────────────────────────┐
-│ EventBus                             │
-│ Timer                                │
-│ Query                                │
-│ Task                                 │
-│ UnitController                       │
-│ Gameplay rules                       │
+│ Safe engine access                   │
+│ Events / observations                │
+│ Object and world queries             │
+│ Runtime state                        │
 └──────────────────┬───────────────────┘
                    │
                    ▼
-                 Mods
+                  Lua
+┌──────────────────────────────────────┐
+│ Decisions                            │
+│ Memory                               │
+│ Rules                                │
+│ Coordination                         │
+│ Gameplay behaviour                  │
+└──────────────────┬───────────────────┘
+                   │
+                   ▼
+                  Mods
 ```
 
-The long-term direction is:
+The long-term direction remains:
 
 ```text
 Engine Access
       ↓
 Safe Native API
       ↓
-Reactive Event System
+Runtime State & Events
       ↓
-Gameplay Framework
+Programmable Gameplay Logic
       ↓
-Extension / Override System
+Decision-Making / Tactical Systems
       ↓
-Reusable Tactical Systems
+Reusable Mod Systems
 ```
 
-Milestone 14 is the transition from exposing engine capabilities to making those capabilities practical to use.
+M14 is the point where LuaAPI tests whether this direction represents a real capability boundary rather than simply a different syntax for existing Ares/Phobos features.
