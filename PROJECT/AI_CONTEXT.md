@@ -8,7 +8,7 @@
 
 LuaAPI is a native x86 Lua 5.4 runtime embedded into Yuri's Revenge. It exposes selected engine functionality to Lua while keeping unsafe engine interaction inside C++.
 
-The project is now investigating a more specific question:
+The project is investigating a specific question:
 
 > What can LuaAPI make programmable at runtime that Ares and Phobos do not naturally model?
 
@@ -24,17 +24,38 @@ C++ provides safe engine access, lifecycle handling, native state, hooks, and en
 
 ## Current Research Direction
 
-Recent community discussion identified several possible runtime areas:
+The current primary experiment is an **Adaptive AI** showcase built from the existing `smart_ai` mod.
+
+The goal is to test whether Lua can run a decision loop that:
+
+- observes the player's live army;
+- maintains Lua-side runtime state;
+- classifies the current situation;
+- chooses a response;
+- controls AI units;
+- observes the changed game state;
+- changes the next decision.
+
+The first slice is intentionally small. It is not a complete replacement for vanilla AI and does not require machine learning.
+
+Other runtime areas remain research candidates:
 
 - AI target selection based on changing game state.
 - AI information and memory.
-- Runtime state that persists and changes over time.
 - Multiple AI controllers working as one team.
 - AI alliances that can change during a match.
 - AI using existing game mechanics based on runtime decisions.
 - Systems such as Empowerment where a value accumulates from gameplay events.
 
 These are research candidates. They must be compared against Ares and Phobos before being presented as LuaAPI advantages.
+
+## Smart AI Baseline
+
+`smart_ai` is an existing experimental AI mod and the baseline for the Adaptive AI experiment.
+
+Its current implementation uses periodic scans, registry-provided unit types, target scoring, nearby defensive interception, and offensive strikes against dense player clusters. It is useful as a starting point but should not be described as an adaptive AI until the new runtime decision loop is implemented and verified.
+
+The baseline should be preserved while the new experiment is developed so that improvements can be attributed correctly.
 
 ## M14 Working Model
 
@@ -70,13 +91,15 @@ No suitable model found
 
 The comparison is about the programming model and required systems. Raw line count is not sufficient evidence.
 
-## First Candidate: AI Decision-Making
+## Adaptive AI Showcase
 
-The first practical experiment is to replace one part of vanilla AI decision-making with Lua.
+The detailed experiment is documented in [`SHOWCASES/adaptive_ai.md`](SHOWCASES/adaptive_ai.md).
 
-A candidate scenario is target selection in a multi-player game. Vanilla AI may continue focusing on one player even when another player becomes a larger threat.
+The first success condition is:
 
-The Lua experiment should not attempt to build a complete AI. It should prove whether one decision can be controlled by Lua using available game state.
+> A player can deliberately change their strategy during a match, and the Lua-controlled AI demonstrably changes its own strategy in response.
+
+The first prototype should avoid broad API expansion. New C++ bindings are justified only when the experiment proves an existing primitive is insufficient.
 
 ## Runtime Information Model
 
@@ -87,13 +110,11 @@ AI sees 5 Apocalypse tanks
         ↓
 Stores observation + time
         ↓
-No evidence of losses
-        ↓
-Assumes at least 5 remain
-        ↓
 New information arrives
         ↓
-Updates belief
+Updates its belief
+        ↓
+Changes the next decision
 ```
 
 This is an investigation target. Do not describe it as an existing LuaAPI feature until implemented and verified.
