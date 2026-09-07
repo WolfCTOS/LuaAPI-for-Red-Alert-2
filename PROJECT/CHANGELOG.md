@@ -6,16 +6,20 @@ The changelog follows the project's verified milestone history. Features are lis
 
 ---
 
-## [Unreleased] — Milestone 14 Runtime Research — 2026-09-06
+## [Unreleased] — Milestone 14 Runtime Research — 2026-09-07
 
 ### Changed
 
-- **Milestone 14 direction:** shifted from building a general Lua-side gameplay framework toward finding the real runtime boundary between LuaAPI and Ares/Phobos.
-- **Research focus:** programmable runtime decision-making is now the primary hypothesis.
-- **AI research:** target selection, information and memory, multi-AI coordination, dynamic alliances, and event-driven behaviour are candidate areas.
-- **Comparison rule:** candidate behaviour must first be tested against Ares/Phobos and classified as naturally supported, workaround-heavy, or lacking a suitable existing model.
-- **API strategy:** defer broad API cleanup or removal until a real runtime capability boundary is established.
-- **Community validation:** concrete runtime examples should be challenged against experienced Ares/Phobos modders instead of relying on theoretical comparisons.
+- **Adaptive AI** is now the primary M14 showcase direction, using the existing `smart_ai` implementation as its baseline.
+- The first Adaptive AI slice is defined as a runtime loop: observe the player's army, maintain Lua-side state, choose a response, control AI units, observe the result, and re-evaluate.
+- The first slice is explicitly a research experiment and is not yet a verified LuaAPI capability.
+- `smart_ai` baseline behaviour is to be preserved before adaptive changes are introduced so the experiment can be evaluated separately.
+- Ares/Phobos comparison remains an implementation-boundary test, not a claim that equivalent behaviour is impossible in those systems.
+- New native bindings are deferred until a concrete experiment proves that existing LuaAPI primitives are insufficient.
+
+### Added
+
+- `PROJECT/SHOWCASES/adaptive_ai.md` with the Adaptive AI research plan, vertical slice, verification scenarios, and non-goals.
 
 ### Research Candidates
 
@@ -25,7 +29,7 @@ The changelog follows the project's verified milestone history. Features are lis
 - AI alliance changes during a match.
 - Runtime systems such as Empowerment-style accumulation.
 
-These are research candidates and are not verified LuaAPI capabilities.
+These remain research candidates and are not verified LuaAPI capabilities.
 
 ---
 
