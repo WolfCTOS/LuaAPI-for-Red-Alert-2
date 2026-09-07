@@ -43,13 +43,21 @@ This is a research hypothesis, not a project claim.
 
 Identify one decision handled by vanilla AI and describe the information behind that decision.
 
-First candidate:
+Current candidate:
 
-> Replace one part of vanilla AI target selection with Lua so the AI can react to the changing balance of a multi-player game instead of relying only on the existing threat system.
+> An AI observes the changing balance of a match and changes its response during the same match.
 
-### M14.2 — Ares/Phobos Comparison
+The first practical experiment is documented in [`SHOWCASES/adaptive_ai.md`](SHOWCASES/adaptive_ai.md).
 
-Attempt to reproduce the same behaviour using Ares and Phobos.
+### M14.2 — Preserve Smart AI as Baseline
+
+`smart_ai` is the existing experimental AI implementation and the starting point for the Adaptive AI work.
+
+Before extending it, record its current behaviour and limitations as a baseline. Do not mix baseline fixes with the new research result unless the change is required for the experiment.
+
+### M14.3 — Ares/Phobos Comparison
+
+For the exact behaviour selected for the prototype, determine how it would be implemented using Ares and Phobos.
 
 Classify the result:
 
@@ -63,7 +71,7 @@ No suitable model found
 
 Do not use raw line count as the main comparison. The question is whether the behaviour has a natural model in the existing systems.
 
-### M14.3 — Runtime State & Information
+### M14.4 — Runtime State & Information
 
 Investigate whether Lua can maintain information that changes during the match.
 
@@ -74,48 +82,51 @@ AI sees 5 Apocalypse tanks
         ↓
 Stores observation + time
         ↓
-No evidence of losses
-        ↓
-Continues to assume at least 5
-        ↓
 New information arrives
         ↓
 Updates its belief
+        ↓
+Changes the next decision
 ```
 
 This is an investigation target, not yet a verified feature.
 
-### M14.4 — Lua Decision Prototype
+### M14.5 — Adaptive AI Vertical Slice
 
-Build the smallest possible prototype that:
+Build the smallest useful adaptive loop:
 
-- observes game state;
-- maintains required Lua-side state;
-- makes one runtime decision;
-- uses existing LuaAPI primitives where possible;
-- produces a visible and reproducible result.
+```text
+Observe player army
+        ↓
+Classify current strategy
+        ↓
+Choose response
+        ↓
+Control AI units
+        ↓
+Observe changed game state
+        ↓
+Re-evaluate
+```
 
-New C++ bindings are justified only when the experiment proves an existing primitive is insufficient.
+The first slice should prove one visible change of strategy. It should not attempt to replace the complete vanilla AI.
 
-### M14.5 — Community Challenge
+Initial strategy categories may include armor-heavy, air-heavy, AA-heavy, turtle, economy-exposed, and balanced.
 
-Show the exact behaviour to experienced Ares/Phobos modders and ask:
+Do not add machine learning. Ordinary Lua state and decision rules are sufficient for the first experiment.
 
-> How would you implement this exact behaviour with Ares/Phobos?
+### M14.6 — Tactical Expansion
 
-The goal is to test the boundary with real implementations.
+Only after the adaptive strategic loop is verified, investigate:
 
-### M14.6 — Larger Runtime Systems
+- target selection;
+- target deconfliction;
+- retreat and regroup behaviour;
+- engagement evaluation;
+- multi-unit coordination;
+- event-driven reactions.
 
-Only after a smaller case confirms the direction, investigate:
-
-- AI information and memory;
-- dynamic target selection;
-- production decisions;
-- multi-AI coordination;
-- dynamic alliances;
-- event-driven AI behaviour;
-- runtime systems such as Empowerment-style accumulation.
+These are secondary to proving adaptation.
 
 ### M14.7 — API Audit
 
