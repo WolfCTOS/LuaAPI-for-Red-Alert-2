@@ -1,68 +1,251 @@
--- Miner Safety.
+-- Miner Safety
 --
--- Public showcase of the Unit Control slice.
--- Stops harvesters from continuing into enemy fire and resumes
--- their autonomous behavior after the threat is gone.
+-- Stateful harvester safety controller.
 --
--- Featured APIs:
---   World.GetUnitsInRadius / World.GetUnits / World.GetBuildings
---   unit:GetMission / unit:GetPosition / unit:GetId / unit:Stop / unit:Hunt
---   house:SpawnUnit
---   House.GetPlayer / unit:GetOwner / house:GetName / house:IsAlliedWith
+-- Current scope:
+--   * Detect nearby enemy threats.
+--   * Stop harvesters entering dangerous areas.
+--   * Keep the miner in a protected "threatened" state.
+--   * Resume autonomous behavior only after the threat is gone.
+--   * Keep at least one harvester alive when possible.
+--
+-- Important:
+--   This version does NOT implement player mining assignments or TIBTRE
+--   mining points yet because the current public LuaAPI shown here does
+--   not expose:
+--       1. world mouse-click coordinates;
+--       2. Tiberium/ore overlay queries;
+--       3. TIBTRE enumeration.
+--
+-- Those should be added as separate API primitives instead of being faked.
 
 local MOD = {}
 
-local THREAT_SCAN_EVERY  = 60    -- frames between threat scans
-local SPAWN_SCAN_EVERY   = 300   -- frames between respawn checks
-local THREAT_RADIUS      = 10    -- danger radius around a harvester
-local REFINERY_RADIUS    = 15    -- danger radius around the refinery
-local STOP_COOLDOWN      = 200   -- frames before re-stopping the same miner
-local LOG_COOLDOWN        = 300   -- frames between refinery threat warnings
+----------------------------------------------------------------
+-- Configuration
+----------------------------------------------------------------
 
-local MINER_TYPES    = { HARV = true, CMIN = true, YCMIN = true }
-local REFINERY_TYPES = { GAREF = true, NAREF = true, YAREF = true, AREF = true }
-local NEUTRAL_HOUSES = { Neutral = true, Civilian = true, Special = true }
-local CIVIL_VEHICLES = { CAR = true, PCV = true, BUS = true, TRUCK = true }
+local THREAT_SCAN_EVERY = 30
+local SPAWN_SCAN_EVERY  = 300
 
--- minerId -> frame of last Stop()
-local lastStop = {}
+local THREAT_RADIUS     = 10
+local REFINERY_RADIUS   = 15
 
--- minerId -> true when this script stopped the miner
-local threatenedMiners = {}
+-- After detecting a threat, don't immediately release the miner.
+-- This prevents rapid Stop/Hunt/Stop/Hunt oscillation.
+local SAFE_RELEASE_DELAY = 90
 
-local lastThreatLog = -10000
+local STOP_COOLDOWN      = 120
+local LOG_COOLDOWN       = 300
+
+----------------------------------------------------------------
+-- Unit definitions
+----------------------------------------------------------------
+
+local MINER_TYPES = {
+    HARV  = true,
+    CMIN  = true,
+    YCMIN = true
+}
+
+local REFINERY_TYPES = {
+    GAREF = true,
+    NAREF = true,
+    YAREF = true,
+    AREF  = true
+}
+
+local NEUTRAL_HOUSES = {
+    Neutral  = true,
+    Civilian = true,
+    Special  = true
+}
+
+local CIVIL_VEHICLES = {
+    CAR   = true,
+    PCV   = true,
+    BUS   = true,
+    TRUCK = true
+}
+
+----------------------------------------------------------------
+-- Runtime state
+----------------------------------------------------------------
+
+-- minerId -> state
+--
+-- {
+--     threatened      = bool,
+--     threatId        = enemy id or nil,
+--     threatUntil     = frame,
+--     lastStop        = frame,
+--     lastThreatLog   = frame
+-- }
+--
+local miners = {}
+
 local lastSpawn = -10000
+local lastGlobalThreatLog = -10000
+
+----------------------------------------------------------------
+-- Utility
+----------------------------------------------------------------
 
 local function msg(text)
     local f = (Engine and Engine.PrintMessage) or game_PrintMessage
-    if f then f(text) end
+
+    if f then
+        f(text)
+    end
+end
+
+local function safeCall(fn, ...)
+    if not fn then
+        return false
+    end
+
+    local ok, result = pcall(fn, ...)
+
+    if not ok then
+        return false
+    end
+
+    return result
+end
+
+local function getMinerState(id)
+    local state = miners[id]
+
+    if not state then
+        state = {
+            threatened = false,
+            threatId = nil,
+            threatUntil = 0,
+            lastStop = -10000,
+            harvestX = nil,
+            harvestY = nil
+        }
+
+        miners[id] = state
+    end
+
+    return state
 end
 
 local function ownedBy(player, unit)
-    local owner = unit:GetOwner()
+    if not player or not unit then
+        return false
+    end
+
+    local owner = safeCall(unit.GetOwner, unit)
+
     return owner ~= nil and owner == player
 end
 
 local function isMiner(unit)
-    return MINER_TYPES[unit:GetTypeName()] == true
+    if not unit then
+        return false
+    end
+
+    local typeName = safeCall(unit.GetTypeName, unit)
+
+    return typeName ~= nil and MINER_TYPES[typeName] == true
 end
 
--- Another house, non-neutral, non-civilian: a real threat.
+local function getId(unit)
+    if not unit then
+        return 0
+    end
+
+    local id = safeCall(unit.GetId, unit)
+
+    return id or 0
+end
+
+local function getPosition(unit)
+    if not unit then
+        return nil
+    end
+
+    return safeCall(unit.GetPosition, unit)
+end
+
+local function getTypeName(unit)
+    if not unit then
+        return nil
+    end
+
+    return safeCall(unit.GetTypeName, unit)
+end
+
+local function getMission(unit)
+    if not unit then
+        return ""
+    end
+
+    local mission = safeCall(unit.GetMission, unit)
+
+    if type(mission) ~= "string" then
+        return ""
+    end
+
+    return string.lower(mission)
+end
+
+local function isAlive(unit)
+    if not unit then
+        return false
+    end
+
+    return safeCall(unit.IsAlive, unit) == true
+end
+
+----------------------------------------------------------------
+-- Enemy detection
+----------------------------------------------------------------
+
 local function isEnemy(player, unit)
-    if not unit or not unit:IsAlive() then return false end
+    if not unit or not isAlive(unit) then
+        return false
+    end
 
-    local owner = unit:GetOwner()
-    if not owner then return false end
+    local owner = safeCall(unit.GetOwner, unit)
 
-    if NEUTRAL_HOUSES[owner:GetName()] then return false end
-    if CIVIL_VEHICLES[unit:GetTypeName()] then return false end
+    if not owner then
+        return false
+    end
 
-    return owner ~= player and not owner:IsAlliedWith(player)
+    local ownerName = safeCall(owner.GetName, owner)
+
+    if ownerName and NEUTRAL_HOUSES[ownerName] then
+        return false
+    end
+
+    local typeName = getTypeName(unit)
+
+    if typeName and CIVIL_VEHICLES[typeName] then
+        return false
+    end
+
+    if owner == player then
+        return false
+    end
+
+    local allied = safeCall(owner.IsAlliedWith, owner, player)
+
+    if allied then
+        return false
+    end
+
+    return true
 end
 
-local function enemyNear(player, x, y, radius)
+local function findEnemyNear(player, x, y, radius)
     local nearby = World.GetUnitsInRadius(x, y, radius)
-    if not nearby then return nil end
+
+    if not nearby then
+        return nil
+    end
 
     for _, unit in ipairs(nearby) do
         if isEnemy(player, unit) then
@@ -73,45 +256,308 @@ local function enemyNear(player, x, y, radius)
     return nil
 end
 
-local function fname(unit)
-    local mission = unit:GetMission()
-    return (type(mission) == "string") and string.lower(mission) or ""
+----------------------------------------------------------------
+-- Miner state
+----------------------------------------------------------------
+
+local function markThreatened(miner, threat, frame)
+    local id = getId(miner)
+
+    if id == 0 then
+        return
+    end
+
+    local state = getMinerState(id)
+
+    state.threatened = true
+    state.threatId = getId(threat)
+    state.threatUntil = frame + SAFE_RELEASE_DELAY
 end
 
-local function minerId(unit)
-    return unit.GetId and unit:GetId() or 0
+local function clearThreat(miner)
+    local id = getId(miner)
+
+    if id == 0 then
+        return
+    end
+
+    local state = miners[id]
+
+    if state then
+        state.threatened = false
+        state.threatId = nil
+        state.threatUntil = 0
+    end
 end
 
-local function countMiners(player)
-    local units = World.GetUnits()
-    local n = 0
+local function isThreatened(miner)
+    local id = getId(miner)
 
-    if not units then return n end
+    if id == 0 then
+        return false
+    end
 
-    for _, unit in ipairs(units) do
-        if unit:IsAlive() and isMiner(unit) and ownedBy(player, unit) then
-            n = n + 1
+    local state = miners[id]
+
+    return state ~= nil and state.threatened
+end
+
+----------------------------------------------------------------
+-- Stop logic
+----------------------------------------------------------------
+
+local function shouldStopMiner(miner)
+    local mission = getMission(miner)
+
+    return mission == "harvest"
+        or mission == "move"
+        or mission == "guard"
+        or mission == "attack"
+end
+
+local function stopMiner(miner, frame, threat)
+    local id = getId(miner)
+
+    if id == 0 then
+        return false
+    end
+
+    local state = getMinerState(id)
+
+    if frame - state.lastStop < STOP_COOLDOWN then
+        return false
+    end
+
+    state.lastStop = frame
+
+    -- Capture the player's assigned harvest cell BEFORE Stop() clears
+    -- FootClass::Destination. Only meaningful while the miner is actually on a
+    -- Harvest mission; a Move/Return miner may have a non-harvest destination.
+    if getMission(miner) == "harvest" then
+        local loc = safeCall(miner.GetHarvestLocation, miner)
+        if loc and loc.x and loc.y then
+            state.harvestX = loc.x
+            state.harvestY = loc.y
         end
     end
 
-    return n
+    local result = safeCall(miner.Stop, miner)
+
+    if result == false then
+        return false
+    end
+
+    markThreatened(miner, threat, frame)
+
+    msg(string.format(
+        "[miner_safety] miner #%d stopped: enemy #%d nearby",
+        id,
+        getId(threat)
+    ))
+
+    return true
 end
+
+----------------------------------------------------------------
+-- Resume logic
+----------------------------------------------------------------
+
+local function tryResume(miner, frame)
+    local id = getId(miner)
+
+    if id == 0 then
+        return
+    end
+
+    local state = miners[id]
+
+    if not state or not state.threatened then
+        return
+    end
+
+    -- Give the miner a short safety buffer.
+    if frame < state.threatUntil then
+        return
+    end
+
+    -- Re-check the area immediately before resuming.
+    local position = getPosition(miner)
+
+    if not position then
+        return
+    end
+
+    local player = safeCall(miner.GetOwner, miner)
+
+    if not player then
+        return
+    end
+
+    local threat = findEnemyNear(
+        player,
+        position.x,
+        position.y,
+        THREAT_RADIUS
+    )
+
+    if threat then
+        -- Threat is still present.
+        state.threatId = getId(threat)
+        state.threatUntil = frame + SAFE_RELEASE_DELAY
+        return
+    end
+
+    --
+    -- Restore the player's assigned harvest cell if we captured one before the
+    -- Stop. Only fall back to autonomous Hunt() when there is no saved location.
+    --
+    if state.harvestX and state.harvestY then
+        local restored = safeCall(
+            miner.HarvestAt,
+            miner,
+            state.harvestX,
+            state.harvestY
+        )
+
+        if restored ~= false then
+            clearThreat(miner)
+
+            msg(string.format(
+                "[miner_safety] miner #%d threat cleared, harvest restored at (%d,%d)",
+                id,
+                state.harvestX,
+                state.harvestY
+            ))
+
+            return
+        end
+    end
+
+    -- No saved harvest assignment (or restore failed): autonomous recovery.
+    local result = safeCall(miner.Hunt, miner)
+
+    if result ~= false then
+        clearThreat(miner)
+
+        msg(string.format(
+            "[miner_safety] miner #%d threat cleared, autonomous behavior resumed",
+            id
+        ))
+    end
+end
+
+----------------------------------------------------------------
+-- Threat scan
+----------------------------------------------------------------
+
+local function scanThreats(player, frame)
+    local units = World.GetUnits()
+
+    if not units then
+        return
+    end
+
+    for _, miner in ipairs(units) do
+        if isAlive(miner) and isMiner(miner) and ownedBy(player, miner) then
+
+            local position = getPosition(miner)
+
+            if position then
+
+                -- Keep the assigned harvest cell fresh during the scan, so a
+                -- later Stop always has a location to restore. Only overwrite
+                -- with a valid cell; never clobber with a nil/cleared value.
+                if getMission(miner) == "harvest" then
+                    local loc = safeCall(miner.GetHarvestLocation, miner)
+                    if loc and loc.x and loc.y then
+                        local st = getMinerState(getId(miner))
+                        st.harvestX = loc.x
+                        st.harvestY = loc.y
+                    end
+                end
+
+                local threat = findEnemyNear(
+                    player,
+                    position.x,
+                    position.y,
+                    THREAT_RADIUS
+                )
+
+                if threat then
+                    if shouldStopMiner(miner) then
+                        stopMiner(miner, frame, threat)
+                    else
+                        -- Miner is already stopped/idle.
+                        -- Keep the state alive so it cannot immediately
+                        -- resume while the threat remains.
+                        local id = getId(miner)
+                        local state = getMinerState(id)
+
+                        state.threatened = true
+                        state.threatId = getId(threat)
+                        state.threatUntil =
+                            frame + SAFE_RELEASE_DELAY
+                    end
+                else
+                    tryResume(miner, frame)
+                end
+            end
+        end
+    end
+end
+
+----------------------------------------------------------------
+-- Cleanup
+----------------------------------------------------------------
+
+local function cleanupStates()
+    local units = World.GetUnits()
+
+    if not units then
+        return
+    end
+
+    local alive = {}
+
+    for _, unit in ipairs(units) do
+        if isAlive(unit) then
+            local id = getId(unit)
+
+            if id ~= 0 then
+                alive[id] = true
+            end
+        end
+    end
+
+    for id, _ in pairs(miners) do
+        if not alive[id] then
+            miners[id] = nil
+        end
+    end
+end
+
+----------------------------------------------------------------
+-- Refinery
+----------------------------------------------------------------
 
 local function findRefinery(player)
     local buildings = World.GetBuildings()
-    if not buildings then return nil end
+
+    if not buildings then
+        return nil
+    end
 
     for _, building in ipairs(buildings) do
-        if building:IsAlive()
-            and REFINERY_TYPES[building:GetTypeName()]
+        if isAlive(building)
+            and REFINERY_TYPES[getTypeName(building)]
             and ownedBy(player, building) then
 
-            local p = building:GetPosition()
+            local position = getPosition(building)
 
-            if p then
+            if position then
                 return {
-                    x = math.floor(p.x),
-                    y = math.floor(p.y)
+                    x = math.floor(position.x),
+                    y = math.floor(position.y)
                 }
             end
         end
@@ -120,119 +566,101 @@ local function findRefinery(player)
     return nil
 end
 
--- Stop miners that are currently harvesting or moving into danger.
-local function scanThreats(player, frame)
+----------------------------------------------------------------
+-- Miner count
+----------------------------------------------------------------
+
+local function countMiners(player)
     local units = World.GetUnits()
-    if not units then return end
 
-    for _, miner in ipairs(units) do
-        if miner:IsAlive() and isMiner(miner) and ownedBy(player, miner) then
+    if not units then
+        return 0
+    end
 
-            local id = minerId(miner)
-            local position = miner:GetPosition()
+    local count = 0
 
-            if position then
-                local threat = enemyNear(
-                    player,
-                    position.x,
-                    position.y,
-                    THREAT_RADIUS
-                )
+    for _, unit in ipairs(units) do
+        if isAlive(unit)
+            and isMiner(unit)
+            and ownedBy(player, unit) then
 
-                if threat then
-                    local mission = fname(miner)
-
-                    local shouldStop =
-                        mission == "harvest" or
-                        mission == "move"
-
-                    if shouldStop then
-                        local last = lastStop[id]
-
-                        if not last or (frame - last) >= STOP_COOLDOWN then
-                            lastStop[id] = frame
-
-                            if miner:Stop() then
-                                threatenedMiners[id] = true
-
-                                msg(string.format(
-                                    "[miner_safety] threat detected, miner #%d stopped",
-                                    id
-                                ))
-                            end
-                        end
-                    end
-
-                elseif threatenedMiners[id] then
-                    -- The threat is gone.
-                    --
-                    -- The current Unit Control API does not expose a dedicated
-                    -- ResumeHarvest()/Harvest() command, so Hunt() is used as
-                    -- the available autonomous recovery action.
-
-                    if miner:Hunt() ~= false then
-                        threatenedMiners[id] = nil
-
-                        msg(string.format(
-                            "[miner_safety] threat cleared, miner #%d resumed",
-                            id
-                        ))
-                    end
-                end
-            end
+            count = count + 1
         end
     end
+
+    return count
 end
 
--- Keep at least one harvester if the refinery is safe.
+----------------------------------------------------------------
+-- Respawn
+----------------------------------------------------------------
+
 local function maybeSpawn(player, frame)
-    if countMiners(player) > 0 then return end
+    if countMiners(player) > 0 then
+        return
+    end
 
     local refinery = findRefinery(player)
-    if not refinery then return end
 
-    if enemyNear(
+    if not refinery then
+        return
+    end
+
+    local threat = findEnemyNear(
         player,
         refinery.x,
         refinery.y,
         REFINERY_RADIUS
-    ) then
+    )
 
-        if frame - lastThreatLog >= LOG_COOLDOWN then
-            lastThreatLog = frame
+    if threat then
+        if frame - lastGlobalThreatLog >= LOG_COOLDOWN then
+            lastGlobalThreatLog = frame
 
-            msg("[miner_safety] refinery under threat, delaying spawn")
+            msg(
+                "[miner_safety] refinery under threat, delaying harvester spawn"
+            )
         end
 
         return
     end
 
-    if frame - lastSpawn >= SPAWN_SCAN_EVERY then
-        lastSpawn = frame
-
-        local created = player:SpawnUnit(
-            "HARV",
-            1,
-            refinery.x + 2,
-            refinery.y + 2,
-            0,
-            false,
-            "hunt"
-        )
-
-        msg(string.format(
-            "[miner_safety] spawned harvester near refinery (ret=%d)",
-            created
-        ))
+    if frame - lastSpawn < SPAWN_SCAN_EVERY then
+        return
     end
+
+    lastSpawn = frame
+
+    local result = player:SpawnUnit(
+        "HARV",
+        1,
+        refinery.x + 2,
+        refinery.y + 2,
+        0,
+        false,
+        "hunt"
+    )
+
+    msg(string.format(
+        "[miner_safety] spawned harvester near refinery (ret=%d)",
+        result
+    ))
 end
+
+----------------------------------------------------------------
+-- Main loop
+----------------------------------------------------------------
 
 function MOD.Update(frame)
     local player = House.GetPlayer()
-    if not player then return end
+
+    if not player then
+        return
+    end
 
     if frame % THREAT_SCAN_EVERY == 0 then
         scanThreats(player, frame)
+        cleanupStates()
     end
 
     if frame % SPAWN_SCAN_EVERY == 0 then

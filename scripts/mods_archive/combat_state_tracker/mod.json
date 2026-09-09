@@ -1,0 +1,8 @@
+{
+  "id": "combat_state_tracker",
+  "name": "Combat State Tracker (M14 Gate 1)",
+  "version": "1.0.0",
+  "author": "NiTeMind",
+  "description": "M14 Gate 1 showcase: tracks several combat units, observes HP/target/mission changes, detects destruction and invalidates dead units, re-resolving everything by id from fresh scans.",
+  "conflicts": []
+}

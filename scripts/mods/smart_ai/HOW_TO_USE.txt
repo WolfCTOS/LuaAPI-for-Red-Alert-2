@@ -1,0 +1,46 @@
+MOD: Smart AI
+ID:   smart_ai
+
+What it does: one brain for the enemy. Reads the CapabilityRegistry and commands:
+  - DEFENSE: idle enemy units intercept the best target near their base
+    (empty registry = any combat units except economy/engineers).
+  - OFFENSE: idle ELITE fighters strike your densest unit cluster.
+  - SQUADS (merged from tactical_reassess): 3 independent squads of 3 units,
+    each with its own destroy/switch-target/retreat loop + SEEK toward you.
+    Settings: SQUAD_NUM/SQUAD_SIZE in main.lua. Your units are never touched.
+
+It also owns the Squad Speed Sync ability: when the enemy AI has an
+"escorted" unit (engineer or tactical officer heading to an objective), it
+gathers an escort around it and matches the escort's speed to the escorted
+unit (FootClass::SetSpeedPercent). The AI "thinks out loud":
+"I am escorting the engineer to capture a building (oil derrick/airport...)
+or repair a bridge".
+
+HOW TO ENABLE:
+  1. Enable smart_ai (add the id to scripts/active_mods.txt), Save & Apply.
+  2. Start a skirmish vs the AI.
+
+WHAT HAPPENS:
+  - Idle enemy units near their base pick targets by threat-score:
+    economy < MCV < vehicles < heavies (APOC/TTNK/SREF...).
+  - Elite fighters attack the densest cluster (MIN_CLUSTER=2).
+  - Squads recruit from AI combat units (miners/MCVs/engineers excluded),
+    seek you, fight, retreat when losing, disband when wiped.
+  - A heartbeat line every ~5 s in the log proves the mod is alive:
+    [AI] heartbeat ... (types=registry/fallback).
+
+LOGS: [AI], [AI-ESCORT] and [TACTICAL] messages; details in LuaAPI.log.
+
+NOTES:
+  - This mod makes the enemy MORE aggressive — the game gets harder.
+  - Load order: smart_ai must see the CapabilityRegistry of other mods.
+  - ESCORT: who counts as "escorted" and what the objective is.
+      * Engineer: E3/ENGINEER heading to a capturable building (CAOILD —
+        oil derrick, CAAIRP/NAAIRC/YAAIRC — airport, CAHOSP — hospital);
+        on arrival the engineer captures it (stock RA2 behavior).
+      * Officer: BORIS/TANYA heroes, else the AI's costliest unit.
+        Objective: nearest enemy building as the push target.
+      * Bridges: put bridge waypoint ids into BRIDGE_WAYPOINTS (main.lua)
+        and the engineer will be sent there to repair (RA2 repairs on contact).
+      * CAPTURE_ENEMY=false — engineer ignores enemy buildings; =true — goes.
+    Config at the top of the "Squad Speed Sync capability" section in main.lua.

@@ -1,0 +1,8 @@
+{
+  "id": "multi_force",
+  "name": "Multi-Force Groups (M14 Gate 3)",
+  "version": "1.0.0",
+  "author": "NiTeMind",
+  "description": "M14 Gate 3 showcase: several independent attack-force groups, each running its own Observe/Evaluate/Decide/Act/Reassess loop via ForceGroup, so different squads can reach different tactical decisions on the same frame.",
+  "conflicts": []
+}

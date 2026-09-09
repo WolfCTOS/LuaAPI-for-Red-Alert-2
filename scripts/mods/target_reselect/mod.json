@@ -1,0 +1,8 @@
+{
+  "id": "target_reselect",
+  "name": "AA Dodge",
+  "version": "1.0.0",
+  "author": "NiTeMind",
+  "description": "Если у текущей цели ИИ скопилось твое ПВО, ИИ переводит атаку на менее защищенную цель и проверяет через GetTarget, что движок принял замену. Эксперимент границы runtime. (Техническое имя: target_reselect.)",
+  "conflicts": []
+}

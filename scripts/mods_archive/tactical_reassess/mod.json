@@ -1,0 +1,8 @@
+{
+  "id": "tactical_reassess",
+  "name": "Squad Tactics",
+  "version": "1.0.0",
+  "author": "NiTeMind",
+  "description": "Несколько независимых отрядов ИИ (по умолчанию 3x3) атакуют и переоценивают бой каждый сам: добивать / сменить цель / отступить. Твои юниты не трогает. Vanilla+: только нативные Attack/MoveTo/Stop. (Техническое имя: tactical_reassess.)",
+  "conflicts": []
+}

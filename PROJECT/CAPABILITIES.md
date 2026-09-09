@@ -25,6 +25,7 @@ It focuses on practical examples rather than API definitions:
 - [Case Study 3 — Battle-Damaged Starting Fleet](#-case-study-3--battle-damaged-starting-fleet)
 - [Case Study 4 — Multi-Turret Batteries](#-case-study-4--multi-turret-batteries)
 - [Case Study 5 — CnCNet Multiplayer & Dev Tools](#-case-study-5--cncnet-multiplayer--dev-tools)
+- [Case Study 6 — Lua Gameplay Framework (Milestone 14)](#-case-study-6--lua-gameplay-framework-milestone-14)
 - [Universal Engineering Principles](#-universal-engineering-principles)
 - [Verification Policy](#-verification-policy)
 - [Related Documentation](#-related-documentation)
@@ -492,6 +493,75 @@ function OnDebugCommand(text)
     )
 end
 ```
+
+---
+
+# 🧩 Case Study 6 — Lua Gameplay Framework (Milestone 14)
+
+**Status:** 🔵 **FRAMEWORK LOGIC VERIFIED** (in-game runtime verification pending)  
+**Reference implementation:** `tactical_patrol` + [`docs/FRAMEWORK.md`](../docs/FRAMEWORK.md)
+
+### 🎯 Outcome
+
+LuaAPI exposes a thin, composable **Lua-side gameplay framework** on top of the
+native bindings. It is pure Lua — no new native bindings — and provides:
+
+- **EventBus** — multiple listeners, ordered dispatch, error isolation.
+- **Timer** — frame-based `after`/`every`/`at` scheduling, cancellation.
+- **Query** — `enemies_in_range`, `nearest_enemy`, `units_by_house`, etc.
+- **Task** — `MoveTo`/`Attack`/`Wait` nodes with `Sequence`/`Loop` composites.
+- **UnitController** — one-unit `move_to`/`attack`/`patrol`/`stop`, tracked by id.
+
+The goal is API **composability**, not API surface: a modder composes
+`UnitController:patrol(...)`, `Query.nearest_enemy(...)`, and an `onTaskDone`
+hook to build a patrol, rather than hand-rolling a state machine.
+
+### ⚙️ Architecture
+
+```text
+Gameplay need
+        ↓
+Check existing native primitive
+        ↓
+Build Lua abstraction if possible   ← M14 does this
+        ↓
+Only add native primitive if missing ← M14 added none
+```
+
+### 📝 Lua Recipe — a composable guard
+
+```lua
+local Framework = require("framework.init")
+local Controller = Framework.UnitController
+
+local function onTaskDone(_, _, mode)
+    if mode == "attack" then agent:patrol({ {x=90,y=90}, {x=120,y=90} }) end
+end
+
+function MyMod.Update(frame)
+    Framework.update(frame)
+    if agent then
+        agent:update(frame)
+        if not agent:has_task() then
+            local e = Framework.Query.nearest_enemy(agent:unit(), 300)
+            if e then agent:attack(e) else agent:patrol({ {x=90,y=90}, {x=120,y=90} }) end
+        end
+    end
+end
+```
+
+### ⚠️ Engineering Lessons
+
+- **Do not add a native binding "for convenience."** M14 added zero; every
+  requirement was already solvable by composing `MoveTo`/`Attack`/`GetUnitsInRadius`.
+- **Never retain a stale `TechnoClass*`.** The controller tracks units by id and
+  re-resolves them each frame; `unit_destroyed` is a value snapshot, not a pointer.
+- **Session reset is handled by the VM.** Recreating the Lua state clears all
+  listeners/timers/controllers; no framework cross-session leak.
+- **Timers must use logical frames** (not `os.time`) or you risk CnCNet OOS.
+- **The native event callbacks are not wired in the current build.** The
+  framework drives itself from `Update()` rather than depending on
+  `OnScenarioStart` / `OnUnitDestroyed`.
 
 ---
 

@@ -1,3 +1,5 @@
 # LuaAPI active mods - one mod ID per line
-jet_veterancy
+# tactical_reassess MERGED into smart_ai (squads) -- folder archived, do not enable
+target_reselect
+squad_speed_sync
 smart_ai

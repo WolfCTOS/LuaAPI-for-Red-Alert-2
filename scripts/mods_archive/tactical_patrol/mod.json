@@ -1,0 +1,8 @@
+{
+  "id": "tactical_patrol",
+  "name": "Tactical Patrol",
+  "version": "1.0.0",
+  "author": "NiTeMind",
+  "description": "Milestone 14 showcase: a combat unit patrols two flanks, breaks off to attack enemies detected by the framework Query layer, then auto-resumes patrol. Demonstrates the EventBus / Timer / Query / Task / UnitController framework.",
+  "conflicts": []
+}

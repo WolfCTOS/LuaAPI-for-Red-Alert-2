@@ -1,0 +1,8 @@
+{
+  "id": "squad_speed_sync",
+  "name": "Squad Speed Sync",
+  "version": "1.0.0",
+  "author": "NiTeMind",
+  "description": "Hotkey Ctrl+F: выделенный отряд техники и пехоты едет с одинаковой скоростью — скоростью самого медленного юнита. Быстрым машинам напрямую ограничивается доля полной скорости (unit:SetSpeedPercent / FootClass::SetSpeedPercentage), поэтому танк плавно идёт в темпе пехоты, без MoveTo-рывков.",
+  "conflicts": []
+}

@@ -26,6 +26,12 @@ LuaAPI exposes native Yuri's Revenge objects through Lua namespaces and userdata
 
 LuaAPI is designed around a native C++ safety layer with Lua controlling gameplay behavior.
 
+> 🧩 **Lua Gameplay Framework** — On top of the native bindings below, LuaAPI
+> ships a small **Lua-side gameplay framework** (`scripts/framework/`): an
+> EventBus, frame-based Timer, Query helpers, a Task primitive, and a
+> UnitController. It composes the native methods and adds **no** native
+> bindings. See [`docs/FRAMEWORK.md`](docs/FRAMEWORK.md).
+
 ---
 
 ## 🛡️ Pointer Safety
@@ -937,6 +943,7 @@ CnCNet may launch `gamemd-spawn.exe`; integrations must therefore resolve the ac
 # 📚 Related Documentation
 
 - [`README.md`](README.md) — Project overview and installation
+- [`docs/FRAMEWORK.md`](docs/FRAMEWORK.md) — Lua Gameplay Framework reference (Milestone 14)
 - [`docs/TUTORIAL.md`](docs/TUTORIAL.md) — Beginner tutorial
 - [`PROJECT/CAPABILITIES.md`](PROJECT/CAPABILITIES.md) — Verified capabilities and case studies
 - [`PROJECT/ENGINEERING_LESSONS.md`](PROJECT/ENGINEERING_LESSONS.md) — Engineering lessons and debugging history

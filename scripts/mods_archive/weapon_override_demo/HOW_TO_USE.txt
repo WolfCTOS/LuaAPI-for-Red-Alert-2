@@ -1,0 +1,28 @@
+МОД: Weapon Override Demo
+ID:   weapon_override_demo
+
+Что делает (по замыслу): демонстрирует API WeaponOverride. Для типа HTNK:
+rookie -> ванильный (нет оверрайда), veteran -> оружие "Maverick", elite ->
+"BlimpBomb". Тип GTNK в примере не трогается — все уровни ванильные (nil).
+
+КАК ВКЛЮЧИТЬ:
+  1. Включи "weapon_override_demo" в Mod Manager (или добавь id в
+     scripts/active_mods.txt), Save & Apply.
+  2. Запусти матч.
+
+ВАЖНО / СЕЙЧАС НЕ РАБОТАЕТ:
+  - main.lua определяет колбэки OnScenarioStart и OnTick, но НЕ Update(frame).
+    В текущей сборке загрузчик вызывает только mod.Update(frame) (а сценарий-
+    старт не подключён — M13 открыт). Значит регистрация оверрайдов не
+    запускается.
+
+ЧТО ДОЛЖНО ПРОИСХОДИТЬ (когда исправить):
+  - При старте сценария регистрирует WeaponOverride.Set/Get/Clear и печатает
+    маршрутизацию: rookie=vanilla, veteran/elite=override, для GTNK все nil.
+
+ЛОГИ: печать [WeaponDemo] в LuaAPI.log.
+
+ЗАМЕЧАНИЯ:
+  - Использует Engine.WeaponExists для проверки наличия оружий в rules.
+  - Если хочется проверить API вручную — вызовы WeaponOverride.* можно перенести
+    в Update(frame) или вызвать через console.

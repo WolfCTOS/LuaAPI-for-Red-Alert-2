@@ -3,6 +3,7 @@
 #include <LuaAPI/logger.hpp>
 #include "sub_turret.h"
 #include "event_hook.h"
+#include "bullet_hook.h" 
 
 extern "C" {
 #include <lua.h>
@@ -364,6 +365,69 @@ FootClass* AsFoot(TechnoClass* pTechno) {
     }
 }
 
+// obj:GetBaseSpeed() -> int (TechnoTypeClass::Speed — «сырая» базовая скорость
+// из INI Speed=, одинакова для юнитов и пехоты). Нужна как знаменатель для
+// расчёта доли выравнивания скорости. SEH + ValidateTechno; при ошибке 0.
+int Techno_GetBaseSpeed(lua_State* L) {
+    auto* pTechno = CheckTechno(L, 1);
+    if (!ValidateTechno(pTechno)) { lua_pushinteger(L, 0); return 1; }
+
+    int speed = 0;
+    __try {
+        auto* pType = static_cast<TechnoTypeClass*>(pTechno->GetType());
+        if (pType)
+            speed = pType->Speed;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        speed = 0;
+    }
+    lua_pushinteger(L, speed);
+    return 1;
+}
+
+// obj:GetSpeedFactor() -> double
+// Текущий FootClass::SpeedMultiplier (доля полной скорости). Читаем её ДО
+// clamp'а, чтобы потом корректно вернуть юниту исходную скорость (напр.
+// ветеранский бонус). Не Foot -> 1.0.
+int Techno_GetSpeedFactor(lua_State* L) {
+    auto* pTechno = CheckTechno(L, 1);
+    if (!ValidateTechno(pTechno)) { lua_pushnumber(L, 1.0); return 1; }
+
+    FootClass* pFoot = AsFoot(pTechno);
+    if (!pFoot) { lua_pushnumber(L, 1.0); return 1; }
+
+    double f = 1.0;
+    __try {
+        f = pFoot->SpeedMultiplier;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        f = 1.0;
+    }
+    lua_pushnumber(L, f);
+    return 1;
+}
+
+// obj:SetSpeedPercent(percent) -> bool
+// Прямой clamp доли скорости. Пишем ОБА поля разом (FootClass::SpeedMultiplier
+// — основной множитель движения, на нём живут ветеранство/криты)
+// и FieldSpeedPercentage (на случай, если локомотор читает его).
+// 1.0 = полная скорость, 0.5 = половина. SEH + ValidateTechno; только FootClass.
+int Techno_SetSpeedPercent(lua_State* L) {
+    auto* pTechno = CheckTechno(L, 1);
+    if (!ValidateTechno(pTechno)) { lua_pushboolean(L, 0); return 1; }
+
+    double pct = luaL_checknumber(L, 2);
+    FootClass* pFoot = AsFoot(pTechno);
+    if (!pFoot) { lua_pushboolean(L, 0); return 1; }
+
+    __try {
+        pFoot->SpeedMultiplier = pct;
+        pFoot->SpeedPercentage = pct;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        lua_pushboolean(L, 0); return 1;
+    }
+    lua_pushboolean(L, 1);
+    return 1;
+}
+
 // obj:Scatter([opt_x, opt_y]) - flee from current position (or towards a cell).
 int Techno_Scatter(lua_State* L) {
     auto* pTechno = CheckTechno(L, 1);
@@ -416,6 +480,87 @@ int Techno_MoveTo(lua_State* L) {
 
     LUA_LOG_INFO("[Nav] {} moving to ({},{})", pTechno->GetType()->get_ID(), cellX, cellY);
     lua_pushboolean(L, 1);
+    return 1;
+}
+
+// obj:GetHarvestLocation() -> {x, y} | nil
+// Читает текущий пункт назначения харвестера (FootClass::Destination).
+// Если это CellClass — возвращает клетку в {x, y} (в клетках карты), иначе nil.
+// SEH-обёртка: объект-назначение может быть освобождён движком в любой момент.
+int Techno_GetHarvestLocation(lua_State* L) {
+    auto* pTechno = CheckTechno(L, 1);
+    if (!ValidateTechno(pTechno))
+        return 0;
+
+    FootClass* pFoot = AsFoot(pTechno);
+    if (!pFoot) {
+        lua_pushnil(L);
+        return 1;
+    }
+
+    CoordStruct coords{};
+    bool got = false;
+    __try {
+        AbstractClass* pDest = pFoot->Destination;
+        if (pDest && pDest->WhatAmI() == AbstractType::Cell) {
+            coords = static_cast<CellClass*>(pDest)->GetCoords();
+            got = true;
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        got = false;
+    }
+
+    if (!got) {
+        lua_pushnil(L);
+        return 1;
+    }
+
+    lua_createtable(L, 0, 2);
+    lua_pushinteger(L, coords.X / 256);
+    lua_setfield(L, -2, "x");
+    lua_pushinteger(L, coords.Y / 256);
+    lua_setfield(L, -2, "y");
+    return 1;
+}
+
+// obj:HarvestAt(cellX, cellY) -> bool
+// То же, что MoveTo, но ставит миссию Mission::Harvest: харвестер идёт и
+// добывает в указанной клетке. Возвращает true, если клетка разрешима и
+// команда принята.
+int Techno_HarvestAt(lua_State* L) {
+    auto* pTechno = CheckTechno(L, 1);
+    if (!ValidateTechno(pTechno)) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+
+    FootClass* pFoot = AsFoot(pTechno);
+    if (!pFoot) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+
+    int cellX = static_cast<int>(luaL_checkinteger(L, 2));
+    int cellY = static_cast<int>(luaL_checkinteger(L, 3));
+    CellStruct cell{ static_cast<short>(cellX), static_cast<short>(cellY) };
+
+    CellClass* pCell = MapClass::Instance.TryGetCellAt(cell);
+    if (!pCell) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+
+    bool ok = false;
+    __try {
+        pFoot->Destination = pCell;
+        pFoot->QueueMission(Mission::Harvest, true);
+        ok = true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        ok = false;
+    }
+
+    LUA_LOG_INFO("[Nav] {} ordered to harvest at ({},{})", pTechno->GetType()->get_ID(), cellX, cellY);
+    lua_pushboolean(L, ok ? 1 : 0);
     return 1;
 }
 
@@ -849,6 +994,7 @@ int Techno_FireProjectile(lua_State* L) {
 
         pBullet->SetTarget(pTarget);
         pBullet->SetWeaponType(pWeapon);
+        LuaAPI::BulletHook::Register(pBullet);
 
         // Направляем снаряд от юнита к цели (видимый полёт, тот же путь, что в sub_turret).
         CoordStruct muzzle = pTechno->GetCoords();
@@ -902,6 +1048,8 @@ const luaL_Reg kTechnoMethods[] = {
     { "GetVeterancy",  Techno_GetVeterancy  },
     { "GetAmmo",       Techno_GetAmmo       },
     { "GetCost",       Techno_GetCost       },
+    { "GetBaseSpeed",  Techno_GetBaseSpeed  },
+    { "SetSpeedPercent", Techno_SetSpeedPercent },
     { "GetOwner",      Techno_GetOwner      },
     { "GetPosition",   Techno_GetPosition   },
     { "IsAlive",       Techno_IsAlive       },
@@ -910,6 +1058,8 @@ const luaL_Reg kTechnoMethods[] = {
     { "GetKind",       Techno_GetKind       },
     { "Scatter",       Techno_Scatter       },
     { "MoveTo",        Techno_MoveTo        },
+    { "GetHarvestLocation", Techno_GetHarvestLocation },
+    { "HarvestAt",     Techno_HarvestAt     },
     { "Hunt",          Techno_Hunt          },
     { "Attack",        Techno_Attack        },
     { "Stop",          Techno_Stop          },
@@ -1000,6 +1150,34 @@ int World_GetSelectedUnits(lua_State* L) {
         __try {
             AbstractType what = pObj->WhatAmI();
             if (what != AbstractType::Unit)
+                continue;
+            auto* pTechno = static_cast<TechnoClass*>(pObj);
+            if (pTechno->Health <= 0)
+                continue;
+            PushTechno(L, pTechno);
+            lua_seti(L, -2, ++n);
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            continue;
+        }
+    }
+    return 1;
+}
+
+// World.GetSelectedTechnos() -> table of TechnoClass (Unit + Infantry).
+// Читает текущее выделение движка (ObjectClass::CurrentObjects). В отличие от
+// World.GetSelectedUnits (который отсеивал пехоту) возвращает ВСЕ мобильные
+// техно — юниты И пехоту, — чтобы мод синхронизации строя учитывал и
+// тихоходных солдат. Здания пропускаем: двигаться они не могут.
+int World_GetSelectedTechnos(lua_State* L) {
+    lua_createtable(L, ObjectClass::CurrentObjects.Count, 0);
+    int n = 0;
+    for (int i = 0; i < ObjectClass::CurrentObjects.Count; ++i) {
+        ObjectClass* pObj = ObjectClass::CurrentObjects.GetItem(i);
+        if (!pObj)
+            continue;
+        __try {
+            AbstractType what = pObj->WhatAmI();
+            if (what != AbstractType::Unit && what != AbstractType::Infantry)
                 continue;
             auto* pTechno = static_cast<TechnoClass*>(pObj);
             if (pTechno->Health <= 0)
@@ -1116,6 +1294,8 @@ void RegisterTechnoBindings(lua_State* L) {
     lua_setfield(L, -2, "GetUnitsInRadius");
     lua_pushcfunction(L, World_GetSelectedUnits);
     lua_setfield(L, -2, "GetSelectedUnits");
+    lua_pushcfunction(L, World_GetSelectedTechnos);
+    lua_setfield(L, -2, "GetSelectedTechnos");
     lua_setglobal(L, "World");
 
     // Global "Input" namespace

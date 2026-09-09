@@ -2,7 +2,7 @@
   "id": "smart_ai",
   "name": "Smart AI",
   "version": "1.0.0",
-  "author": "LuaAPI",
-  "description": "MVP AI provider: commands enemy jets that carry the disable/EMP capability to attack the player's densest vehicle cluster.",
+  "author": "NiTeMind",
+  "description": "One enemy brain: base defense, elite strikes on clusters, engineer/officer escort, and 3 independent attack squads (ForceGroup: destroy/switch-target/retreat + SEEK). One-commander rule: squad members stay out of defense and escort pools.",
   "conflicts": []
 }

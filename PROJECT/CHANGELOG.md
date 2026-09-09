@@ -6,9 +6,9 @@ The changelog follows the project's verified milestone history. Features are lis
 
 ---
 
-## [Unreleased] — Milestone 14 Runtime Research — 2026-09-06
+## [Unreleased] — Milestone 14: Lua Gameplay Framework + Runtime Research
 
-### Changed
+### Changed — runtime research direction (upstream, 2026-09-06)
 
 - **Milestone 14 direction:** shifted from building a general Lua-side gameplay framework toward finding the real runtime boundary between LuaAPI and Ares/Phobos.
 - **Research focus:** programmable runtime decision-making is now the primary hypothesis.
@@ -17,7 +17,7 @@ The changelog follows the project's verified milestone history. Features are lis
 - **API strategy:** defer broad API cleanup or removal until a real runtime capability boundary is established.
 - **Community validation:** concrete runtime examples should be challenged against experienced Ares/Phobos modders instead of relying on theoretical comparisons.
 
-### Research Candidates
+### Research Candidates (not verified capabilities)
 
 - AI target selection that reacts to changing game state.
 - Runtime observations with timestamps and changing confidence.
@@ -25,7 +25,50 @@ The changelog follows the project's verified milestone history. Features are lis
 - AI alliance changes during a match.
 - Runtime systems such as Empowerment-style accumulation.
 
-These are research candidates and are not verified LuaAPI capabilities.
+### Added — framework + first experiment (2026-09-04)
+
+- **Runtime AI target-reselection experiment** under
+  `scripts/mods/target_reselect/`: tests the architecture
+  `Game state → Lua observes → Lua decides → engine executes` by reselecting an
+  AI unit's target based on a live anti-air-threat signal near its current
+  target, then reading back `unit:GetTarget()` to confirm the engine accepted
+  the new target. Signal computed only from existing primitives (no new native
+  binding); decision is generic (no unit-name branch).
+  - **Verified (deterministic harness 8/8):** observe → decide → act → read-back.
+  - **Remains a hypothesis (live YR pending):** whether the vanilla AI house does
+    not immediately re-select its own target afterward. See
+    `PROJECT/RUNTIME_BOUNDARY.md`.
+
+- **Lua Gameplay Framework** under `scripts/framework/` — a composable,
+  Lua-side abstraction layer on top of the existing native bindings (no new C++).
+  - `event_bus.lua` — callback-safe pub/sub (M14.1): multi-listener,
+    insertion-ordered dispatch, error isolation, safe mid-dispatch mutation,
+    no retained engine references.
+  - `timer.lua` — logical-frame scheduler (M14.2): `after`/`every`/`at`,
+    cancellation, idempotent isolation, no native hooks.
+  - `query.lua` — gameplay query helpers (M14.3): `enemies_in_range`,
+    `friendlies_in_range`, `nearest_enemy`, `nearest_friendly`,
+    `units_by_house`, `units_by_type`, `units_matching`, `is_enemy`, `is_ally`.
+  - `task.lua` — minimal multi-step primitive (M14.4): `MoveTo`/`Attack`/`Wait`/
+    `Fn` nodes, `Sequence`/`Loop` composites, task lifecycle states.
+  - `unit_controller.lua` — one-unit control (M14.5): `move_to`/`attack`/
+    `patrol`/`stop`/`task`/`update`, tracks the unit by id and re-resolves it.
+  - `init.lua` — integration entry point (M14.6): `Framework.update(frame)`
+    driver + opt-in unit event tracker emitting `unit_created` (valid userdata)
+    and `unit_destroyed` (id + value snapshot).
+  - `util.lua` — shared safe predicates/logging.
+- **`tactical_patrol`** showcase (M14.7) demonstrating framework composition:
+  patrol → detect (Query) → attack (UnitController) → resume patrol.
+
+### Notes
+
+- Framework logic verified with a deterministic Lua 5.4 harness (event ordering,
+  timer cadence, query filtering, task lifecycle, controller engage/resume).
+  In-game runtime verification against Yuri's Revenge 1.001 is pending.
+- No native bindings were added, removed, or renamed; the framework is opt-in
+  and additive, so existing mods are unaffected.
+- M13 (native event restoration) remains open; the framework drives itself from
+  `Update()` and does not rebuild the native event system.
 
 ---
 
@@ -170,5 +213,6 @@ These are research candidates and are not verified LuaAPI capabilities.
 
 - `v1.0.0` remains the current **production release baseline**.
 - `1.1.0` represents the current API/development line associated with Milestone 10 core, completed Milestone 11 tooling, and Milestone 12 development.
-- Milestone 14 is currently research work and must not be described as a verified capability.
+- Milestone 11 is engineering-complete, but full two-client online multiplayer validation is not claimed.
+- Milestone 12 is development work and must not be described as production-complete until separately verified.
 - `PROJECT/ROADMAP.md`, `PROJECT/CAPABILITIES.md`, and `API.md` should be updated alongside significant API or milestone changes to keep documentation synchronized.

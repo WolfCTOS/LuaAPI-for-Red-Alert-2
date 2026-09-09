@@ -1,0 +1,8 @@
+{
+  "id": "weapon_override_demo",
+  "name": "Weapon Override Demo",
+  "version": "1.0.0",
+  "author": "NiTeMind",
+  "description": "Demonstrates the WeaponOverride API: veteran -> Lua override, elite -> Lua override, rookie/absent -> vanilla fallback (engine stays source of truth)",
+  "conflicts": []
+}
