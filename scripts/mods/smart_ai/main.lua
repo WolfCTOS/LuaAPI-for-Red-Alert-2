@@ -19,13 +19,14 @@ local ASSIGN_COOLDOWN = 90
 
 local assignedCooldown = {}
 
-local HEARTBEAT_EVERY = 300  -- ~5 s at 60 fps: prove the mod is alive even with no orders
-local lastHeartbeat = 0
+local HEARTBEAT_EVERY = 300  -- ~5 s at 60 fps: Timer-driven heartbeat period
 
 -- Units the fallback must never command (economy + capture duty).
+-- Proven by log: the Soviet MCV type is SMCV (not SMV) — a wrong entry here
+-- once marched an MCV to war and lost the AI the game in a minute.
 local NON_COMBAT_FALLBACK = {
     HARV = true, CMIN = true, SMIN = true,   -- harvesters
-    AMCV = true, SMV = true,                 -- MCVs
+    AMCV = true, SMCV = true, YMCV = true, SMV = true, -- MCVs (all houses)
     E3 = true, ENGINEER = true,              -- engineers
 }
 
@@ -67,6 +68,23 @@ local function legitTarget(player, e)
     local okT, tn = pcall(e.GetTypeName, e)
     if okT and tn and CIVIL_TYPES[tn] then return false end
     return isAllyOf(player, owner)
+end
+
+-- Combat enemy: enemy of the player, but never neutral houses and never
+-- civilian traffic (log: neutral CAR/PCV chased the player when the
+-- fallback treated "not allied" as "enemy").
+local function combatEnemyOf(player, u)
+    if not u then return false end
+    local okA, alive = pcall(u.IsAlive, u)
+    if not okA or not alive then return false end
+    local okO, owner = pcall(u.GetOwner, u)
+    if not okO or not owner then return false end
+    local okN, nm = pcall(owner.GetName, owner)
+    if okN and nm and NEUTRAL_HOUSES[nm] then return false end
+    if not isEnemyOf(player, owner) then return false end
+    local okT, tn = pcall(u.GetTypeName, u)
+    if okT and tn and CIVIL_TYPES[tn] then return false end
+    return true
 end
 
 local function ready(id, frame)
@@ -114,7 +132,7 @@ end
 local CELL = 256               -- leptons per map cell (defensive reference)
 
 local ECONOMIC = { CMIN = true, HARV = true, SMIN = true }
-local MCV_TYPES = { AMCV = true, SMV = true }
+local MCV_TYPES = { AMCV = true, SMCV = true, YMCV = true }
 local HIGH_THREAT = {
     SREF = true,   -- Prism Tank
     APOC = true,   -- Apocalypse Tank
@@ -162,6 +180,22 @@ local function selectBestTarget(jet, candidates)
     return best
 end
 
+-- Framework wiring (M14.1/14.2/14.3/14.6): Timer drives heartbeat/track
+-- cadence, EventBus carries squad decisions + unit deaths, Query serves scans.
+-- Behavior is unchanged — same periods, same filters, same orders.
+local Framework = require("framework.init")
+local Query = Framework.Query
+local FTimer = Framework.Timer
+local FBus = Framework.EventBus
+
+-- Forward declarations: Lua locals are visible only AFTER declaration.
+-- updateInner/isSquadRecruit are defined before the squad/escort sections
+-- but run after the whole file loads, so they must capture these locals.
+-- Without this they resolve to nil globals (log: "attempt to call a nil
+-- value (global 'squadTrackedSet')" + dead `if escort then` guard).
+local squadTrackedSet
+local escort
+
 local function updateInner(frame)
     if frame % SCAN_EVERY ~= 0 then return end
     local player = House.GetPlayer()
@@ -175,7 +209,7 @@ local function updateInner(frame)
     -- enemy mobile combat unit by GetKind, otherwise the mod stays silent.
     local enemyJets = {}
     for _, u in ipairs(World.GetUnits()) do
-        if u:IsAlive() and isEnemyOf(player, u:GetOwner()) then
+        if combatEnemyOf(player, u) then
             if hasAny then
                 if unitTypes[u:GetTypeName()] then
                     enemyJets[#enemyJets + 1] = u
@@ -193,12 +227,6 @@ local function updateInner(frame)
                 end
             end
         end
-    end
-
-    if frame - lastHeartbeat >= HEARTBEAT_EVERY then
-        lastHeartbeat = frame
-        msg(string.format("[AI] heartbeat frame=%d: %d enemy combat units under watch (types=%s)",
-            frame, #enemyJets, hasAny and "registry" or "fallback"))
     end
 
     if #enemyJets == 0 then return end
@@ -353,6 +381,122 @@ local function squadHouse()
     return nil
 end
 
+-- Nearest legitimate enemy position to (cx, cy) plus distance in cells.
+-- Via Query (M14.3): whole-map set, neutral-safe; same targets as the raw scan.
+local function squadEnemyPos(house, cx, cy)
+    local cands = Query.units_matching(function(u)
+        return futil.is_enemy(house, u)
+    end, { includeBuildings = true })
+    local bx, by, bestD = nil, nil, math.huge
+    for _, u in ipairs(cands) do
+        local okP, pos = pcall(u.GetPosition, u)
+        if okP and pos and pos.x and pos.y then
+            local dx, dy = pos.x - cx, pos.y - cy
+            local d = dx * dx + dy * dy
+            if d < bestD then bestD, bx, by = d, pos.x, pos.y end
+        end
+    end
+    if not bx then return nil end
+    return bx, by, math.sqrt(bestD)
+end
+
+-- Sorted group ids (deterministic fill order, no pairs() randomness).
+-- Declared before armFramework: its timer callbacks iterate groups.
+local function sortedSquadIds()
+    local out = squadMgr:group_ids()
+    table.sort(out, function(a, b) return tostring(a) < tostring(b) end)
+    return out
+end
+
+-- All unit ids currently commanded by squads (the one-commander rule).
+-- Forward-declared above so updateInner() (defined earlier) sees this local.
+squadTrackedSet = function()
+    local set = {}
+    if not squadMgr then return set end
+    for _, gid in ipairs(sortedSquadIds()) do
+        local g = squadMgr:group(gid)
+        if g then
+            for _, id in ipairs(g:ids()) do set[id] = true end
+        end
+    end
+    return set
+end
+
+-- Framework subscribers/timers (M14.1/14.2/14.6). House-agnostic: every
+-- callback re-resolves what it needs, so a house change only needs reset.
+local squadFwArmed = false
+local squadKills = 0        -- all destroyed units since arming (counter L1)
+local squadLosses = 0       -- destroyed units of the squad house (L2, visible)
+local squadDecisions = {}   -- gid -> decision-event count (L3)
+local squadHouseName = nil
+
+local function armFramework()
+    if squadFwArmed then return end
+    Framework.enableUnitEvents(30)
+    -- L1: silent global kill counter.
+    FBus.on("unit_destroyed", function(id, snap)
+        squadKills = squadKills + 1
+    end)
+    -- L2: losses of OUR house are visible (also proves multi-listener dispatch).
+    FBus.on("unit_destroyed", function(id, snap)
+        if snap and squadHouseName and snap.ownerName == squadHouseName then
+            squadLosses = squadLosses + 1
+            squadLog(string.format("force lost: %s #%d", tostring(snap.typeName), id))
+        end
+    end)
+    -- L3: squad decisions flow through the bus (counted, reported in heartbeat).
+    FBus.on("squad_decision", function(gid, dec)
+        local k = tostring(gid)
+        squadDecisions[k] = (squadDecisions[k] or 0) + 1
+    end)
+    -- Heartbeat on a real Timer (was a manual frame gate in updateInner).
+    FTimer.every(HEARTBEAT_EVERY, function(frame)
+        local player = House.GetPlayer()
+        if not player then return end
+        local unitTypes = knownUnitTypes()
+        local hasAny = false
+        for _ in pairs(unitTypes) do hasAny = true break end
+        local n = 0
+        for _, u in ipairs(World.GetUnits()) do
+            if combatEnemyOf(player, u) then
+                if hasAny then
+                    if unitTypes[u:GetTypeName()] then n = n + 1 end
+                else
+                    local kind = u:GetKind()
+                    if kind == "unit" or kind == "infantry" or kind == "aircraft" then
+                        local tn = u:GetTypeName()
+                        if not NON_COMBAT_FALLBACK[tn] then n = n + 1 end
+                    end
+                end
+            end
+        end
+        local dec = 0
+        for _, c in pairs(squadDecisions) do dec = dec + c end
+        msg(string.format("[AI] heartbeat frame=%d: %d enemy combat units under watch (types=%s, kills=%d, losses=%d, decisions=%d)",
+            frame, n, hasAny and "registry" or "fallback", squadKills, squadLosses, dec))
+    end)
+    -- Position track on a real Timer (was a manual gate in squadTick).
+    FTimer.every(SQUAD_TRACK_EVERY, function(frame)
+        local house = squadHouse()
+        if not house then return end
+        for _, gid in ipairs(sortedSquadIds()) do
+            local g = squadMgr:group(gid)
+            if g then
+                local cx, cy = g:centroid()
+                if cx then
+                    local res = g:decision()
+                    local ex, ey, dist = squadEnemyPos(house, cx, cy)
+                    squadLog(string.format("[%s] pos=%d,%d members=%d decision=%s enemy=%s",
+                        tostring(gid), math.floor(cx), math.floor(cy), g:count(),
+                        tostring(res and res.decision),
+                        dist and string.format("%.0f cells", dist) or "none"))
+                end
+            end
+        end
+    end)
+    squadFwArmed = true
+end
+
 local function ensureSquads()
     if squadMgr then return end
     squadMgr = ForceGroup.new({})
@@ -374,30 +518,13 @@ local function ensureSquads()
                 squadLog(string.format("[%s] %s (tier=%s reason=%s)", tostring(grp.id),
                     string.upper(dec), tostring(res.tier), tostring(res.reason)))
                 msg(string.format("[TACTICAL] [%s] %s", tostring(grp.id), string.upper(dec)))
+                -- Decisions also flow through the EventBus (M14.1 consumer).
+                FBus.emit("squad_decision", grp.id, dec)
             end
         end)
     end
     squadLog(string.format("initialized: %d squads x %d units", SQUAD_NUM, SQUAD_SIZE))
-end
-
--- Sorted group ids (deterministic fill order, no pairs() randomness).
-local function sortedSquadIds()
-    local out = squadMgr:group_ids()
-    table.sort(out, function(a, b) return tostring(a) < tostring(b) end)
-    return out
-end
-
--- All unit ids currently commanded by squads (the one-commander rule).
-local function squadTrackedSet()
-    local set = {}
-    if not squadMgr then return set end
-    for _, gid in ipairs(sortedSquadIds()) do
-        local g = squadMgr:group(gid)
-        if g then
-            for _, id in ipairs(g:ids()) do set[id] = true end
-        end
-    end
-    return set
+    armFramework()
 end
 
 local function isSquadRecruit(u, house, tracked)
@@ -405,18 +532,28 @@ local function isSquadRecruit(u, house, tracked)
     local okA, alive = pcall(u.IsAlive, u)
     if not okA or not alive then return false end
     -- Active escorts stay on convoy duty, never drafted into squads.
+    -- Covers both the escorted guards AND the protected unit itself
+    -- (log: officer MTNK #1037394 was double-commanded by escort+squad).
     if escort then
         local okE, eid = pcall(u.GetId, u)
-        if okE and eid and escort.escorts and escort.escorts[eid] then return false end
+        if okE and eid then
+            if escort.escorts and escort.escorts[eid] then return false end
+            if escort.protectedId and eid == escort.protectedId then return false end
+        end
     end
     local okO, owner = pcall(u.GetOwner, u)
     if not okO or owner == nil or owner ~= house then return false end
+    -- Squads are ground forces: aircraft are excluded (log: BEAG #1054707 was
+    -- recruited and MoveTo-spammed every 5 frames, so the jet circled forever
+    -- and never completed a firing pass). Jets stay with defense/offense.
     local okK, kind = pcall(u.GetKind, u)
-    if not okK or (kind ~= "unit" and kind ~= "infantry" and kind ~= "aircraft") then
+    if not okK or (kind ~= "unit" and kind ~= "infantry") then
         return false
     end
     local okT, tn = pcall(u.GetTypeName, u)
-    if okT and tn and NON_COMBAT_FALLBACK[tn] then return false end
+    -- Log proof (PCV recruited): economy set is not enough, civilian traffic
+    -- must be excluded from squads too, whatever house owns it.
+    if okT and tn and (NON_COMBAT_FALLBACK[tn] or CIVIL_TYPES[tn]) then return false end
     local okI, id = pcall(u.GetId, u)
     if not okI or not id or tracked[id] then return false end
     return true
@@ -425,8 +562,8 @@ end
 -- Fill squads up to SQUAD_SIZE each with fresh AI-house combat units.
 local function gatherSquads(house)
     local tracked = squadTrackedSet()
-    local okU, units = pcall(World.GetUnits)
-    if not okU or not units then return end
+    -- Via Query (M14.3): same mobile exact-owner set as the raw scan.
+    local units = Query.units_by_house(house)
     for _, u in ipairs(units) do
         if isSquadRecruit(u, house, tracked) then
             for _, gid in ipairs(sortedSquadIds()) do
@@ -448,17 +585,20 @@ end
 
 local function countAiCombat(house)
     local n = 0
-    local okU, units = pcall(World.GetUnits)
-    if not okU or not units then return 0 end
+    -- Via Query (M14.3): same set as gatherSquads above.
+    local units = Query.units_by_house(house)
     for _, u in ipairs(units) do
         local okA, alive = pcall(u.IsAlive, u)
         if okA and alive then
             local okO, owner = pcall(u.GetOwner, u)
             if okO and owner ~= nil and owner == house then
                 local okK, kind = pcall(u.GetKind, u)
-                if okK and (kind == "unit" or kind == "infantry" or kind == "aircraft") then
+                -- Ground only, same as isSquadRecruit: aircraft are not squad
+                -- material (see BEAG note above), so the "available" count
+                -- must match the recruitable set.
+                if okK and (kind == "unit" or kind == "infantry") then
                     local okT, tn = pcall(u.GetTypeName, u)
-                    if not (okT and tn and NON_COMBAT_FALLBACK[tn]) then n = n + 1 end
+                    if not (okT and tn and (NON_COMBAT_FALLBACK[tn] or CIVIL_TYPES[tn])) then n = n + 1 end
                 end
             end
         end
@@ -476,29 +616,6 @@ local function squadTrackedTotal()
     return m
 end
 
--- Nearest legitimate enemy position to (cx, cy) plus distance in cells.
-local function squadEnemyPos(house, cx, cy)
-    local listFn = World.GetAllUnits or World.GetUnits
-    if not listFn then return nil end
-    local okU, units = pcall(listFn)
-    if not okU or not units then return nil end
-    local bx, by, bestD = nil, nil, math.huge
-    for _, u in ipairs(units) do
-        -- futil.is_enemy: same house / allies / neutrals / civilians are never
-        -- enemies — SEEK must not march squads onto capturable derricks.
-        if futil.is_enemy(house, u) then
-            local okP, pos = pcall(u.GetPosition, u)
-            if okP and pos and pos.x and pos.y then
-                local dx, dy = pos.x - cx, pos.y - cy
-                local d = dx * dx + dy * dy
-                if d < bestD then bestD, bx, by = d, pos.x, pos.y end
-            end
-        end
-    end
-    if not bx then return nil end
-    return bx, by, math.sqrt(bestD)
-end
-
 local function squadMemberById(id)
     local ok, units = pcall(World.GetUnits)
     if not ok or not units then return nil end
@@ -508,6 +625,12 @@ local function squadMemberById(id)
     end
     return nil
 end
+
+-- SEEK throttle: last commanded seek cell per unit id. Re-issuing
+-- QueueMission(Move) every 5 frames to units already moving there churns the
+-- engine and floods the log (46K+ native orders per session -> lag/freeze).
+-- Re-issue only on a new destination, or when the unit went idle far from it.
+local seekLastDest = {} -- unit id -> "x,y" cell key
 
 -- SEEK: a squad with no target advances toward the nearest enemy instead of
 -- idling at the AI base. Retreat/disengage are respected (no seek).
@@ -521,9 +644,33 @@ local function seekSquads(house)
                 if cx then
                     local ex, ey, dist = squadEnemyPos(house, cx, cy)
                     if ex and dist and dist > SQUAD_RANGE then
+                        local dx, dy = math.floor(ex), math.floor(ey)
+                        local key = dx .. "," .. dy
                         for _, id in ipairs(g:ids()) do
                             local u = squadMemberById(id)
-                            if u then pcall(u.MoveTo, u, math.floor(ex), math.floor(ey)) end
+                            if u then
+                                local need = seekLastDest[id] ~= key
+                                if not need then
+                                    -- Same destination: re-issue only if the
+                                    -- unit went idle more than ~3 cells away.
+                                    local okI, idle = pcall(u.IsIdle, u)
+                                    if okI and idle then
+                                        local okP, pos = pcall(u.GetPosition, u)
+                                        if okP and pos then
+                                            local ddx, ddy = pos.x - dx, pos.y - dy
+                                            need = (ddx * ddx + ddy * ddy) > 9
+                                        else
+                                            need = true
+                                        end
+                                    end
+                                end
+                                if need then
+                                    local ok, res2 = pcall(u.MoveTo, u, dx, dy)
+                                    if ok and res2 then
+                                        seekLastDest[id] = key
+                                    end
+                                end
+                            end
                         end
                     end
                 end
@@ -548,10 +695,20 @@ local function squadTick(frame)
     if squadLastHouseIdx ~= squadHouseIndex then
         squadLastHouseIdx = squadHouseIndex
         squadMgr:reset()
+        seekLastDest = {}
         squadLastLogged = {}
         squadLastStats = nil
+        -- Fresh match/house: drop framework state too (timers, listeners, unit
+        -- tracker) and re-arm, or stale ids burst as false kill events.
+        Framework.reset()
+        squadFwArmed = false
+        squadKills = 0
+        squadLosses = 0
+        squadDecisions = {}
         local okNm, hname = pcall(house.GetName, house)
-        squadLog(string.format("opponent: %s; squads reset", tostring(okNm and hname or "?")))
+        squadHouseName = (okNm and hname) or nil
+        armFramework()
+        squadLog(string.format("opponent: %s; squads reset", tostring(squadHouseName or "?")))
     end
 
     if frame % SQUAD_GATHER_EVERY == 0 then
@@ -567,24 +724,6 @@ local function squadTick(frame)
     if frame % SQUAD_TICK_EVERY == 0 then
         squadMgr:update(frame)
         seekSquads(house)
-    end
-
-    -- Movement proof: centroid + nearest-enemy distance per squad.
-    if frame % SQUAD_TRACK_EVERY == 0 then
-        for _, gid in ipairs(sortedSquadIds()) do
-            local g = squadMgr:group(gid)
-            if g then
-                local cx, cy = g:centroid()
-                if cx then
-                    local res = g:decision()
-                    local ex, ey, dist = squadEnemyPos(house, cx, cy)
-                    squadLog(string.format("[%s] pos=%d,%d members=%d decision=%s enemy=%s",
-                        tostring(gid), math.floor(cx), math.floor(cy), g:count(),
-                        tostring(res and res.decision),
-                        dist and string.format("%.0f cells", dist) or "none"))
-                end
-            end
-        end
     end
 end
 
@@ -636,7 +775,7 @@ table.insert(_G.CapabilityRegistry, {
     description = "An AI convoy escorts a protected unit (engineer / tactical officer) at the slowest member's pace.",
 })
 
-local escort = nil             -- { protectedId, role, obj={x,y,label}, escorts={[id]=true} }
+escort = nil                  -- forward-declared above; { protectedId, role, obj, escorts }
 local escortSavedFactor = {}   -- id -> original SpeedMultiplier (restored on release)
 local escortLastResync = 0
 local escortNextScan   = 0
@@ -778,9 +917,12 @@ local function pickProtected(house, houseName)
 
     local best, bestCost = nil, -1
     for _, u in ipairs(units) do
+        -- Never promote the economy: an MCV picked as "costliest unit" once
+        -- drove to the enemy and lost the game (log proof). Harvesters neither.
         if u and u:IsAlive() and ownedByHouse(u, houseName)
             and (groundKind(u) == "infantry" or groundKind(u) == "unit")
-            and not ENGINEER_TYPES[u:GetTypeName()] then
+            and not ENGINEER_TYPES[u:GetTypeName()]
+            and not NON_COMBAT_FALLBACK[u:GetTypeName()] then
             local okC, cost = pcall(u.GetCost, u)
             if okC and cost and cost > bestCost then
                 bestCost, best = cost, u
@@ -833,9 +975,14 @@ local function startEscort(houseName, protected, role, obj)
             local okId, uid = pcall(u.GetId, u)
             if okId and uid ~= pid and not squadIds[uid] and u:IsAlive() and ownedByHouse(u, houseName)
                 and (groundKind(u) == "unit" or groundKind(u) == "infantry") then
-                local okE, pos = pcall(u.GetPosition, u)
-                if okE and pos and dist2(ppos.x, ppos.y, pos.x, pos.y) <= ESCORT_GATHER_RADIUS ^ 2 then
-                    escorts[#escorts + 1] = u
+                -- Never conscript the economy into a convoy (log: AMCV #1037393
+                -- marched to the derrick and the AI lost). Same filter as squads.
+                local okT, tn = pcall(u.GetTypeName, u)
+                if not (okT and tn and (NON_COMBAT_FALLBACK[tn] or CIVIL_TYPES[tn])) then
+                    local okE, pos = pcall(u.GetPosition, u)
+                    if okE and pos and dist2(ppos.x, ppos.y, pos.x, pos.y) <= ESCORT_GATHER_RADIUS ^ 2 then
+                        escorts[#escorts + 1] = u
+                    end
                 end
             end
         end
@@ -935,6 +1082,13 @@ local function escortTick(frame)
 end
 
 function SmartAI.Update(frame)
+    -- Framework driver (M14.6): advances Timer cadence + the opt-in unit
+    -- tracker. pcall-isolated so a framework fault never kills the AI tick.
+    local okFw, fwErr = pcall(Framework.update, frame)
+    if not okFw then
+        msg(string.format("[AI-FRAMEWORK] error: %s", tostring(fwErr)))
+    end
+
     local ok, err = pcall(updateInner, frame)
     if not ok then
         msg(string.format("[AI] update error: %s", tostring(err)))

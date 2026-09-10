@@ -192,6 +192,37 @@ Do not erase entries from containers while iterating over them. Queue removals a
 
 The multi-turret system demonstrated that C++ can maintain timers, target references, rotation, and pointer safety while Lua controls targeting and firing decisions. This remains the preferred boundary for future runtime systems.
 
+## Shared workflow context
+
+The repository is the shared persistent context for the human developer and all assisting agents.
+
+- `PROJECT/CURRENT_TASK.md` — single source of truth for the task currently being investigated.
+- `PROJECT/DECISIONS.md` — lightweight architectural decision log (decisions actually made, not hypotheses).
+- `PROJECT/REVIEWS/chatgpt/` — analysis/review artifacts from ChatGPT.
+- `PROJECT/REVIEWS/harness/` — independent analysis/review artifacts from Harness.
+
+Workflow:
+
+```text
+Human observation
+        ↓
+CURRENT_TASK.md
+        ↓
+independent analysis/review
+        ↓
+implementation task
+        ↓
+OpenCode implementation
+        ↓
+game test
+        ↓
+CURRENT_TASK.md updated
+```
+
+Review participants analyse; they are not automatic authorities. OpenCode implements. The human developer provides real in-game observations and final acceptance.
+
+Runtime verification runs under the CnCNet spawner only (since 2026-09-11; Syringe/Ares/Phobos coexistence verified 2026-09-10: all signatures OK, all hooks MH_OK).
+
 ## Documentation Authority
 
 When documentation conflicts, use this order:

@@ -239,6 +239,13 @@ void __cdecl Hooked_MainLoop()
 
     unsigned int curFrame = Unsorted::CurrentFrame;
 
+    // Frame counter restarted (new match/scenario): the previous match's frame
+    // numbers are meaningless — resync instead of comparing against them, or
+    // one frame of the new match is wrongly skipped as a "duplicate".
+    if (curFrame < g_lastFrame) {
+        g_lastFrame = curFrame;
+    }
+
     if (curFrame == g_lastFrame) {
         return;
     }

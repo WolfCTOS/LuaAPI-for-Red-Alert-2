@@ -4,7 +4,7 @@
 > **Repository:** https://github.com/WolfCTOS/LuaAPI-for-Red-Alert-2  
 > **Current Release:** `v1.0.0` Production Release  
 > **Current Development:** Milestone 14 (Lua Gameplay Framework)  
-> **Last Updated:** September 4, 2026
+> **Last Updated:** September 11, 2026
 
 This roadmap tracks the evolution of LuaAPI from runtime embedding to safe native bindings, CnCNet integration, advanced combat systems, and Lua-driven tactical gameplay.
 
@@ -29,7 +29,7 @@ Milestone 14 runs on two tracks: **Track A** — a Lua-side gameplay framework o
 | Phase 7 | Milestone 11 — CnCNet Compatibility & Dev Tools | ✅ DONE |
 | Phase 8 | Milestone 12 — Unit Control API & Tactical AI | 🟡 SHOWCASE VERIFIED |
 | Phase 9 | Milestone 13 — Event System Restoration | ⏸️ DEFERRED / OPEN |
-| Phase 10 | Milestone 14 — Lua Gameplay Framework + Runtime Research | 🔵 FRAMEWORK LOGIC VERIFIED / 🔬 RESEARCH ACTIVE |
+| Phase 10 | Milestone 14 — Lua Gameplay Framework + Runtime Research | 🔵 LOGIC VERIFIED; ✅ 14.8 SHOWCASE VERIFIED / 🔬 RESEARCH ACTIVE |
 
 ---
 
@@ -351,7 +351,9 @@ Hotkey spam and mixed multi-select behavior are also not stress-tested. `World.G
 
 ## 🔵 Milestone 14 — Lua Gameplay Framework
 
-> **Status:** 🔵 **FRAMEWORK LOGIC VERIFIED** (in-game runtime verification pending)  
+> **Status:** 🔵 **FRAMEWORK LOGIC VERIFIED** (all gates); ✅ **Gate 14.8 SHOWCASE
+> VERIFIED in live matches 2026-09-09**; Gates 14.1–14.7 have no live consumer
+> yet — see per-gate verdicts below.  
 > **Goal:** Build a small, composable, Lua-side gameplay framework on top of the
 > existing native LuaAPI, so modders can build gameplay systems without adding
 > C++ for every new feature.
@@ -390,6 +392,10 @@ handlers, safe mutation during dispatch (no stale buffer reuse), and no retained
 engine references. Provided `on`/`off`/`emit`/`listenerCount`/`reset`.
 
 **Status:** ✅ FRAMEWORK LOGIC VERIFIED.
+**In-game:** 🔴 OPEN — no live consumer. Native event callbacks are unwired
+(M13), and no active mod demonstrates subscribe → emit → react in a match.
+Blocked by: a subscriber that visibly reacts in-game (planned: squad
+kill-confirmations via the bus).
 
 ### [x] Gate 14.2 — Timer
 
@@ -399,6 +405,9 @@ Logical-frame cadence (not wall clock) for determinism; callbacks are pcall
 isolated; cancellation idempotent; no native hooks.
 
 **Status:** ✅ FRAMEWORK LOGIC VERIFIED.
+**In-game:** 🔴 OPEN — heartbeat and gather cadence use raw frame arithmetic,
+not `Timer.after/every/at`. Blocked by: routing one visible cadence through
+Timer plus a log proof.
 
 ### [x] Gate 14.3 — Query helpers
 
@@ -409,6 +418,9 @@ plus `is_enemy` / `is_ally`. Neutral/civilian filtering is handled by the shared
 predicates so mods stop repeating it.
 
 **Status:** ✅ FRAMEWORK LOGIC VERIFIED.
+**In-game:** 🔴 OPEN — Smart AI recruit/seek scans bypass `Query` with direct
+scans; no isolated live proof of the helpers. Blocked by: routing gather/seek
+through `Query` with identical behaviour in one match.
 
 ### [x] Gate 14.4 — Task abstraction
 
@@ -418,6 +430,10 @@ a runnable task object with lifecycle states `created → running →
 completed/cancelled/failed`. No Behavior Tree / GOAP / coroutine scheduler.
 
 **Status:** ✅ FRAMEWORK LOGIC VERIFIED.
+**In-game:** 🔴 OPEN — zero consumers in active mods; nothing issues a
+multi-frame `MoveTo/Attack/Wait` task in a match. Blocked by: wiring one
+consumer (candidate: escort phases as `Task.Sequence`) or formally deferring
+the gate as unneeded.
 
 ### [x] Gate 14.5 — UnitController
 
@@ -428,6 +444,15 @@ dead unit makes the controller inert (never surfaces stale userdata). Exposes
 control primitives only; decisions stay in the mod's Lua layer.
 
 **Status:** ✅ FRAMEWORK LOGIC VERIFIED.
+**In-game:** 🔴 OPEN — zero consumers in active mods; no unit is driven
+through a controller in a match. Blocked by: wiring one consumer (candidate:
+escorted engineer via `move_to` with id tracking) or formally deferring.
+**2026-09-10 correction:** `unit_controller.lua` currently holds the
+TacticalPatrol demo, not the module — `UnitControl.new` has no implementation
+behind it, and the file required `framework.init` back, which recursed into a
+C stack overflow for every `require("framework.init")` consumer (fixed by
+switching it to leaf requires). Gate 14.5 needs the module written, not just
+a consumer wired.
 
 ### [x] Gate 14.6 — Framework integration
 
@@ -438,6 +463,10 @@ and `unit_destroyed` (id + value snapshot — never a stale pointer). The first
 scan seeds silently. Session reset is handled inherently by VM recreation.
 
 **Status:** ✅ FRAMEWORK LOGIC VERIFIED.
+**In-game:** 🔴 OPEN — Smart AI bypasses `Framework.update()` and drives
+`ForceGroup` directly; the polled `unit_created`/`unit_destroyed` events have
+no live subscriber. Blocked by: calling `Framework.update(frame)` per tick and
+subscribing kill-confirmations (also feeds 14.8 evidence).
 
 ### [x] Gate 14.7 — Tactical Patrol showcase
 
@@ -448,6 +477,9 @@ controller's `onTaskDone` hook. Demonstrates the full
 
 **Status:** ✅ FRAMEWORK LOGIC VERIFIED (engage → kill → resume cycle exercised
 in the Lua harness); ⏳ in-game runtime verification pending.
+**In-game:** 🔴 OPEN — mod archived and superseded by the squads (Gate 14.8);
+never proven live. Path to close: record supersession (no code) or one live
+run of the archived mod.
 
 ### [x] Gate 14.8 — Multi-Force group manager (combat/tactical track)
 
@@ -460,8 +492,17 @@ reach **different decisions on the same frame**. Units are tracked by id only;
 the action handler is type-agnostic (no `if typeName == "..."` branch); a failing
 group is isolated. Showcased by `scripts/mods/multi_force/`.
 
-**Status:** ✅ FRAMEWORK LOGIC VERIFIED (deterministic harness); ⏳ in-game
-runtime verification pending.
+**Status:** ✅ FRAMEWORK LOGIC VERIFIED (deterministic harness).
+**In-game:** ✅ **SHOWCASE VERIFIED 2026-09-09** — 4 live sessions
+(`LuaAPI.log` + rotations, 18:02 → 22:19): 245 recruits across 3 squads,
+166 CONTINUE, 125 CHANGETARGET, 138 RETREAT, 26 DISENGAGE with wipe-and-refill;
+independent same-frame decisions per squad (`squad_2 CHANGETARGET` while others
+`FIND_TARGET`); centroid movement tracks with closing distances (75 → 13 cells);
+zero `FRAMEWORK-ERR` after the integer-cell centroid fix (was 6348 in 2
+pre-fix sessions); zero neutral/civilian targets; zero MCV drafts. Consumer:
+Smart AI squads (merged from `tactical_reassess`), driven via `squadTick`.
+Caveat (accepted for balance, unrelated to the showcase): Smart AI base defense
+is off by an unresolved scoping error, so `[AI] attack` lines are absent.
 
 ### 🔬 Milestone 14 Technical Notes
 
@@ -494,6 +535,9 @@ Research gates (upstream):
   the information behind it. First candidate: replace one part of vanilla AI
   target selection with Lua so the AI reacts to the changing balance instead of
   relying only on the existing threat system.
+  Live-verified 2026-09-10 (victim-centric v2: VICTIM → SCAN → AA → RESELECT,
+  8 redirects with matching read-back, zero errors). M14.2/M14.5 still open;
+  Milestone 14 stays open.
 - **M14.2 — Ares/Phobos Comparison.** Reproduce the behaviour with Ares/Phobos
   and classify: already natural / possible with workarounds / no suitable model.
 - **M14.3 — Runtime State & Information.** Observations with timestamps and

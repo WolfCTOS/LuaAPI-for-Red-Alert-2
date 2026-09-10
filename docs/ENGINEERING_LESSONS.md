@@ -315,3 +315,110 @@ with the detour removed is strong evidence against an engine limitation, but it
 does not by itself prove which internal MinHook mechanism is defective.
 
 ---
+
+## 10. M14.1 Live Verification: TypeIDs, Sampling Windows, Order Spam (2026-09-10)
+
+Live-fire proof of the runtime target-reselection experiment
+(`scripts/mods/target_reselect`, victim-centric since this date):
+`VICTIM → SCAN → AA → RESELECT`, 8 redirects, `accepted=true` with matching
+read-back, zero errors. What it took to get there:
+
+### 10.1 Art names are not TypeIDs
+
+The mod's AA table keyed Flak Tracks as `FLAKT` and matched **nothing for a
+whole evening** (~600 observations, `threat=0.00` every time). Community docs
+(CnC Wiki infoboxes) plus live `GetTypeName` lines establish:
+
+| Unit | Engine TypeID | Note |
+|---|---|---|
+| Flak Track (vehicle) | `HTK` | trivia: "original name was half-track" |
+| Flak Trooper (infantry) | `FLAKT` | — |
+| Flak Cannon (structure) | `NAFLAK` | rules: `68=NAFLAK ; Flak Cannon` |
+
+**Lesson:** verify every TypeID against live `GetTypeName` output (or rules INI
+/ ModEnc), never against art, cameo, or memory. When a threshold gate never
+opens, first log the TRUE typenames present — a periodic whole-army census
+(`TYPE@x,y`) distinguishes geometry / death / typename bugs decisively,
+before any theorizing.
+
+### 10.2 Observe the persistent side, act on the transient side
+
+The v1 attacker-centric design read AI units' `Target` on a 20-frame tick.
+For jets, damage and lock-on never share a tick (hit-and-run fits between
+samples); ground targets flap every 20–60 frames anyway. Three sessions of
+"damage seen, attackers=0" proved the sampling window structurally empty.
+
+What worked: victim-centric observation (HP drop = under attack; scan
+anchored at the persistent victim) with a lock-on-without-damage ACT gate
+(waiting for damage first means waiting forever against jets), plus a
+150-frame per-siege cooldown. Same thresholds, weights, radii, scoring
+functions — only the observation point changed.
+
+### 10.3 Screen-"nearby" is not radius-nearby
+
+8 cells is tiny on screen; "surrounding" at 9–12 cells reads as exactly 0.00.
+Quantify distances from log coordinates (`NAFLAK@66,83` vs `HARV@72,122` =
+~40 cells — settled in one line what an evening of descriptions could not).
+
+### 10.4 Per-order native churn + INFO logging freezes the game
+
+`seekSquads` re-issued `MoveTo` to every squad member every 5 frames with a
+per-order INFO log + flush: 46,572 lines in one session, all three 5 MB
+rotated logs filled, message pump starved (Alt+F4 dead). Fix: destination
+memory (re-issue only on new destination or idle-far) + demote per-order logs
+to DEBUG. Same class as the trap in `docs/AGENTS.md` §6 — per-frame/per-order
+INFO logging on the game thread is a freeze vector, not a cosmetic issue.
+
+Related, same session: `g_lastFrame` must resync when `CurrentFrame`
+restarts (new match), or one frame is wrongly skipped as a "duplicate".
+Note: `ResetSession()` exists but is **never called** — Lua and native
+per-session state persists across matches within one process (documented,
+not yet wired).
+
+### 10.5 Save/load breaks test continuity
+
+Exiting without saving, then loading an older save, silently deletes setup
+(flaks placed after the save vanish) while the human remembers placing them.
+Protocol that ended the confusion: place → SAVE → test without exiting →
+save again → then exit and read the log. Ticks repeat after a load
+(deterministic save) — check session markers before reading duplicate tick
+numbers as duplicate evaluations. The 32-bit `dx*dx` lepton overflow in
+`GetUnitsInRadius` was fixed in passing (64-bit, same pattern as
+`SubTurretManager`).
+
+### 10.6 Jet rearm looks like "wandering"
+
+Post-pass circling + RTB to reload is vanilla rearm behavior, not mod
+interference. Rule applied: with one `VICTIM (attackers=0)` line and zero
+mod orders in the log, the mod is provably idle — attribute movement
+anomalies to Lua only with an order line as evidence.
+
+### 10.7 CnCNet coexistence (2026-09-11)
+
+The CnCNet YR package is an XNA client + SyringeEx + Ares + Phobos +
+yrpp-spawner (`CnCNet-Spawner.dll`); the client writes `spawn.ini` and
+spawns the game straight into battle as `gamemd-spawn.exe` (Syringe itself
+may also spawn it as `gamemd.exe -SPAWN` — detect both names). Our DLL
+injects after birth and chains cleanly: all signatures OK, all hooks
+`MH_OK` live under the full stack.
+
+Two integration rules learned the hard way:
+
+1. **Never race Syringe-side patching.** Our auto-launch path waits for the
+   hook-host modules (`Ares.dll`, `Phobos.dll`, `CnCNet-Spawner.dll`,
+   bounded ~15 s + 1 s settle — same policy as headless `--attach`) before
+   `CreateRemoteThread`. Manual Inject stays immediate (the human waits for
+   the menu themselves).
+2. **Client entry points move.** The XNA binaries live in `Resources/`
+   (`clientdx.exe`, `clientxna.exe`, `clientogl.exe`); the supported entry
+   is `CnCNetYRLauncher.exe`, which self-updates and fetches the client on
+   first run. Run clients with CWD = their own directory or theme/config
+   resolution breaks.
+3. **A KABOOOM dialog naming `DTACnCNetClient.ini` means foreign theme
+   files**, not our bug: DTA-era theme inis predate client parser constants
+   (`EMPTY_SPACE_SIDES` unresolvable) and crash the client before any game
+   spawns. Fix upstream (launcher update / clean YR package reinstall, then
+   the crash log to CnCNet Discord as the dialog says) — do not touch
+   third-party client files from our side.
+
+---

@@ -135,7 +135,20 @@ Ares/Phobos before adding it.
 | Generic (no unit-name branch) | ✅ verified |
 | No new native binding required | ✅ verified |
 | Object-lifetime safety (ids, re-resolve) | ✅ verified |
-| Vanilla AI does not immediately override the new target | ⏳ **Need to test** (live YR) |
-| In-game runtime confirmation | ⏳ **Need to test** |
+| Vanilla AI does not immediately override the new target | ✅ verified live 2026-09-10 (8 redirects, cooldown-spaced re-evaluation re-redirects) |
+| In-game runtime confirmation | ✅ verified live 2026-09-10 (VICTIM → SCAN → AA → RESELECT, accepted=true, readback=alternative, zero errors) |
 
 Keep this experiment documented as research until the live-YR half is confirmed.
+
+## 2026-09-10 — victim-centric successor (v2, option C)
+
+Live play showed the v1 attacker-centric design unwinnable in practice:
+stable attacker `Target` on a 20-frame tick plus AA within 8 cells at that
+exact tick never coincided (hit-and-run jets, flapping AI retargeting,
+roaming harvesters) — ~600 observations, zero gate openings, code proven
+innocent by `[M14.1][SCANUNITS]` breakdowns. The mod now observes the
+VICTIM instead (HP drop = under attack; scan anchored at the victim;
+one evaluation per siege phase, 150-frame cooldown). Same gate (8 cells,
+2.0, same weights), same scoring functions, no new native bindings.
+The harness half above still stands for the mechanics; the live proof is
+re-attempted under v2. See `PROJECT/CURRENT_TASK.md`.

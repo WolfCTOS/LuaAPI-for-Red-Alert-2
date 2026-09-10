@@ -8,6 +8,46 @@ The changelog follows the project's verified milestone history. Features are lis
 
 ## [Unreleased] — Milestone 14: Lua Gameplay Framework + Runtime Research
 
+### Verified 2026-09-10 — M14.1 live proof (victim-centric v2)
+
+- `target_reselect` rewritten attacker-centric to victim-centric: HP drop on
+  a player harvester/refinery triggers evaluation; AA threat scanned around
+  the victim; each attacker holding it is redirected via native
+  `unit:Attack` with `GetTarget` read-back; one evaluation per siege phase
+  (150-frame cooldown).
+- Live trail: VICTIM (hp drop) → SCAN (threat 2.00, HTK/+1.0 x2) → AA →
+  8x RESELECT (HARV→SCHP, then HARV→HTNK tank), all `accepted=true` with
+  matching read-back, zero errors. Cooldown spacing (160 frames) respected.
+- AA table corrected against community docs + live logs: Flak Track = HTK,
+  Flak Trooper = FLAKT, Flak Cannon = NAFLAK (art/UI names are not TypeIDs).
+- M14.1 research half closed; M14.2 (Ares/Phobos comparison) and M14.5
+  (community challenge) still open. Milestone 14 stays open.
+
+### Fixed 2026-09-10 — match-restart freeze
+
+- Root cause: `seekSquads` re-issued `MoveTo` to every squad member every 5
+  frames with per-order INFO logging (46K+ lines/session), starving the game
+  thread. Fix: destination-memory throttle + per-order `[Nav]` logs demoted
+  to DEBUG + `g_lastFrame` resync on frame-counter restart. Verified: log
+  stays small, no freeze across matches.
+- Drive-by: 64-bit distance math in `GetUnitsInRadius` (lepton overflow).
+
+### Added 2026-09-11 — launcher CnCNet support
+
+- Multi-name game detection (`gamemd.exe`, `gamemd-spawn.exe`) across GUI
+  detection/inject paths; vanilla launch flow unchanged.
+- New hero button **CnCNet**: launches the CnCNet client/package entry
+  (`CnCNetYRLauncher.exe`, `Resources/clientdx|clientxna|clientogl.exe`),
+  waits for the spawned game plus hook-host modules (Ares/Phobos/
+  CnCNet-Spawner, bounded, headless policy), then auto-injects.
+- Verified live under Syringe + Ares + Phobos + spawner: all signatures OK,
+  all hooks `MH_OK`, both mods loaded.
+
+### Changed — runtime verification environment
+
+- From 2026-09-11, live verification runs under the CnCNet spawner only
+  (Syringe/Ares/Phobos coexistence verified 2026-09-10).
+
 ### Changed — runtime research direction (upstream, 2026-09-06)
 
 - **Milestone 14 direction:** shifted from building a general Lua-side gameplay framework toward finding the real runtime boundary between LuaAPI and Ares/Phobos.
@@ -24,6 +64,14 @@ The changelog follows the project's verified milestone history. Features are lis
 - Several AI controllers operating as one coordinated side.
 - AI alliance changes during a match.
 - Runtime systems such as Empowerment-style accumulation.
+
+### Verified 2026-09-09 — Gate 14.8 SHOWCASE VERIFIED
+
+- **Multi-force squads live:** 4 sessions, 245 recruits, 166 CONTINUE,
+  125 CHANGETARGET, 138 RETREAT, 26 DISENGAGE; independent per-squad decisions,
+  movement tracks, wipe-and-refill. Zero `FRAMEWORK-ERR` after the integer-cell
+  centroid fix; zero neutral/civilian targets; zero MCV drafts. Consumer:
+  Smart AI squads. Accepted caveat: base defense off (balance decision).
 
 ### Added — framework + first experiment (2026-09-04)
 

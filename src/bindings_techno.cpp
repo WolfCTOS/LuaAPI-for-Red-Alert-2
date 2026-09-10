@@ -478,7 +478,7 @@ int Techno_MoveTo(lua_State* L) {
     pFoot->Destination = pCell;
     pFoot->QueueMission(Mission::Move, true);
 
-    LUA_LOG_INFO("[Nav] {} moving to ({},{})", pTechno->GetType()->get_ID(), cellX, cellY);
+    LUA_LOG_DEBUG("[Nav] {} moving to ({},{})", pTechno->GetType()->get_ID(), cellX, cellY);
     lua_pushboolean(L, 1);
     return 1;
 }
@@ -627,8 +627,8 @@ int Techno_Attack(lua_State* L) {
         return 1;
     }
 
-    LUA_LOG_INFO("[Nav] {} ordered to attack {}", pTechno->GetType()->get_ID(),
-                 pTarget->GetType()->get_ID());
+    LUA_LOG_DEBUG("[Nav] {} ordered to attack {}", pTechno->GetType()->get_ID(),
+                  pTarget->GetType()->get_ID());
     lua_pushboolean(L, 1);
     return 1;
 }
@@ -652,7 +652,7 @@ int Techno_Stop(lua_State* L) {
         return 1;
     }
 
-    LUA_LOG_INFO("[Nav] {} stopped", pTechno->GetType()->get_ID());
+    LUA_LOG_DEBUG("[Nav] {} stopped", pTechno->GetType()->get_ID());
     lua_pushboolean(L, 1);
     return 1;
 }
@@ -795,10 +795,12 @@ int game_GetUnitsInRadius(lua_State* L) {
         if (!ValidateTechno(pTechno))
             continue;
 
-        // Get coords and compute distance
+        // Get coords and compute distance.
+        // Leptons overflow signed 32-bit when squared (1 cell = 256 leptons),
+        // so the delta math is 64-bit (same pattern as SubTurretManager).
         CoordStruct coords = pTechno->GetCoords();
-        int dx = coords.X - x * 256; // convert cell to pixels approx
-        int dy = coords.Y - y * 256;
+        long long dx = static_cast<long long>(coords.X) - static_cast<long long>(x) * 256;
+        long long dy = static_cast<long long>(coords.Y) - static_cast<long long>(y) * 256;
         double dist = std::sqrt(static_cast<double>(dx * dx + dy * dy)) / 256.0;
 
         if (dist <= static_cast<double>(radius)) {

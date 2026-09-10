@@ -98,6 +98,13 @@ constexpr int kMinClientH     = 560;
 
 constexpr const wchar_t* kGameProcess = L"gamemd.exe";
 
+// Syringe/Ares/Phobos and CnCNet setups may run the game under a different
+// image name. Detection and attach iterate this list in order; the first
+// running match wins. kGameProcess stays the default (vanilla launch flow).
+constexpr const wchar_t* kGameProcessNames[] = { L"gamemd.exe", L"gamemd-spawn.exe" };
+constexpr size_t kGameProcessNameCount =
+    sizeof(kGameProcessNames) / sizeof(kGameProcessNames[0]);
+
 // --- DPI --------------------------------------------------------------------
 HWND g_hwnd = nullptr;
 int WinDpi() {
@@ -163,6 +170,7 @@ const wchar_t* St_GameNotFound(){ return L10N(L"\u0418\u0433\u0440\u0430 \u043D\
 
 const wchar_t* Str_LaunchBtn()  { return L10N(L"\u0417\u0430\u043F\u0443\u0441\u0442\u0438\u0442\u044C", L"Launch Game"); }
 const wchar_t* Str_InjectBtn()  { return L10N(L"\u0412\u043D\u0435\u0434\u0440\u0438\u0442\u044C", L"Inject"); }
+const wchar_t* Str_CncBtn()     { return L"CnCNet"; }
 const wchar_t* Str_ReInjectBtn(){ return L10N(L"\u041F\u043E\u0432\u0442\u043E\u0440\u043D\u043E \u0432\u043D\u0435\u0434\u0440\u0438\u0442\u044C", L"Re-inject"); }
 const wchar_t* Str_ApplyBtn()   { return L10N(L"\u041F\u0440\u0438\u043C\u0435\u043D\u0438\u0442\u044C", L"Apply Changes"); }
 const wchar_t* Str_OpenModsDir(){ return L10N(L"\u041F\u0430\u043F\u043A\u0430 \u043C\u043E\u0434\u043E\u0432", L"Open Mods Folder"); }
@@ -253,7 +261,7 @@ struct Geo {
     RECT sidebar, content, brand;
     RECT navDashboard, navMods, navSettings;
     RECT sidebarStatus;
-    RECT hero, launchBtn, injectBtn;
+    RECT hero, launchBtn, injectBtn, cncBtn;
     RECT statMods, statActive, statProbs;
     RECT quickAction1, quickAction2, quickAction3, quickAction4;
     RECT search, list, inspector, applyBtn;
@@ -271,6 +279,7 @@ int g_clientH = kDefaultClientH;
 
 DWORD g_gamePid = 0;
 std::wstring g_gameName;
+std::wstring g_pendingGameName;
 bool g_injected = false;
 bool g_skipInjection = false;
 bool g_attachMode = false;
@@ -312,7 +321,7 @@ bool g_trackingMouse = false;
 bool g_down = false;
 View g_hoverNav = static_cast<View>(-1);
 int g_hoverRow = -1;
-bool g_hoverLaunch = false, g_hoverInject = false, g_hoverApply = false;
+bool g_hoverLaunch = false, g_hoverInject = false, g_hoverApply = false, g_hoverCnc = false;
 bool g_hoverQA1 = false, g_hoverQA2 = false, g_hoverQA3 = false, g_hoverQA4 = false;
 bool g_hoverD1 = false, g_hoverD2 = false, g_hoverD3 = false;
 int g_hoverBtn = 0;  // inspector button index
@@ -525,25 +534,31 @@ GameInfo ComputeGameInfo() {
 // ---------------------------------------------------------------------------
 // Process helpers
 // ---------------------------------------------------------------------------
-DWORD FindTargetProcess() {
+DWORD FindTargetProcess(std::wstring* outName = nullptr) {
     HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
     if (snapshot == INVALID_HANDLE_VALUE) return 0;
     PROCESSENTRY32W entry{}; entry.dwSize = sizeof(entry);
     DWORD pid = 0;
+    std::wstring found;
     if (Process32FirstW(snapshot, &entry)) {
         do {
-            if (_wcsicmp(entry.szExeFile, kGameProcess) != 0) continue;
-            HANDLE moduleSnap = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE, entry.th32ProcessID);
-            if (moduleSnap != INVALID_HANDLE_VALUE) {
-                MODULEENTRY32W mod{}; mod.dwSize = sizeof(mod);
-                if (Module32FirstW(moduleSnap, &mod) && _wcsicmp(mod.szModule, kGameProcess) == 0)
-                    pid = entry.th32ProcessID;
-                CloseHandle(moduleSnap);
+            for (size_t i = 0; i < kGameProcessNameCount && pid == 0; ++i) {
+                if (_wcsicmp(entry.szExeFile, kGameProcessNames[i]) != 0) continue;
+                HANDLE moduleSnap = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE, entry.th32ProcessID);
+                if (moduleSnap != INVALID_HANDLE_VALUE) {
+                    MODULEENTRY32W mod{}; mod.dwSize = sizeof(mod);
+                    if (Module32FirstW(moduleSnap, &mod) && _wcsicmp(mod.szModule, kGameProcessNames[i]) == 0) {
+                        pid = entry.th32ProcessID;
+                        found = kGameProcessNames[i];
+                    }
+                    CloseHandle(moduleSnap);
+                }
             }
             if (pid) break;
         } while (Process32NextW(snapshot, &entry));
     }
     CloseHandle(snapshot);
+    if (pid && outName) *outName = found;
     return pid;
 }
 
@@ -658,11 +673,12 @@ void RefreshGameProcessState() {
         g_injecting = false;
         changed = true;
     } else {
-        DWORD pid = FindTargetProcess();
+        std::wstring foundName;
+        DWORD pid = FindTargetProcess(&foundName);
         if (pid) {
-            LogLine(L"Detected running " + std::wstring(kGameProcess) + L" (PID " + std::to_wstring(pid) + L")");
+            LogLine(L"Detected running " + foundName + L" (PID " + std::to_wstring(pid) + L")");
             g_gamePid = pid;
-            g_gameName = kGameProcess;
+            g_gameName = foundName;
             changed = true;
         }
     }
@@ -677,18 +693,19 @@ void DoInjectAttachAsync(HWND hwnd, DWORD pid, const std::wstring& dllPath);
 
 void DoInjectAttach() {
     if (g_injecting) return;
-    LogLine(L"Inject: searching for running " + std::wstring(kGameProcess) + L"...");
-    DWORD pid = FindTargetProcess();
+    LogLine(L"Inject: searching for a running game process (gamemd.exe / gamemd-spawn.exe)...");
+    std::wstring foundName;
+    DWORD pid = FindTargetProcess(&foundName);
     if (pid == 0) {
         LogLine(L"Inject: process not found");
         SetStatusKey(StatusKey::GameNotFound);
         MessageBoxW(g_hwnd,
-                    L"gamemd.exe \u043D\u0435 \u0437\u0430\u043F\u0443\u0449\u0435\u043D.\n\n"
-                    L"\u0417\u0430\u043F\u0443\u0441\u0442\u0438\u0442\u0435 \u0438\u0433\u0440\u0443 \u043A\u043D\u043E\u043F\u043A\u043E\u0439 \u00AB\u0417\u0430\u043F\u0443\u0441\u0442\u0438\u0442\u044C \u0438\u0433\u0440\u0443\u00BB.",
+                    L"\u0418\u0433\u0440\u0430 \u043D\u0435 \u0437\u0430\u043F\u0443\u0449\u0435\u043D\u0430 (gamemd.exe / gamemd-spawn.exe).\n\n"
+                    L"\u0417\u0430\u043F\u0443\u0441\u0442\u0438\u0442\u0435 \u0438\u0433\u0440\u0443 \u2014 \u0432\u0430\u043D\u0438\u043B\u044C\u043D\u0443\u044E \u043A\u043D\u043E\u043F\u043A\u043E\u0439 \u00AB\u0417\u0430\u043F\u0443\u0441\u0442\u0438\u0442\u044C \u0438\u0433\u0440\u0443\u00BB \u0438\u043B\u0438 \u0447\u0435\u0440\u0435\u0437 Syringe (Ares/Phobos) \u2014 \u0437\u0430\u0442\u0435\u043C \u043D\u0430\u0436\u043C\u0438\u0442\u0435 \u00AB\u0412\u043D\u0435\u0434\u0440\u0438\u0442\u044C\u00BB.",
                     L"\u041F\u043E\u0438\u0441\u043A \u043F\u0440\u043E\u0446\u0435\u0441\u0441\u0430", MB_ICONWARNING | MB_OK);
         return;
     }
-    LogLine(L"Inject: found gamemd.exe (PID " + std::to_wstring(pid) + L")");
+    LogLine(L"Inject: found " + foundName + L" (PID " + std::to_wstring(pid) + L")");
     std::wstring dllPath = GetExeDirectory() + L"\\LuaAPI.dll";
     if (!FileExists(dllPath)) {
         LogLine(L"Inject: LuaAPI.dll missing at " + dllPath);
@@ -699,6 +716,7 @@ void DoInjectAttach() {
     }
     LogLine(L"Inject: dispatching attachment thread (PID " + std::to_wstring(pid) + L", DLL " + dllPath + L")");
     g_gamePid = pid;
+    g_gameName = foundName;
     g_injecting = true;
     ShowToast(St_Injecting());
     HWND hwnd = g_hwnd;
@@ -724,9 +742,9 @@ void DoLaunchGame() {
                     L"\u041E\u0448\u0438\u0431\u043A\u0430", MB_ICONERROR | MB_OK);
         return;
     }
-    DWORD existing = FindTargetProcess();
+    DWORD existing = FindTargetProcess(&g_gameName);
     if (existing != 0) {
-        g_gamePid = existing; g_gameName = kGameProcess;
+        g_gamePid = existing;
         std::wstring error;
         HANDLE process = OpenProcess(PROCESS_CREATE_THREAD | PROCESS_QUERY_INFORMATION | PROCESS_VM_OPERATION | PROCESS_VM_WRITE | PROCESS_VM_READ, FALSE, existing);
         if (!process) { SetStatusCustom(L"OpenProcess failed"); return; }
@@ -769,6 +787,136 @@ void DoLaunchGameAsync(HWND hwnd) {
         foundPid = pid;
         if (ok) injected = true;
         break;
+    }
+    PostMessageW(hwnd, WM_APP_LAUNCH_DONE, (WPARAM)injected, (LPARAM)foundPid);
+}
+
+// ---------------------------------------------------------------------------
+// CnCNet launch: start the CnCNet client (it spawns the game itself as
+// gamemd-spawn.exe), then auto-inject LuaAPI into the game process —
+// "starts already injected". If the game is already running (vanilla,
+// Syringe, or a previous CnCNet session), just inject into it.
+//
+// Research notes (CnCNet YR package = XNA client + SyringeEx + Ares +
+// Phobos + yrpp-spawner, game spawned straight into battle via spawn.ini):
+// the spawned process loads Syringe-side DLLs at birth, so injection waits
+// for the hook-host modules first (same bounded wait as headless --attach);
+// MinHook chaining with them is covered by M11 Gate 11.2.
+// ---------------------------------------------------------------------------
+void DoLaunchCnCNetAsync(HWND hwnd, const std::wstring& clientPath);
+
+// Bounded wait for Syringe/Ares/Phobos/spawner modules inside the target.
+// Never blocks forever: on timeout the caller proceeds anyway (same policy
+// as headless RunAttachWait).
+void WaitForHookHostModules(DWORD pid) {
+    static const wchar_t* kWaitDlls[] = { L"Ares.dll", L"Phobos.dll", L"CnCNet-Spawner.dll" };
+    DWORD modStart = GetTickCount64();
+    while (GetTickCount64() - modStart < 15000) {
+        auto mods = GetProcessModules(pid);
+        bool allPresent = true;
+        for (const wchar_t* dll : kWaitDlls) {
+            bool found = false;
+            for (const auto& m : mods) { if (_wcsicmp(m.c_str(), dll) == 0) { found = true; break; } }
+            if (!found) { allPresent = false; break; }
+        }
+        if (allPresent) break;
+        Sleep(500);
+    }
+    Sleep(1000);
+}
+
+void DoLaunchCnCNet() {
+    if (g_launching || g_injecting) return;
+    std::wstring exeDir = GetExeDirectory();
+    std::wstring dllPath = exeDir + L"\\LuaAPI.dll";
+    if (!FileExists(dllPath)) {
+        SetStatusKey(StatusKey::DllMissing);
+        MessageBoxW(g_hwnd, (L"\u0424\u0430\u0439\u043B \u043D\u0435 \u043D\u0430\u0439\u0434\u0435\u043D:\n" + dllPath).c_str(),
+                    L"\u041E\u0448\u0438\u0431\u043A\u0430", MB_ICONERROR | MB_OK);
+        return;
+    }
+    // Game already up (any known image)? Inject right away, no relaunch.
+    std::wstring running;
+    if (FindTargetProcess(&running) != 0) { DoInjectAttach(); return; }
+
+    // Entry point order: the official CnCNet YR launcher first (it
+    // self-updates and brings up the XNA client, which is absent until the
+    // first launcher run), then XNA clients (root or Resources/, where the
+    // YR package stages clientdx/clientxna/clientogl), then legacy names.
+    static const wchar_t* kCnCNetClients[] = {
+        L"CnCNetYRLauncher.exe",
+        L"Resources\\clientdx.exe", L"Resources\\clientxna.exe", L"Resources\\clientogl.exe",
+        L"CnCNetClient.exe", L"clientdx.exe", L"clientxna.exe", L"CnCNet.exe"
+    };
+    std::wstring clientPath;
+    for (const wchar_t* c : kCnCNetClients) {
+        std::wstring cand = exeDir + L"\\" + c;
+        if (FileExists(cand)) { clientPath = cand; break; }
+    }
+    if (clientPath.empty()) {
+        MessageBoxW(g_hwnd,
+                    L"CnCNet YR \u043F\u0430\u043A\u0435\u0442 \u043D\u0435 \u043D\u0430\u0439\u0434\u0435\u043D \u0432 \u043F\u0430\u043F\u043A\u0435 \u0438\u0433\u0440\u044B.\n\n"
+                    L"\u0421\u043A\u0430\u0447\u0430\u0439\u0442\u0435 \u0443\u0441\u0442\u0430\u043D\u043E\u0432\u0449\u0438\u043A CnCNet Yuri's Revenge \u0441 cncnet.org "
+                    L"\u0438 \u0443\u0441\u0442\u0430\u043D\u043E\u0432\u0438\u0442\u0435 \u0435\u0433\u043E \u0432 \u044D\u0442\u0443 \u043F\u0430\u043F\u043A\u0443. "
+                    L"\u041F\u0430\u043A\u0435\u0442 \u043F\u0440\u0438\u043D\u043E\u0441\u0438\u0442 \u043A\u043B\u0438\u0435\u043D\u0442 (CnCNetClient.exe / clientdx.exe), "
+                    L"Syringe, Ares, Phobos \u0438 \u0441\u043F\u0430\u0432\u043D\u0435\u0440 (gamemd-spawn.exe) — "
+                    L"\u043A\u043D\u043E\u043F\u043A\u0430 \u0437\u0430\u043F\u0443\u0441\u0442\u0438\u0442 \u043A\u043B\u0438\u0435\u043D\u0442 \u0438 \u0430\u0432\u0442\u043E\u0432\u043D\u0435\u0434\u0440\u0438\u0442 LuaAPI "
+                    L"\u0432 \u0437\u0430\u0441\u043F\u0430\u0432\u043D\u0435\u043D\u043D\u0443\u044E \u0438\u0433\u0440\u0443.",
+                    L"CnCNet", MB_ICONWARNING | MB_OK);
+        return;
+    }
+    g_launching = true;
+    ShowToast(St_Launching());
+    InvalidateRect(g_hwnd, nullptr, TRUE);
+    HWND hwnd = g_hwnd;
+    std::thread([hwnd, clientPath]() { DoLaunchCnCNetAsync(hwnd, clientPath); }).detach();
+}
+
+void DoLaunchCnCNetAsync(HWND hwnd, const std::wstring& clientPath) {
+    std::wstring exeDir = GetExeDirectory();
+    std::wstring dllPath = exeDir + L"\\LuaAPI.dll";
+    LogLine(L"CnCNet: starting client " + clientPath);
+    // The client resolves theme/config paths relative to its own directory
+    // (e.g. Resources\clientdx.exe), so run it with CWD = its folder.
+    std::wstring clientDir = clientPath;
+    size_t slash = clientDir.find_last_of(L"\\/");
+    if (slash != std::wstring::npos) clientDir = clientDir.substr(0, slash);
+    else clientDir = exeDir;
+    STARTUPINFOW si{}; si.cb = sizeof(si);
+    PROCESS_INFORMATION pi{};
+    if (!CreateProcessW(clientPath.c_str(), nullptr, nullptr, nullptr, FALSE, 0, nullptr, clientDir.c_str(), &si, &pi)) {
+        LogLine(L"CnCNet: CreateProcess failed (error " + std::to_wstring(GetLastError()) + L")");
+        PostMessageW(hwnd, WM_APP_LAUNCH_DONE, 0, 0);
+        return;
+    }
+    CloseHandle(pi.hThread); CloseHandle(pi.hProcess);
+    // Wait for the spawned game (gamemd-spawn.exe normally) and inject.
+    // The spawner loads Syringe-side DLLs first — wait for them so MinHook
+    // never races their prologue patching.
+    std::wstring err;
+    std::wstring foundName;
+    DWORD foundPid = 0;
+    bool injected = false;
+    for (int i = 0; i < 600; ++i) {
+        Sleep(200);
+        std::wstring nm;
+        DWORD pid = FindTargetProcess(&nm);
+        if (!pid) continue;
+        WaitForHookHostModules(pid);
+        HANDLE process = OpenProcess(PROCESS_CREATE_THREAD | PROCESS_QUERY_INFORMATION | PROCESS_VM_OPERATION | PROCESS_VM_WRITE | PROCESS_VM_READ, FALSE, pid);
+        if (!process) continue;
+        bool ok = InjectDllIntoProcess(pid, dllPath, &err);
+        CloseHandle(process);
+        foundPid = pid; foundName = nm;
+        if (ok) injected = true;
+        break;
+    }
+    if (foundPid) {
+        g_pendingGameName = foundName;
+        LogLine(L"CnCNet: game " + foundName + L" (PID " + std::to_wstring(foundPid) + L") injection " +
+                (injected ? L"OK" : L"FAILED: " + err));
+    } else {
+        LogLine(L"CnCNet: no game process appeared within 120 s");
     }
     PostMessageW(hwnd, WM_APP_LAUNCH_DONE, (WPARAM)injected, (LPARAM)foundPid);
 }
@@ -1060,6 +1208,7 @@ void RecalcLayout() {
         int by2 = g_geo.hero.top + (g_geo.hero.bottom - g_geo.hero.top - btnH2) / 2;
         g_geo.launchBtn = RECT{ g_geo.hero.right - pad2 - btnW2 * 2 - SS(12), by2, g_geo.hero.right - pad2 - btnW2, by2 + btnH2 };
         g_geo.injectBtn = RECT{ g_geo.hero.right - pad2 - btnW2, by2, g_geo.hero.right - pad2, by2 + btnH2 };
+        g_geo.cncBtn = RECT{ g_geo.hero.right - pad2 - btnW2 * 3 - SS(24), by2, g_geo.hero.right - pad2 - btnW2 * 2 - SS(12), by2 + btnH2 };
     } else if (g_view == View::Mods) {
         int topY = pad;
         int searchW = SS(280);
@@ -1292,6 +1441,9 @@ void PaintDashboard(HDC dc) {
     int by = h.top + (h.bottom - h.top - btnH) / 2;
     g_geo.launchBtn = RECT{ h.right - pad - btnW * 2 - SS(12), by, h.right - pad - btnW, by + btnH };
     g_geo.injectBtn = RECT{ h.right - pad - btnW, by, h.right - pad, by + btnH };
+    g_geo.cncBtn = RECT{ h.right - pad - btnW * 3 - SS(24), by, h.right - pad - btnW * 2 - SS(12), by + btnH };
+    DrawButton(dc, g_geo.cncBtn, Str_CncBtn(), Tok::Inject, Tok::InjectHov,
+               g_hoverCnc, g_down && g_hoverCnc, (!g_launching && !g_injecting), g_fontBody);
     DrawButton(dc, g_geo.launchBtn, Str_LaunchBtn(), Tok::Launch, Tok::LaunchHov,
                g_hoverLaunch, g_down && g_hoverLaunch, gi.canLaunch, g_fontBody);
     DrawButton(dc, g_geo.injectBtn, Str_InjectBtn(), Tok::Inject, Tok::InjectHov,
@@ -1656,6 +1808,7 @@ void OnLeftDown(POINT pt) {
     if (g_view == View::Dashboard) {
         if (PointIn(g_geo.launchBtn, pt)) { if (ComputeGameInfo().canLaunch) DoLaunchGame(); return; }
         if (PointIn(g_geo.injectBtn, pt)) { if (ComputeGameInfo().canInject) DoInjectAttach(); return; }
+        if (PointIn(g_geo.cncBtn, pt)) { if (!g_launching && !g_injecting) DoLaunchCnCNet(); return; }
         if (PointIn(g_geo.quickAction1, pt)) { OpenModsDir(); return; }
         if (PointIn(g_geo.quickAction2, pt)) { OpenLogs(); return; }
         if (PointIn(g_geo.quickAction3, pt)) { if (g_gamePid != 0 && !g_injecting) DoInjectAttach(); return; }
@@ -1846,6 +1999,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         // Hover: buttons (dashboard/settings/mods)
         bool hL = g_view == View::Dashboard && PointIn(g_geo.launchBtn, pt);
         bool hI = g_view == View::Dashboard && PointIn(g_geo.injectBtn, pt);
+        bool hC = g_view == View::Dashboard && PointIn(g_geo.cncBtn, pt);
         bool hA = g_view == View::Mods && PointIn(g_geo.applyBtn, pt);
         bool hQ1 = g_view == View::Dashboard && PointIn(g_geo.quickAction1, pt);
         bool hQ2 = g_view == View::Dashboard && PointIn(g_geo.quickAction2, pt);
@@ -1854,10 +2008,10 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         bool hD1 = g_view == View::Settings && PointIn(g_geo.diagBtn1, pt);
         bool hD2 = g_view == View::Settings && PointIn(g_geo.diagBtn2, pt);
         bool hD3 = g_view == View::Settings && PointIn(g_geo.diagBtn3, pt);
-        if (hL != g_hoverLaunch || hI != g_hoverInject || hA != g_hoverApply ||
+        if (hL != g_hoverLaunch || hI != g_hoverInject || hC != g_hoverCnc || hA != g_hoverApply ||
             hQ1 != g_hoverQA1 || hQ2 != g_hoverQA2 || hQ3 != g_hoverQA3 || hQ4 != g_hoverQA4 ||
             hD1 != g_hoverD1 || hD2 != g_hoverD2 || hD3 != g_hoverD3) {
-            g_hoverLaunch = hL; g_hoverInject = hI; g_hoverApply = hA;
+            g_hoverLaunch = hL; g_hoverInject = hI; g_hoverCnc = hC; g_hoverApply = hA;
             g_hoverQA1 = hQ1; g_hoverQA2 = hQ2; g_hoverQA3 = hQ3; g_hoverQA4 = hQ4;
             g_hoverD1 = hD1; g_hoverD2 = hD2; g_hoverD3 = hD3;
             InvalidateRect(hwnd, nullptr, TRUE);
@@ -1885,7 +2039,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     case WM_MOUSELEAVE:
         g_trackingMouse = false;
         g_hoverNav = static_cast<View>(-1);
-        g_hoverLaunch = g_hoverInject = g_hoverApply = false;
+        g_hoverLaunch = g_hoverInject = g_hoverCnc = g_hoverApply = false;
         g_hoverQA1 = g_hoverQA2 = g_hoverQA3 = g_hoverQA4 = false;
         g_hoverD1 = g_hoverD2 = g_hoverD3 = false;
         g_hoverSearch = false; g_hoverRow = -1; g_hoverBtn = -1;
@@ -1966,7 +2120,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         g_launching = false;
         bool ok = (bool)wParam;
         DWORD pid = (DWORD)lParam;
-        if (ok && pid) { g_gamePid = pid; g_gameName = kGameProcess; g_injected = true; ShowToast(L10N(L"\u2713 \u0418\u0433\u0440\u0430 \u0437\u0430\u043F\u0443\u0449\u0435\u043D\u0430 \u2014 LuaAPI \u0432\u043D\u0435\u0434\u0440\u0435\u043D\u0430", L"\u2713 Game running \u2014 LuaAPI Injected")); }
+        if (ok && pid) { g_gamePid = pid; g_gameName = !g_pendingGameName.empty() ? g_pendingGameName : kGameProcess; g_pendingGameName.clear(); g_injected = true; ShowToast(L10N(L"\u2713 \u0418\u0433\u0440\u0430 \u0437\u0430\u043F\u0443\u0449\u0435\u043D\u0430 \u2014 LuaAPI \u0432\u043D\u0435\u0434\u0440\u0435\u043D\u0430", L"\u2713 Game running \u2014 LuaAPI Injected")); }
         else if (pid) { g_gamePid = pid; g_injected = false; SetStatusKey(StatusKey::InjectFail); }
         else { SetStatusKey(StatusKey::GameNotFound); }
         InvalidateRect(hwnd, nullptr, TRUE);
@@ -1980,7 +2134,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         std::wstring err = res ? res->error : L"";
         delete res;
         if (ok && pid) {
-            g_gamePid = pid; g_gameName = kGameProcess; g_injected = true;
+            g_gamePid = pid; if (g_gameName.empty()) g_gameName = kGameProcess; g_injected = true;
             LogLine(L"Inject: complete — LuaAPI injected into PID " + std::to_wstring(pid));
             ShowToast(L10N(L"\u2713 LuaAPI \u0432\u043D\u0435\u0434\u0440\u0435\u043D\u0430 \u0432 \u0438\u0433\u0440\u0443", L"\u2713 LuaAPI injected"));
         } else {

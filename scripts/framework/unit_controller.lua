@@ -23,10 +23,14 @@
 -- The showcase contains no hand-written task/state machine.
 -- Decisions stay here. Execution stays in the framework.
 
-local Framework   = require("framework.init")
-local UnitControl = Framework.UnitController
-local Query       = Framework.Query
-local EventBus    = Framework.EventBus
+-- NOTE: never require("framework.init") here — init requires THIS file, which
+-- recurses into a C stack overflow for every mod that touches the framework.
+-- Leaf requires only. (Gate 14.5 honesty note: the real UnitController module
+-- does not exist in this file — this file is the TacticalPatrol demo, so
+-- UnitControl stays nil until 14.5 is actually implemented.)
+local Query    = require("framework.query")
+local EventBus = require("framework.event_bus")
+local UnitControl = nil
 
 local TacticalPatrol = {}
 
@@ -271,6 +275,9 @@ end
 
 
 function TacticalPatrol.Update(frame)
+    -- Lazy: safe here (never during init's own load), keeps the top level free
+    -- of the init cycle.
+    local Framework = require("framework.init")
     Framework.update(frame)
 
     -- The loader only calls Update(), so framework event wiring happens here.

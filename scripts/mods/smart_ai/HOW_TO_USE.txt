@@ -27,7 +27,10 @@ WHAT HAPPENS:
   - Squads recruit from AI combat units (miners/MCVs/engineers excluded),
     seek you, fight, retreat when losing, disband when wiped.
   - A heartbeat line every ~5 s in the log proves the mod is alive:
-    [AI] heartbeat ... (types=registry/fallback).
+    [AI] heartbeat ... (types=registry/fallback, kills/losses/decisions).
+  - Framework wiring (no behavior change): heartbeat/track run on
+    framework Timer, scans via framework Query, kills/decisions via
+    framework EventBus + Framework.update driver.
 
 LOGS: [AI], [AI-ESCORT] and [TACTICAL] messages; details in LuaAPI.log.
 
