@@ -1,9 +1,9 @@
 # 🚀 LuaAPI for Red Alert 2 — Yuri's Revenge
-
+Note: I don't care about CnCNet from 14.09.2026 until download numbers will not increase. I'll update API, add mods without caring about OOS. 
+It means LuaAPI is probably for singleplayer. Don't forget I always test my mods in CnCNet, they always successful, so you can play in CnCNet. 
 > **Lua scripting API for Command & Conquer: Red Alert 2 — Yuri's Revenge 1.001**
 
 LuaAPI is a native x86 Lua 5.4 runtime injected into `gamemd.exe`. It exposes selected Red Alert 2 engine functionality to Lua so modders can build gameplay systems without implementing every mechanic directly in C++.
-
 The project follows three core principles:
 
 - 🧠 **C++ handles engine integration, runtime state, and safety**
