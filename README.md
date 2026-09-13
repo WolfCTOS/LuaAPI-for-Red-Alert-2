@@ -1,5 +1,6 @@
 # 🚀 LuaAPI for Red Alert 2 — Yuri's Revenge
-Note: I don't care about CnCNet from 14.09.2026 until download numbers will not increase. I'll update API, add mods without caring about OOS. 
+Note: **CnCNet development is currently paused. Singleplayer and Skirmish remain the primary development targets. Further CnCNet work will resume only if project adoption increases enough to justify the additional development and testing effort.**
+ 
 It means LuaAPI is probably for singleplayer. Don't forget I always test my mods in CnCNet, they always successful, so you can play in CnCNet. 
 > **Lua scripting API for Command & Conquer: Red Alert 2 — Yuri's Revenge 1.001**
 
