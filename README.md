@@ -26,7 +26,6 @@ The project follows three core principles:
 - 👤 **House & Player API** — query players and access supported house state such as credits.
 - 🌍 **World Queries** — inspect units and buildings and perform spatial queries.
 - 🚜 **Runtime Unit Spawning** — create units directly from Lua.
-- 🔫 **Multi-Turret Systems** — add runtime turret state and control split-target salvos from Lua.
 - 📨 **Engine Messaging** — display messages through the game's message system.
 - 🛡️ **Pointer & Lifecycle Safety** — C++ protects Lua-facing engine access against invalid runtime objects where supported.
 - 🌐 **CnCNet Support** — injection and hook handling account for the CnCNet process environment.
