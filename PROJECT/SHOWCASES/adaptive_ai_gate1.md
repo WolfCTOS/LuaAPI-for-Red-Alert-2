@@ -1,5 +1,11 @@
 # Gate 1: Runtime Boundary Audit
 
+> **Current-status note (doc sync 2026-09-20):** this gate cites
+> `miner_safety`, `dynamic_objective_defense`, `multi_turret_battleship`
+> and `tactical_patrol` — none is present under `scripts/` today
+> (`tactical_patrol` is archived; the rest are absent). The audit stands as
+> a historical record; re-verify cited mods before reusing its conclusions.
+
 > **Target:** `gamemd.exe` — Yuri's Revenge 1.001 · LuaAPI dev line `1.1.0`
 > **Purpose:** Determine whether the *current* verified LuaAPI can already drive an
 > Adaptive AI vertical slice, and identify the exact missing capability (if any).

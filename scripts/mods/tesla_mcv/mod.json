@@ -1,0 +1,8 @@
+{
+  "id": "tesla_mcv",
+  "name": "Tesla MCV Driver",
+  "version": "0.1.0",
+  "author": "NiTeMind",
+  "description": "Gate 1-2 tooling for Tesla MCV: T spawns 1 TESLMCV and auto-verifies type/HP/kind/mobility with PASS/FAIL lines",
+  "conflicts": []
+}

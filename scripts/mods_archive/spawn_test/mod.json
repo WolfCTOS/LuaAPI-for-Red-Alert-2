@@ -1,8 +1,0 @@
-{
-  "id": "spawn_test",
-  "name": "Spawn test",
-  "version": "1.0.0",
-  "author": "NiTeMind",
-  "description": "Units spawner",
-  "conflicts": []
-}

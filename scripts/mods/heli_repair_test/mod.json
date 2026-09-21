@@ -1,0 +1,8 @@
+{
+  "id": "heli_repair_test",
+  "name": "Helicopter Conditional Landing for Repair",
+  "version": "1.0.0",
+  "description": "M16 Gate 2 prototype: Makes helicopters land at helipad/airfield when damaged and need repairs, then resume flight after repair.",
+  "author": "LuaAPI Research",
+  "dependencies": []
+}

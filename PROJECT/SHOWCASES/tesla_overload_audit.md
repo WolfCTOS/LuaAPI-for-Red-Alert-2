@@ -1,5 +1,10 @@
 # Tesla Overload — Audit
 
+> **Current-status note (doc sync 2026-09-20):** `tesla_overload/` is not
+> present under `scripts/` (stale copy only under
+> `build/Release/scripts/mods/`). This audit stands as a historical record
+> of the mod as it existed; re-verify before reuse.
+
 > **Target:** `gamemd.exe` — Yuri's Revenge 1.001 · LuaAPI dev line `1.1.0`
 > **Scope:** audit `scripts/mods/tesla_overload/main.lua` for correctness, API use,
 > safety, determinism and maintainability. Audit only — no code was changed.

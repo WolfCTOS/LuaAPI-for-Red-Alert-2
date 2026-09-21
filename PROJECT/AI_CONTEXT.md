@@ -2,7 +2,9 @@
 
 > **Target Platform:** `gamemd.exe` — Yuri's Revenge 1.001  
 > **Current API Version:** `1.1.0`  
-> **Current Research:** Milestone 14
+> **Current Research:** DU-1 capability audit (`FSM/DYNAMIC_UNIT_BEHAVIOR.md`;
+> next after the Gate 1 doc reset — `PROJECT/GATES.md`). Milestone 14
+> framework work stands as recorded below.
 
 ## Executive Summary
 

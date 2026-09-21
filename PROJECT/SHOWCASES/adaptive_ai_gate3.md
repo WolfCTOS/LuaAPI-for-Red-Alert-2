@@ -1,5 +1,9 @@
 # Gate 3: Live Adaptive AI Verification
 
+> **Current-status note (doc sync 2026-09-20):** cited mods
+> (`adaptive_counter`, `miner_safety`) are not present under `scripts/`
+> today. The record stands as history.
+
 > **Target:** `gamemd.exe` — Yuri's Revenge 1.001 · LuaAPI dev line `1.1.0`
 > **Purpose:** prove the Observe → Classify → Choose → Control → Reobserve → Adapt
 > loop in a **live** Yuri's Revenge match, using the existing `adaptive_counter`

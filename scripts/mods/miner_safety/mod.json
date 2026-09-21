@@ -1,8 +1,0 @@
-{
-  "id": "miner_safety",
-  "name": "Miner Safety",
-  "version": "1.0.0",
-  "author": "NiTeMind",
-  "description": "Showcase: keep harvesters (HARV/CMIN/YCMIN) out of danger and delay respawning while the refinery is under threat.",
-  "conflicts": []
-}

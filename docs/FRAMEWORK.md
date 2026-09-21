@@ -29,11 +29,14 @@ Lua Gameplay Framework
 ├── Timer         framework/timer.lua
 ├── Query         framework/query.lua
 ├── Task          framework/task.lua
-├── UnitController framework/unit_controller.lua
+├── UnitController framework/unit_controller.lua — ⚠️ NOT A MODULE: this file
+│                 returns the TacticalPatrol demo (`UnitControl = nil` by its
+│                 own header); no `UnitController.new` exists
 ├── CombatState   framework/combat_state.lua   (M14 Gate 1 — stateful combat tracking)
 ├── Tactical      framework/tactical.lua       (M14 Gate 2 — reactive tactical decision)
 ├── ForceGroup    framework/force_group.lua    (M14 Gate 3 — multi-force/group manager)
-└── init          framework/init.lua   (integration entry point)
+└── init          framework/init.lua — ⚠️ DOES NOT EXIST IN THE TREE (no
+                  `Framework.update` driver, no `enableUnitEvents`)
         ↓
 Lua Mods         (scripts/mods/<id>/main.lua)
 ```
@@ -50,26 +53,36 @@ The ModLoader sets `package.path` to the `scripts/` directory, so any component
 can be `require()`d by name:
 
 ```lua
-local Framework      = require("framework.init")      -- integration entry point
 local EventBus       = require("framework.event_bus")
 local Timer          = require("framework.timer")
 local Query          = require("framework.query")
 local Task           = require("framework.task")
-local UnitControl    = require("framework.unit_controller")
 local ForceGroup     = require("framework.force_group")
 local util           = require("framework.util")
+-- NOTE: require("framework.init") does NOT exist (no Framework.update driver).
+-- NOTE: require("framework.unit_controller") returns the TacticalPatrol demo,
+-- not a controller module (UnitControl = nil by its own header).
 ```
 
-Or use the aggregate table (`Framework.EventBus`, `Framework.Timer`, …).
+Or use the aggregate table (`Framework.EventBus`, `Framework.Timer`, …) —
+only if an entry module providing it exists; today it does not, so require
+leaf modules directly.
 
 ---
 
 ## Session lifecycle
 
-The engine fully recreates the Lua VM (`lua_close`) on every scenario reset /
-exit. All framework modules are therefore **freshly loaded each session** — there
-is no cross-session state to leak (listener tables, timers, controllers, and the
-unit-event tracker are all re-created automatically).
+The Lua VM is created ONCE per process (`std::call_once` in
+`src/lua_engine.cpp`); `ResetSession()` (VM teardown, house-cache clear)
+exists but has ZERO callers — it is dead code. There is therefore NO
+automatic per-match state reset: scripts load ONCE per process
+(`std::call_once`), so every mod owns its match lifecycle and must detect
+restarts itself (frame-backwards guard, the Command Authority pattern).
+House userdata cached in C++ can go stale on match 2+ in one process (open
+Gate 1 item 3). A mod that keeps cross-match tables without a restart guard
+will misbehave on the second match in the same process. `Framework.reset()`
+is documented below as part of the (nonexistent) entry module — until such
+a module exists, each mod resets its own tables.
 
 `Framework.reset()` is provided for explicit hygiene and is called by a mod when
 it wants to clear framework state mid-session (e.g. when a new match begins under
@@ -82,11 +95,15 @@ Scenario start → frame loop:
 Scenario restart/exit → VM recreated → next session starts clean
 ```
 
-> ⚠️ The native `OnScenarioStart` / `OnUnitDestroyed` callbacks are **not wired
-> up in the current build** (see `ROADMAP.md` — this is M13 restoration work).
-> The framework therefore initialises lazily on the first `Update()`, matching
-> how existing mods already handle scenario start. `Framework.enableUnitEvents`
-> provides `unit_created` / `unit_destroyed` through polling behind the EventBus.
+> ⚠️ Of the native globals, only `OnScenarioStart` is actually dispatched
+> (once, at logical frame 1). `OnPreDamage` is collected but never invoked,
+> and `OnUnitDestroyed` is never dispatched at all (see `API.md` — both are
+> contracts without invocation). The framework therefore initialises lazily
+> on the first `Update()`, matching how existing mods already handle
+> scenario start. Polling-based `unit_created` / `unit_destroyed` behind the
+> EventBus is the documented direction, but `framework/init.lua`
+> (`Framework.enableUnitEvents` / `Framework.update`) does not exist in-tree
+> and no code emits those names today — treat them as design intent, not API.
 
 ---
 
@@ -97,8 +114,9 @@ The framework never stores raw engine pointers or trusts long-lived userdata:
 - **Units are tracked by id** (`unit:GetId()`, a native UniqueID) and re-resolved
   from a fresh `World` scan each frame. A controller only exposes an object it
   just validated.
-- **`unit_destroyed` carries a value snapshot** (`id`, `typeName`, `ownerName`,
-  `x`, `y`) — never a possibly-dangling Techno userdata.
+- **Polled death reports carry value snapshots** (`id`, `typeName`,
+  `ownerName`, `x`, `y` via `combat_unit_invalidated`) — never a
+  possibly-dangling Techno userdata.
 - **Every callback is `pcall`-wrapped** and isolated (EventBus handlers, Timer
   callbacks, Task steps, `onTaskDone`), so one failure cannot unwind the frame.
 - Neutrals / civilians / civilian vehicles are never treated as enemies by the
@@ -421,11 +439,16 @@ same generic logic as Gate 2, applied per group.
 This is the minimum manager. It deliberately does **not** implement platoons,
 commanders, morale, reinforcement, economy/production, or strategic-map AI.
 
-In-game showcase: `scripts/mods/multi_force/` (logs `[MULTIFORCE]` lines).
+In-game showcase: `scripts/mods_archive/multi_force/` (archived; logs `[MULTIFORCE]` lines).
 
 ---
 
-## `UnitController` — one-unit control
+## `UnitController` — one-unit control (DESIGN REFERENCE, NOT IN TREE)
+
+> The module below does not exist: `scripts/framework/unit_controller.lua`
+> returns the TacticalPatrol demo (`UnitControl = nil` by its own header).
+> The interface is preserved here as the design contract for a future
+> implementation. Do not `require` it expecting a controller.
 
 Combines movement, targeting, tasks, and queries for a single unit. It exposes
 control **primitives**, not decisions: *what* to do is chosen by the mod's Lua
@@ -457,7 +480,13 @@ control back to Lua (used by the showcase to auto-resume patrol after combat).
 
 ---
 
-## Framework integration (`framework/init.lua`)
+## Framework integration (`framework/init.lua` — DOES NOT EXIST)
+
+> `scripts/framework/init.lua` is not in the tree: there is no
+> `Framework.update` driver, no `enableUnitEvents`, no aggregate
+> `Framework.*` table, no `Framework.reset`. The contract below is the
+> design reference for a future entry module. Require leaf modules
+> directly (see "Loading the framework").
 
 The entry point that glues the components together and drives them on one tick.
 
@@ -497,33 +526,32 @@ are the low-level predicates every other component builds on.
 
 ## Quick example — a guard that defends only when threatened
 
-```lua
-local Framework = require("framework.init")
-local Query     = Framework.Query
+> Uses leaf requires only (`framework.init` and the UnitController module
+> do not exist — see above).
 
-local Controller
-local guard
+```lua
+local Query = require("framework.query")
+local Timer = require("framework.timer")
+
+local guard = nil  -- validated userdata, re-resolved every frame
 
 function MOD.Update(frame)
-    Framework.update(frame)
+    Timer.update(frame)
 
-    if not guard then
+    if not guard or not guard:IsAlive() then
+        guard = nil
         local units = World.GetUnits()
         for _, u in ipairs(units) do
             if u:IsAlive() and u:GetOwner() and u:GetOwner() == House.GetPlayer() then
-                guard = Framework.UnitController.new(u)
-                guard:patrol({ {x=90, y=90}, {x=120, y=90} })
+                guard = u
                 break
             end
         end
     end
 
     if guard then
-        guard:update(frame)
-        if not guard:has_task() then
-            local e = Query.nearest_enemy(guard:unit(), 300)
-            if e then guard:attack(e) else guard:patrol({ {x=90, y=90}, {x=120, y=90} }) end
-        end
+        local e = Query.nearest_enemy(guard, 300)
+        if e then guard:Attack(e) end
     end
 end
 
@@ -540,12 +568,12 @@ return MOD
 | Timer | ✅ | Need to test |
 | Query | ✅ | Need to test |
 | Task | ✅ | Need to test |
-| UnitController | ✅ | Need to test |
+| UnitController | ❌ NOT IN TREE (design reference only) | n/a |
 | CombatState (M14 Gate 1) | ✅ | Need to test |
 | Tactical (M14 Gate 2) | ✅ | **Need to test** |
 | ForceGroup (M14 Gate 3) | ✅ | Need to test |
-| init / unit tracker | ✅ | Need to test |
-| Tactical Patrol showcase | ✅ | Need to test |
+| init / unit tracker | ❌ NOT IN TREE (design reference only) | n/a |
+| Tactical Patrol showcase | ✅ | Need to test (mod archived) |
 
 "Logic verified" means the component was driven through a deterministic Lua 5.4
 harness with mocked engine objects (event ordering, timer cadence, query

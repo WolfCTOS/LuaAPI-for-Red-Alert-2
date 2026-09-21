@@ -1,0 +1,8 @@
+{
+  "id": "bounty_hunter",
+  "name": "Bounty Hunter",
+  "version": "2.0.0",
+  "author": "NiTeMind",
+  "description": "Marks one enemy vehicle as BOUNTY (outline + label) and pays a veterancy-scaled reward on its destruction",
+  "conflicts": []
+}

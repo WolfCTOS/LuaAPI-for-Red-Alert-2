@@ -38,3 +38,13 @@ RESELECT / RESELECT_PENDING (итог по каждому атакующему).
   - Это «эксперимент», а не заявление «умнее ИИ»: Lua не гарантирует, что
     ванильный ИИ не пере-выберет цель сам (кулдаун 150 кадров между
     переоценками одной осады).
+
+Route-risk gate (jets, v1.1.0):
+  Before shooing a JET, the mod samples the straight jet->target line
+  (every ~6 cells, up to 12 samples, radius 5) with the same AA weights.
+  DEEP_AA = route sum >= 4.0 over >= 3 hot samples (or one sample >= 5.0):
+  no order is issued, jet WAITs, reconsidered after the victim cooldown.
+  Log tags: [M14.1][ROUTE] (dist/samples/maxAA/sumAA/avgAA/hot/verdict),
+  [M14.1][WAIT] (DEEP_AA), [M14.1][ROUTE_SKIP] (blocked alternative).
+  Lone flaks never block. Non-jet attackers unchanged.
+  Harness: tools/tmp/target_reselect_test.lua (18 checks via lua_check).

@@ -1,5 +1,9 @@
 # Miner Safety — Harvester Mining-Assignment Investigation
 
+> **Current-status note (doc sync 2026-09-20):** `miner_safety/` is not
+> present under `scripts/` (stale copy only under
+> `build/Release/scripts/mods/`). Findings stand as a historical record.
+
 > **Target:** `gamemd.exe` — Yuri's Revenge 1.001 · LuaAPI dev line `1.1.0`
 > **Scope:** Determine whether `miner_safety` causes a player-ordered HARV to
 > abandon its assigned mining area and search for another, even with no nearby

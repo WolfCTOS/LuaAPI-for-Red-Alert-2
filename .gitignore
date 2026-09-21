@@ -115,3 +115,6 @@ ddraw.ini
 game.fnt
 launcher.bmp
 launchermd.bmp
+
+# Graphify knowledge-graph outputs (local analysis artifacts)
+graphify-out/

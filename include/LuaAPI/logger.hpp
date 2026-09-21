@@ -28,11 +28,15 @@ public:
             std::string narrowPath(static_cast<size_t>(size), '\0');
             WideCharToMultiByte(CP_UTF8, 0, logPath.c_str(), -1, &narrowPath[0], size, nullptr, nullptr);
             narrowPath.resize(size - 1);
-            // Стартуем с чистого файла: прежде чем создать синк (он открывается в режиме
-            // append), удаляем уже существующий LuaAPI.log. Иначе каждый запуск дополнял бы
-            // старый лог. Схема ротации (5 MB x 3) сохраняется: удаляем только основной
-            // файл; резервные копии .1/.2/.3 не трогаем.
-            std::remove(narrowPath.c_str());
+            // Сохраняем лог прошлого запуска: LuaAPI.log -> LuaAPI.log.prev
+            // (один слот, перезаписывается; свежий краш переживает перезапуск —
+            // диагностика вылетов больше не стирается следующим запуском).
+            // MoveFileW НЕ заменяет существующий файл, поэтому нужен Ex с
+            // MOVEFILE_REPLACE_EXISTING; только при полном провале — удаление.
+            std::wstring prevPath = logPath + L".prev";
+            if (!MoveFileExW(logPath.c_str(), prevPath.c_str(),
+                             MOVEFILE_REPLACE_EXISTING))
+                std::remove(narrowPath.c_str());
             logger_ = spdlog::rotating_logger_mt("luaapi", narrowPath, 5 * 1024 * 1024, 3);
             logger_->set_pattern("[%T.%e] [%l] %v");
             // Читаемость по умолчанию: только info/warn/error, без пер-кадрового шума

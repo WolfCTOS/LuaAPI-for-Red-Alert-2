@@ -1,8 +1,0 @@
-{
-  "id": "diagnostic_test",
-  "name": "Diagnostic Test",
-  "version": "1.0.0",
-  "author": "NiTeMind",
-  "description": "Mode for diagnosting",
-  "conflicts": []
-}

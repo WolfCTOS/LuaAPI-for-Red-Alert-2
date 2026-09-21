@@ -1,3 +1,4 @@
 # LuaAPI active mods - one mod ID per line
 target_reselect
+bounty_hunter
 smart_ai

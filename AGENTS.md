@@ -161,7 +161,11 @@ Do not commit generated binaries/DLL/injector.
 
 ## Run / iterate
 
-Lua changes do not require a rebuild when the current runtime reloads scripts at match start.
+Lua changes do not require a rebuild, but they take effect only in a FRESH
+game process: scripts load ONCE per process (`std::call_once` in
+`src/lua_engine.cpp`) — there is no per-match script reload, and
+`ResetSession()` has no callers. Restart the game to pick up Lua edits;
+expect cross-match staleness in one process (Gate 1 item 3).
 
 C++ changes require:
 - rebuild;
@@ -323,3 +327,17 @@ When runtime verification disproves a documented assumption, preserve the findin
 - runtime evidence.
 
 Never modify documentation solely to make a Gate or Milestone appear complete.
+
+---
+
+## API surface discipline
+
+For LuaAPI — No consumer + no unique capability + existing engine alternative = candidate for removal.
+
+A binding (or module) becomes a removal candidate only when all three hold:
+
+1. **No consumer** — zero live users in `scripts/` (verified by repo-wide grep, not by memory);
+2. **No unique capability** — it unlocks no runtime decision that INI/Ares/Phobos cannot express (see `PROJECT/RUNTIME_BOUNDARY.md`; DU-1/M14.2 classification);
+3. **Existing engine alternative** — the same outcome is reachable via engine verbs, INI mechanics, or remaining bindings.
+
+Candidate ≠ deleted: removal still requires the standard pipeline (hypothesis → source audit → harness/live check for regressions → evidence → docs banners with history preserved). Precedent: Milestone 10 removal (2026-09-21).

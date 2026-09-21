@@ -1,5 +1,9 @@
 # Showcase: Dynamic Objective Defense
 
+> **Current-status note (doc sync 2026-09-20):** `dynamic_objective_defense/`
+> is not present in the source tree. The record below stands as history
+> (Gate 12.2); re-create and re-verify before presenting as current.
+
 **One Lua file. No INI. No TeamTypes. No Triggers. No C++.**
 
 ## The Task

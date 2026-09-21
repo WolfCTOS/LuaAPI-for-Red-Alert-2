@@ -1,8 +1,0 @@
-{
-  "id": "tesla_overload",
-  "name": "Tesla Overload",
-  "version": "1.0.0",
-  "author": "NiTeMind",
-  "description": "Base electrical overload & EMP blackout aura",
-  "conflicts": []
-}

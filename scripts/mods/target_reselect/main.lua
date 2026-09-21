@@ -19,6 +19,13 @@
 -- the persistent victim (HP drops don't flap) removes the geometry lottery
 -- while keeping the SAME threat gate, weights, radii and thresholds.
 --
+-- Route-risk gate for JETS (2026-09-21): before shooing a jet, assess the
+-- straight-line route jet->target by sampling interior points and scoring
+-- each with the existing aaThreat() (TARGET_AA = around the victim,
+-- ROUTE_AA = along the way, DEEP_AA = sustained zone -> WAIT, no order).
+-- A lone flak never blocks (spike without depth is OPEN). Non-jet
+-- attackers keep the exact v2 behavior.
+--
 -- The decision is GENERIC. The only data is a runtime signal (AA threat near
 -- the victim under attack); there is no per-enemy-type branch. A totally
 -- different signal could replace it.
@@ -49,6 +56,26 @@ local VICTIM_COOLDOWN = 150  -- frames between re-evaluations of the same victim
                              -- (anti-spam: one evaluation per siege phase, and no
                              -- per-tick native order churn — see the move-order
                              -- freeze postmortem)
+
+-- Route-risk gate (jet-only): is the straight-line route from the attacker
+-- to a target blocked by a SUSTAINED AA zone? Transparent heuristic, no
+-- pathfinding: sample interior points along jet->target, score each with
+-- the existing aaThreat() (buildings included - GetUnitsInRadius scans
+-- TechnoClass::Array). DEEP_AA needs BOTH a spike and depth, so a lone
+-- flak never blocks an attack.
+local ROUTE_SAMPLE_STEP    = 6    -- cells between route samples
+local ROUTE_SAMPLE_RADIUS  = 5    -- AA scan radius around each sample
+local ROUTE_MAX_SAMPLES    = 12   -- cap on interior samples (perf)
+local ROUTE_MIN_SAMPLES    = 3    -- segments for short routes (2 interior)
+local ROUTE_ZONE_THREAT    = 1.0  -- a sample this hot counts as "in the zone"
+local ROUTE_BLOCK_SUM      = 4.0  -- route-wide AA-equivalents for a wall ...
+local ROUTE_BLOCK_SUSTAINED = 3   -- ... sustained across this many hot samples.
+local ROUTE_BLOCK_SPIKE    = 5.0  -- ... OR one sample this hot blocks alone.
+-- Rationale: a picket line of spaced flaks never stacks 3+ at one point,
+-- but the jet still flies through all of them - cumulative exposure (sum)
+-- with depth (sustained) is the signal. A lone flak scores ~1-2 sum over
+-- 1-2 samples: always OPEN. All three numbers are starting values for
+-- live tuning, not engine requirements.
 
 -- Data: what counts as anti-air (generic, isolated as data).
 -- ID table verified 2026-09-10 against community docs (CnC Wiki infoboxes)
@@ -209,6 +236,34 @@ end
 -- Pick the lowest-AA-threat legitimate target within ALT_RADIUS of the AI unit.
 -- Returns a fresh userdata (valid only for this call) or nil. `currentId` is the
 -- id of the current target, used as a tie-break so we don't ping-pong.
+-- Route gate (jets only): candidates whose own route from the jet is DEEP_AA
+-- are skipped - the mod never orders a jet through an AA zone. Returns nil
+-- when nothing reachable remains (caller logs WAIT, issues no order).
+local function routeAssessment(jetObj, jx, jy, tx, ty)
+    local dx, dy = tx - jx, ty - jy
+    local dist = math.sqrt(dx * dx + dy * dy)
+    local segs = math.max(ROUTE_MIN_SAMPLES,
+        math.min(ROUTE_MAX_SAMPLES, math.ceil(dist / ROUTE_SAMPLE_STEP) + 1))
+    local maxT, sumT, hot, n = 0.0, 0.0, 0, 0
+    for i = 1, segs - 1 do
+        local t = i / segs
+        local px, py = jx + dx * t, jy + dy * t
+        local okF, found = pcall(World.GetUnitsInRadius, px, py, ROUTE_SAMPLE_RADIUS)
+        if okF and found then
+            local th = aaThreat(jetObj, px, py, found)
+            n = n + 1
+            sumT = sumT + th
+            if th > maxT then maxT = th end
+            if th >= ROUTE_ZONE_THREAT then hot = hot + 1 end
+        end
+    end
+    local avgT = (n > 0) and (sumT / n) or 0.0
+    local deep = ((sumT >= ROUTE_BLOCK_SUM) and (hot >= ROUTE_BLOCK_SUSTAINED))
+        or (maxT >= ROUTE_BLOCK_SPIKE)
+    return { dist = dist, samples = n, maxT = maxT, avgT = avgT, sumT = sumT,
+             hot = hot, deep = deep }
+end
+
 local function pickAlternative(unit, radius, currentId)
     local ok, found = pcall(World.GetUnitsInRadius, unit:GetPosition().x, unit:GetPosition().y, radius)
     if not ok or not found then return nil end
@@ -216,6 +271,13 @@ local function pickAlternative(unit, radius, currentId)
     local best, bestThreat = nil, math.huge
     -- candidates must be threats to `unit` (i.e. valid targets for the AI unit).
     -- Exclude AA-*type* candidates: retargeting onto a Flak is not a safer move.
+    -- Route gate for jets: skip candidates behind their own AA zone (see above).
+    local isJet = (util.kind_of(unit) == "aircraft")
+    local jx, jy = nil, nil
+    if isJet then
+        local okP, jp = pcall(unit.GetPosition, unit)
+        if okP and jp and jp.x and jp.y then jx, jy = jp.x, jp.y end
+    end
     for _, u in ipairs(found) do
         if isThreatTo(unit, u) then
             local okT, typeName = pcall(u.GetTypeName, u)
@@ -225,6 +287,17 @@ local function pickAlternative(unit, radius, currentId)
             local kg = util.kind_of(u)
             if kg == "unit" or kg == "infantry" or kg == "aircraft" then
                 local ux, uy = u:GetPosition().x, u:GetPosition().y
+                if isJet and jx then
+                    local ra = routeAssessment(unit, jx, jy, ux, uy)
+                    if ra.deep then
+                        local okI, cid = pcall(u.GetId, u)
+                        dlog("ROUTE_SKIP", string.format(
+                            "jet target=%s type=%s dist=%.0f maxAA=%.1f hot=%d reason=DEEP_AA",
+                            tostring(okI and cid or "?"), tostring(typeName),
+                            ra.dist, ra.maxT, ra.hot))
+                        goto continue_candidate
+                    end
+                end
                 local threat = aaThreat(unit, ux, uy, found)
                 -- Prefer a lower-threat target that we're not already attacking.
                 local okId, uid = pcall(u.GetId, u)
@@ -312,6 +385,31 @@ local function tick(frame)
         -- jet lock-ons never coincide with damage ticks, so waiting for a
         -- drop means waiting forever. HP tracking stays for VICTIM/LOST logs.
         if #attackers > 0 and not cooling then
+            -- Route pre-pass (jets only, victim-independent): a jet holding
+            -- a target behind a sustained AA zone WAITs - no orders, no
+            -- shoo, reconsidered when this victim's cooldown expires. This
+            -- fires even when the VICTIM itself is undefended (the AA is on
+            -- the route, not at the target) - that is the whole point.
+            local waiting = {}  -- attacker id -> true (DEEP_AA, skip shoo)
+            for _, a in ipairs(attackers) do
+                if util.kind_of(a.obj) == "aircraft" then
+                    local okP, jp = pcall(a.obj.GetPosition, a.obj)
+                    if okP and jp and jp.x and jp.y then
+                        local ra = routeAssessment(a.obj, jp.x, jp.y, v.x, v.y)
+                        dlog("ROUTE", string.format(
+                            "jet=%s victim=%s(%s) dist=%.0f samples=%d maxAA=%.1f sumAA=%.1f avgAA=%.1f hot=%d verdict=%s tick=%d",
+                            tostring(a.id), tostring(vid), v.type,
+                            ra.dist, ra.samples, ra.maxT, ra.sumT, ra.avgT, ra.hot,
+                            ra.deep and "DEEP_AA" or "OPEN", frame))
+                        if ra.deep then
+                            dlog("WAIT", string.format(
+                                "jet=%s victim=%s reason=DEEP_AA tick=%d",
+                                tostring(a.id), tostring(vid), frame))
+                            waiting[a.id] = true
+                        end
+                    end
+                end
+            end
             -- DEFENDED? AA threat around the VICTIM, seen from the AI side
             -- (perspective = first attacker). isThreatTo/aaThreat UNCHANGED.
             local per = attackers[1].obj
@@ -359,6 +457,11 @@ local function tick(frame)
                     dlog("AA", string.format("victim=%s threat=%.2f threshold=%s attackers=%d tick=%d",
                         tostring(vid), threat, tostring(AA_THREAT_HIGH), #attackers, frame))
                     for _, a in ipairs(attackers) do
+                        -- Waiting jets (DEEP_AA route, see pre-pass above)
+                        -- are skipped: no orders of any kind this evaluation.
+                        if waiting[a.id] then
+                            goto next_attacker
+                        end
                         local alt = pickAlternative(a.obj, ALT_RADIUS, vid)
                         if alt then
                             local okIda, aid = pcall(alt.GetId, alt)
@@ -395,6 +498,7 @@ local function tick(frame)
                                 "attacker=%s target=%s reason=AA_THREAT_NO_ALTERNATIVE tick=%d",
                                 tostring(a.id), tostring(vid), frame))
                         end
+                        ::next_attacker::
                     end
                 end
                 -- One evaluation per siege phase (acted or not): silence - no

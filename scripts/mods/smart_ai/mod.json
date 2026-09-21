@@ -1,8 +1,8 @@
 {
   "id": "smart_ai",
-  "name": "Smart AI",
+  "name": "Smart AI Commander",
   "version": "1.0.0",
   "author": "NiTeMind",
-  "description": "One enemy brain: base defense, elite strikes on clusters, engineer/officer escort, and 3 independent attack squads (ForceGroup: destroy/switch-target/retreat + SEEK). One-commander rule: squad members stay out of defense and escort pools.",
+  "description": "Dynamic base flank defense and threat response",
   "conflicts": []
 }

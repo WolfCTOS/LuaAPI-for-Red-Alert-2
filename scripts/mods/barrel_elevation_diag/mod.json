@@ -1,0 +1,8 @@
+{
+  "id": "barrel_elevation_diag",
+  "name": "M16 Barrel Elevation Diagnostic",
+  "version": "1.0.0",
+  "description": "M16 automatic barrel elevation: enables global AUTO pitch once at match start - every voxel-turret unit (player and AI) draws its barrel pitched by live target distance (8-55 deg over 4-14 cells). No hotkeys, no manual controls; draw-only and CnCNet-safe. Heartbeat log every second.",
+  "author": "LuaAPI Research",
+  "dependencies": []
+}

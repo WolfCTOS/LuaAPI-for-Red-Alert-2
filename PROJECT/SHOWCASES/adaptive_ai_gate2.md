@@ -1,5 +1,10 @@
 # Gate 2: Minimal Adaptive Counter
 
+> **Current-status note (doc sync 2026-09-20):** this gate cites
+> `dynamic_objective_defense`, `miner_safety` and other mods not present
+> under `scripts/` today. The record stands as history; re-verify cited
+> mods before reusing its conclusions.
+
 > **Target:** `gamemd.exe` — Yuri's Revenge 1.001 · LuaAPI dev line `1.1.0`
 > **Prompt:** implement the smallest real in-game proof of
 > **Observe → Classify → Choose → Control → Reobserve → Adapt**, pure Lua, no new

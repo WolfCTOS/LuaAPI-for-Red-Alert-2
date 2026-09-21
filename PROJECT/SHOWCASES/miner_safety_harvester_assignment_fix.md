@@ -1,5 +1,8 @@
 # Miner Safety — Harvester Mining Assignment FIX Investigation
 
+> **Current-status note (doc sync 2026-09-20):** `miner_safety/` is not
+> present under `scripts/`. Findings stand as a historical record.
+
 > **Target:** `gamemd.exe` — Yuri's Revenge 1.001 · LuaAPI dev line `1.1.0`
 > **Scope:** the smallest engine/API change to let Miner Safety **restore** the
 > player-assigned harvest location after a threat, instead of issuing `Hunt()`.

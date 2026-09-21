@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include <windows.h>
 
 struct lua_State;
@@ -15,5 +15,10 @@ void PushTechno(lua_State* L, void* pTechno);
 
 // Expires timed disables; call once per game frame from the main thread.
 void ProcessDisabledObjects(unsigned int currentFrame);
+
+// M16 Gate 1: one-shot diagnostic scan of every UnitTypeClass turret voxel.
+// Logs TypeID -> HVA FrameCount (and FireAngle) to LuaAPI.log once per session,
+// guarded so it runs on the first logic frame after rules are loaded.
+void LogTurretHvaFrameCounts();
 
 } // namespace LuaAPI

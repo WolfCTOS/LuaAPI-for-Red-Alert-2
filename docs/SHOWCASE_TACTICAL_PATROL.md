@@ -1,5 +1,10 @@
 # Showcase: Tactical Patrol (Milestone 14)
 
+> **Current-status note (doc sync 2026-09-20):** the showcased mod lives at
+> `scripts/mods_archive/tactical_patrol/` (archived), not in the active tree,
+> and as written it requires the nonexistent `framework.init` module. The
+> record below stands as history; re-verify before presenting as current.
+
 **One Lua file. No INI. No TeamTypes. No Triggers. No C++.** Built on the new
 Lua Gameplay Framework.
 

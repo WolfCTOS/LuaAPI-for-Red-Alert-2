@@ -1,49 +1,75 @@
 MOD: Smart AI
 ID:   smart_ai
+STATUS: active code, ACTIVE (listed in scripts/active_mods.txt).
 
-What it does: one brain for the enemy. Reads the CapabilityRegistry and commands:
-  - DEFENSE: idle enemy units intercept the best target near their base
-    (empty registry = any combat units except economy/engineers).
-  - OFFENSE: idle ELITE fighters strike your densest unit cluster.
-  - SQUADS (merged from tactical_reassess): 3 independent squads of 3 units,
-    each with its own destroy/switch-target/retreat loop + SEEK toward you.
-    Settings: SQUAD_NUM/SQUAD_SIZE in main.lua. Your units are never touched.
+OWNERSHIP (2026-09-21 fix): units and buildings are matched to an AI
+house by House identity (owner == aiHouse), never by GetName() string
+(GetName returns the shared country/type ID, so same-country houses
+collide). aiHouses excludes human, player-allied, and neutral houses
+(Neutral/Special/Civilian via util.is_neutral_house).
 
-It also owns the Squad Speed Sync ability: when the enemy AI has an
-"escorted" unit (engineer or tactical officer heading to an objective), it
-gathers an escort around it and matches the escort's speed to the escorted
-unit (FootClass::SetSpeedPercent). The AI "thinks out loud":
-"I am escorting the engineer to capture a building (oil derrick/airport...)
-or repair a bridge".
+What it does (scripts/mods/smart_ai/main.lua, ~230 lines; mod.json:
+"Dynamic base flank defense and threat response"):
+
+  1. FLANK-BREACH RALLY (every 30 frames): for each AI house (identity-
+     matched, see OWNERSHIP above), if one of its buildings is below 85%
+     HP, idle reserve combat units far from the breach (> 6 cells) get
+     MoveTo + Hunt toward it. No per-unit change detection — while a
+     breach persists the orders re-issue every scan.
+  2. CAPTURE-AWARE VALUABLES GUARD (MVP): high-value own units (APOC,
+      HTNK) that are idle, lone (> 4 cells from own centroid) and within
+      9 cells of an observable mind-control threat (MIND live-observed;
+      YURIPR/YURI rules/wiki IDs) get one MoveTo toward the own group
+      (transition-only + 600-frame refresh; engaged units never yanked).
+      Owner flips are logged as observations only and drive no decisions.
+  3. COMMANDER (base) + OFFICER (units) — classic split, same
+      30-frame scan, no extra World calls; ID-ordered, no RNG/clock.
+      Commander: breach rally (item 1) + garrison directives below.
+      Officer: capture guard (item 2) + escort + flip observation below.
+      ESCORT OFFICER: each own V3 ([V3] INI-confirmed) gets up to 2
+      nearest idle combat bodyguards (harvesters/MCVs/other V3 excluded;
+      engaged never yanked) with destination memory + 300-frame refresh.
+      GARRISON OFFICER (EXPERIMENTAL): idle own infantry within 12 cells
+      of own BUNKER/NAPILL/GAPILL are ordered onto the building cell
+      (vanilla enter-if-garrisonable, screen otherwise; BUNKER id
+      UNCONFIRMED live — directive log prints the acted type for census).
+  4. COORDINATION (mutual help, shared blackboard): Officer assigns
+      first, Commander acts around it — rally skips escort bodyguards
+      and threatened pullbacks (no order fights); breach position is
+      published to cmdState and Escort stands down inside an active
+      breach sector (15 cells / 120-frame memory), releasing guards to
+      the rally with one log line. Order per scan: recon → Officer →
+      Commander. One-scan lag by construction (hysteresis, no thrash).
+  5. RESTART GUARD: frame-backwards detection resets scan, guard,
+      officer AND blackboard state, so a new match starts clean.
+
+KNOWN SUSPECT (static observation, needs a live log): rally issues
+MoveTo + Hunt back-to-back — the Hunt mission may void the MoveTo, so
+reserves might hunt from place instead of rallying to the breach.
+Confirm with coordinates before relying on rally positioning.
+
+What it does NOT do (older versions of this file described squads,
+officers, escorts, a CapabilityRegistry and framework Timer/Query/EventBus
+wiring — none of that exists in main.lua; no ForceGroup, no SQUAD_NUM,
+no SetSpeedPercent escort):
+  - no squads, no officers/commanders, no escorts;
+  - no production, spawning, or credit writes (source-verified zero
+    SpawnUnit/QueueUnit/AddCredits);
+  - no capture/mind-control implementation (vanilla mechanics untouched).
 
 HOW TO ENABLE:
-  1. Enable smart_ai (add the id to scripts/active_mods.txt), Save & Apply.
+  1. Add smart_ai to scripts/active_mods.txt.
   2. Start a skirmish vs the AI.
 
 WHAT HAPPENS:
-  - Idle enemy units near their base pick targets by threat-score:
-    economy < MCV < vehicles < heavies (APOC/TTNK/SREF...).
-  - Elite fighters attack the densest cluster (MIN_CLUSTER=2).
-  - Squads recruit from AI combat units (miners/MCVs/engineers excluded),
-    seek you, fight, retreat when losing, disband when wiped.
-  - A heartbeat line every ~5 s in the log proves the mod is alive:
-    [AI] heartbeat ... (types=registry/fallback, kills/losses/decisions).
-  - Framework wiring (no behavior change): heartbeat/track run on
-    framework Timer, scans via framework Query, kills/decisions via
-    framework EventBus + Framework.update driver.
+  - [AI Commander - <house>] flank-breach alerts when reserves rally.
+  - [AI Commander] ownership-change observations on flips.
+  - Capture-risk pullback lines when a lone valuable is threatened.
 
-LOGS: [AI], [AI-ESCORT] and [TACTICAL] messages; details in LuaAPI.log.
-
-NOTES:
-  - This mod makes the enemy MORE aggressive — the game gets harder.
-  - Load order: smart_ai must see the CapabilityRegistry of other mods.
-  - ESCORT: who counts as "escorted" and what the objective is.
-      * Engineer: E3/ENGINEER heading to a capturable building (CAOILD —
-        oil derrick, CAAIRP/NAAIRC/YAAIRC — airport, CAHOSP — hospital);
-        on arrival the engineer captures it (stock RA2 behavior).
-      * Officer: BORIS/TANYA heroes, else the AI's costliest unit.
-        Objective: nearest enemy building as the push target.
-      * Bridges: put bridge waypoint ids into BRIDGE_WAYPOINTS (main.lua)
-        and the engineer will be sent there to repair (RA2 repairs on contact).
-      * CAPTURE_ENEMY=false — engineer ignores enemy buildings; =true — goes.
-    Config at the top of the "Squad Speed Sync capability" section in main.lua.
+EVIDENCE: tools/tmp/smartai_capture_test.lua 28/28 (harness, incl.
+mirror-country ownership regression T10-T12) + tools/tmp/
+smartai_officer_test.lua 23/23 (escort/garrison/churn/restart/rally/
+coordination T8-T10);
+live: observer fired x4, pullback decision never triggered in-window
+(see FSM/VERIFICATION.md). Guard + officers live effect: UNVERIFIED
+(no live match run yet for the officer layer).

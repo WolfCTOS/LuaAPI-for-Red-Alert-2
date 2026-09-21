@@ -1,0 +1,23 @@
+MOD: Tesla MCV Driver
+ID:   tesla_mcv (v0.1.0) — Gate 1-2 tooling, НЕ финальный юнит.
+
+Требует включённую игровую опцию 'Tesla MCV'
+(INI/Game Options/Tesla MCV.ini) — иначе спавн вернёт 0 и мод скажет.
+
+ВКЛЮЧЕНИЕ:
+  1. Добавь tesla_mcv в scripts/active_mods.txt (убрать после тестов —
+     в постоянный стек не входит).
+  2. В лобби включи опцию Tesla MCV.
+  3. В матче нажми T: рядом с базой появится TESLMCV + отчёт.
+
+АВТОПРОВЕРКИ (PASS/FAIL в HUD и LuaAPI.log):
+  type-resolves — тип существует (SpawnUnit > 0);
+  unit-present  — юнит найден сканом;
+  kind-unit     — kind == "unit";
+  hp-x2         — MaxHealth == 2000 (2x от SMCV 1000);
+  moveto-accepted — пробный MoveTo принят (мобильность жива).
+
+ВРУЧНУЮ (у Lua нет биндингов): молнии в бою (TeslaTankWeapon),
+отсутствие кнопки/действия Deploy.
+
+EVIDENCE: tools/tmp/tesla_mcv_test.lua (харнес).

@@ -1,7 +1,7 @@
 {
   "id": "target_reselect",
   "name": "AA Dodge",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": "NiTeMind",
   "description": "Если твой харвестер/перегонка под атакой и рядом стоит твоё ПВО, ИИ отгоняет атакующих на менее защищенную цель и проверяет через GetTarget, что движок принял замену. Эксперимент границы runtime. (Техническое имя: target_reselect.)",
   "conflicts": []
