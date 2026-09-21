@@ -1,9 +1,10 @@
 # 🚀 LuaAPI for Red Alert 2 — Yuri's Revenge
-
+Note: **CnCNet development is currently paused. Singleplayer and Skirmish remain the primary development targets. Further CnCNet work will resume only if project adoption increases enough to justify the additional development and testing effort.**
+ 
+It means LuaAPI is probably for singleplayer. Don't forget I always test my mods in CnCNet, they always successful, so you can play in CnCNet. 
 > **Lua scripting API for Command & Conquer: Red Alert 2 — Yuri's Revenge 1.001**
 
 LuaAPI is a native x86 Lua 5.4 runtime injected into `gamemd.exe`. It exposes selected Red Alert 2 engine functionality to Lua so modders can build gameplay systems without implementing every mechanic directly in C++.
-
 The project follows three core principles:
 
 - 🧠 **C++ handles engine integration, runtime state, and safety**
@@ -25,7 +26,6 @@ The project follows three core principles:
 - 👤 **House & Player API** — query players and access supported house state such as credits.
 - 🌍 **World Queries** — inspect units, buildings, and aircraft; spatial and selection queries.
 - 🚜 **Runtime Unit Spawning** — create units directly from Lua.
-- 🔫 **Multi-Turret Systems** — REMOVED 2026-09-21 (zero live consumers; per-frame sweep + hook overhead). History in git / `PROJECT/ROADMAP.md` M10.
 - 🎮 **Input & Selected Units** — hotkey-driven mods via `Input.WasKeyPressed` and `World.GetSelectedUnits`.
 - 📨 **Engine Messaging** — display messages through the game's message system.
 - ⚠️ **Damage interception (`OnPreDamage`) is documented as a contract only — it is NOT wired in the current build.** See [`API.md`](API.md) (Callback Model) before building anything damage-reactive.
