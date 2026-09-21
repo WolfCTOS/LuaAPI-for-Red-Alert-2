@@ -1,7 +1,7 @@
-﻿#include "sub_turret.h"
-#include <windows.h>
+﻿#include <windows.h>
 #include <LuaAPI/logger.hpp>
 #include <LuaAPI/lua_engine.hpp>
+#include <LuaAPI/crash_dump.hpp>
 #include "hook_profiler.h"
 
 namespace {
@@ -40,12 +40,15 @@ DWORD WINAPI Bootstrap(LPVOID param) {
 
     LUA_LOG_INFO("LuaAPI bootstrap thread started");
 
+    // First-chance AV -> one MiniDumpNormal into crash_evidence/ (diagnostic).
+    // Installed early so even startup-time faults leave a stack.
+    LuaAPI::InstallCrashDumper(dir);
+
     // Идентификация сборки: размер/таймстамп файла и базовый адрес модуля.
     LogGameBinaryInfo(dir);
 
     // Initialize hook profiler (QPC circular buffer, 5s rolling window).
     LuaAPI::HookProfilerModuleInit();
-        LuaAPI::SubTurretManager::Instance().InitDrawHook();
 
     // Install game simulation hooks via MinHook
     // (ScenarioClass::Update @ 0x685650 + StringTable::LoadString watermark).

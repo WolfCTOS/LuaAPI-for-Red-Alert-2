@@ -1,9 +1,7 @@
 ﻿#include <LuaAPI/bindings_techno.hpp>
 #include <LuaAPI/bindings_house.hpp>
 #include <LuaAPI/logger.hpp>
-#include "sub_turret.h"
-#include "event_hook.h"
-#include "bullet_hook.h" 
+#include "barrel_pitch.h"
 
 extern "C" {
 #include <lua.h>
@@ -145,6 +143,88 @@ int Techno_GetAmmo(lua_State* L) {
         ammo = 0;
     }
     lua_pushinteger(L, ammo);
+    return 1;
+}
+
+// obj:SetAmmo(value) -> int (new ammo value)
+// Записывает TechnoClass::Ammo. SEH-защищённый доступ; безопасен для всех техно.
+int Techno_SetAmmo(lua_State* L) {
+    auto* pTechno = CheckTechno(L, 1);
+    if (!ValidateTechno(pTechno)) { lua_pushinteger(L, 0); return 1; }
+
+    int value = static_cast<int>(luaL_checkinteger(L, 2));
+    if (value < 0) value = 0;
+    __try {
+        pTechno->Ammo = value;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        value = 0;
+    }
+    lua_pushinteger(L, value);
+    return 1;
+}
+
+
+// --- M16 Gate 1: runtime turret HVA frame control --------------------------
+
+// obj:GetTurretAnimFrame() -> int
+// Reads TechnoClass::TurretAnimFrame - the HVA frame index the engine feeds
+// into MinorVoxelIndexKey.TurretFrameIndex when drawing the turret/barrel
+// voxel (Drawing.h: key = key | ((TurretAnimFrame % HVA->FrameCount) << 16)).
+// SEH-guarded; returns 0 for invalid technos.
+int Techno_GetTurretAnimFrame(lua_State* L) {
+    auto* pTechno = CheckTechno(L, 1);
+    if (!ValidateTechno(pTechno)) { lua_pushinteger(L, 0); return 1; }
+
+    int frame = 0;
+    __try {
+        frame = pTechno->TurretAnimFrame;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        frame = 0;
+    }
+    lua_pushinteger(L, frame);
+    return 1;
+}
+
+// obj:SetTurretAnimFrame(frame) -> int (new frame value)
+// Writes TechnoClass::TurretAnimFrame. The engine applies % FrameCount when
+// building the draw key, so values >= FrameCount are safe (they wrap).
+// The engine rewrites this field whenever the turret rotates - holding a
+// value requires rewriting it every frame from Lua (barrel_elevation_diag
+// does exactly that). SEH-guarded.
+int Techno_SetTurretAnimFrame(lua_State* L) {
+    auto* pTechno = CheckTechno(L, 1);
+    if (!ValidateTechno(pTechno)) { lua_pushinteger(L, 0); return 1; }
+
+    int value = static_cast<int>(luaL_checkinteger(L, 2));
+    if (value < 0) value = 0;
+    __try {
+        pTechno->TurretAnimFrame = value;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        value = 0;
+    }
+    lua_pushinteger(L, value);
+    return 1;
+}
+
+// obj:GetTurretAnimFrameCount() -> int (0 = no voxel turret / HVA not loaded)
+// Returns MotLib::FrameCount of the unit type's turret voxel
+// (Type->TurretVoxel.HVA->FrameCount). This is the number of turret
+// orientation matrices available to the renderer; 1 means "single matrix -
+// pitch cannot be changed by frame selection". SHP turrets report 0.
+int Techno_GetTurretAnimFrameCount(lua_State* L) {
+    auto* pTechno = CheckTechno(L, 1);
+    if (!ValidateTechno(pTechno)) { lua_pushinteger(L, 0); return 1; }
+
+    int count = 0;
+    __try {
+        auto* pType = static_cast<TechnoTypeClass*>(pTechno->GetType());
+        if (pType && pType->TurretVoxel.VXL && pType->TurretVoxel.HVA) {
+            count = pType->TurretVoxel.HVA->FrameCount;
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        count = 0;
+    }
+    lua_pushinteger(L, count);
     return 1;
 }
 
@@ -657,6 +737,29 @@ int Techno_Stop(lua_State* L) {
     return 1;
 }
 
+// obj:Unload() -> bool
+// Queues the native Unload mission (vanilla deploy path for simple deployers
+// such as SCHP: Mission_Unload drives Deploy()/Undeploy()).
+// Same safe pattern as Techno_Stop: FootClass validation + SEH.
+int Techno_Unload(lua_State* L) {
+    auto* pTechno = CheckTechno(L, 1);
+    if (!ValidateTechno(pTechno)) { lua_pushboolean(L, 0); return 1; }
+
+    FootClass* pFoot = AsFoot(pTechno);
+    if (!pFoot) { lua_pushboolean(L, 0); return 1; }
+
+    __try {
+        pFoot->QueueMission(Mission::Unload, true);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+
+    LUA_LOG_DEBUG("[Nav] {} ordered to Unload", pTechno->GetType()->get_ID());
+    lua_pushboolean(L, 1);
+    return 1;
+}
+
 // obj:IsIdle() -> bool (Guard / Stop / Sleep missions)
 int Techno_IsIdle(lua_State* L) {
     auto* pTechno = CheckTechno(L, 1);
@@ -692,6 +795,300 @@ int Techno_IsAttacking(lua_State* L) {
 
     Mission m = pFoot->CurrentMission;
     lua_pushboolean(L, (m == Mission::Attack) ? 1 : 0);
+    return 1;
+}
+
+// obj:IsOnFloor() -> bool
+// Returns true if the object is on the ground (landed).
+// For aircraft: true when landed on helipad/airfield; false when airborne.
+int Techno_IsOnFloor(lua_State* L) {
+    auto* pTechno = CheckTechno(L, 1);
+    if (!ValidateTechno(pTechno)) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+
+    bool onFloor = false;
+    __try {
+        onFloor = pTechno->IsOnFloor();
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        onFloor = false;
+    }
+    lua_pushboolean(L, onFloor ? 1 : 0);
+    return 1;
+}
+
+// obj:IsInAir() -> bool
+// Returns true if the object is airborne.
+// For aircraft: true when flying; false when landed.
+int Techno_IsInAir(lua_State* L) {
+    auto* pTechno = CheckTechno(L, 1);
+    if (!ValidateTechno(pTechno)) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+
+    bool inAir = false;
+    __try {
+        inAir = pTechno->IsInAir();
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        inAir = false;
+    }
+    lua_pushboolean(L, inAir ? 1 : 0);
+    return 1;
+}
+
+// obj:IsLanding() -> bool
+// Returns true if the aircraft is currently in landing descent.
+// Only meaningful for AircraftClass with FlyLocomotionClass.
+int Techno_IsLanding(lua_State* L) {
+    auto* pTechno = CheckTechno(L, 1);
+    if (!ValidateTechno(pTechno)) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+
+    if (pTechno->WhatAmI() != AbstractType::Aircraft) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+
+    bool isLanding = false;
+    __try {
+        auto* pAircraft = static_cast<AircraftClass*>(pTechno);
+        if (pAircraft->Locomotor) {
+            auto* pFlyLoco = locomotion_cast<FlyLocomotionClass*>(pAircraft->Locomotor);
+            if (pFlyLoco) {
+                isLanding = pFlyLoco->IsLanding;
+            }
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        isLanding = false;
+    }
+    lua_pushboolean(L, isLanding ? 1 : 0);
+    return 1;
+}
+
+// obj:Return() -> bool
+// Orders aircraft to return to nearest airfield/helipad and land (Mission::Return).
+// Only works for AircraftClass.
+int Techno_Return(lua_State* L) {
+    auto* pTechno = CheckTechno(L, 1);
+    if (!ValidateTechno(pTechno)) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+
+    if (pTechno->WhatAmI() != AbstractType::Aircraft) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+
+    FootClass* pFoot = AsFoot(pTechno);
+    if (!pFoot) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+
+    bool ok = false;
+    __try {
+        pFoot->SetTarget(nullptr);
+        pFoot->Destination = nullptr;
+        pFoot->QueueMission(Mission::Return, true);
+        ok = true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        ok = false;
+    }
+
+    LUA_LOG_DEBUG("[Nav] {} ordered to Return (land)", pTechno->GetType()->get_ID());
+    lua_pushboolean(L, ok ? 1 : 0);
+    return 1;
+}
+
+// obj:Deploy() -> bool
+// Orders a deployable unit (e.g., Siege Chopper) to deploy into its ground mode.
+// Calls native UnitClass::Deploy().
+int Techno_Deploy(lua_State* L) {
+    auto* pTechno = CheckTechno(L, 1);
+    if (!ValidateTechno(pTechno)) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+
+    if (pTechno->WhatAmI() != AbstractType::Unit) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+
+    auto* pUnit = static_cast<UnitClass*>(pTechno);
+    bool ok = false;
+    __try {
+        pUnit->Deploy();
+        ok = true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        ok = false;
+    }
+
+    LUA_LOG_DEBUG("[Deploy] {} Deploy() called, ok={}", pTechno->GetType()->get_ID(), ok);
+    lua_pushboolean(L, ok ? 1 : 0);
+    return 1;
+}
+
+// obj:TryToDeploy() -> bool
+// Diagnostic: calls native UnitClass::TryToDeploy() and returns its boolean result.
+// Does not call Deploy() or CanDeployNow().
+int Techno_TryToDeploy(lua_State* L) {
+    auto* pTechno = CheckTechno(L, 1);
+    if (!ValidateTechno(pTechno)) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+
+    if (pTechno->WhatAmI() != AbstractType::Unit) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+
+    auto* pUnit = static_cast<UnitClass*>(pTechno);
+    bool ok = false;
+    __try {
+        ok = pUnit->TryToDeploy();
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        ok = false;
+    }
+
+    LUA_LOG_DEBUG("[Deploy] {} TryToDeploy() called, ok={}", pTechno->GetType()->get_ID(), ok);
+    lua_pushboolean(L, ok ? 1 : 0);
+    return 1;
+}
+
+// obj:Undeploy() -> bool
+// Orders a deployed unit to undeploy into its mobile/air mode.
+// Calls native UnitClass::Undeploy().
+int Techno_Undeploy(lua_State* L) {
+    auto* pTechno = CheckTechno(L, 1);
+    if (!ValidateTechno(pTechno)) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+
+    if (pTechno->WhatAmI() != AbstractType::Unit) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+
+    auto* pUnit = static_cast<UnitClass*>(pTechno);
+    bool ok = false;
+    __try {
+        pUnit->Undeploy();
+        ok = true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        ok = false;
+    }
+
+    LUA_LOG_DEBUG("[Deploy] {} Undeploy() called, ok={}", pTechno->GetType()->get_ID(), ok);
+    lua_pushboolean(L, ok ? 1 : 0);
+    return 1;
+}
+
+// obj:CanDeployNow() -> bool
+// Checks if the unit can currently deploy at its location.
+// Calls native FootClass::CanDeployNow().
+int Techno_CanDeployNow(lua_State* L) {
+    auto* pTechno = CheckTechno(L, 1);
+    if (!ValidateTechno(pTechno)) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+
+    FootClass* pFoot = AsFoot(pTechno);
+    if (!pFoot) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+
+    bool canDeploy = false;
+    __try {
+        canDeploy = pFoot->CanDeployNow();
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        canDeploy = false;
+    }
+    lua_pushboolean(L, canDeploy ? 1 : 0);
+    return 1;
+}
+
+// obj:IsDeployed() -> bool
+// Returns true if the unit is currently in its deployed state.
+int Techno_IsDeployed(lua_State* L) {
+    auto* pTechno = CheckTechno(L, 1);
+    if (!ValidateTechno(pTechno)) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+
+    if (pTechno->WhatAmI() != AbstractType::Unit) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+
+    auto* pUnit = static_cast<UnitClass*>(pTechno);
+    bool deployed = false;
+    __try {
+        deployed = pUnit->Deployed;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        deployed = false;
+    }
+    lua_pushboolean(L, deployed ? 1 : 0);
+    return 1;
+}
+
+// obj:IsDeploying() -> bool
+// Returns true if the unit is currently in the process of deploying.
+int Techno_IsDeploying(lua_State* L) {
+    auto* pTechno = CheckTechno(L, 1);
+    if (!ValidateTechno(pTechno)) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+
+    if (pTechno->WhatAmI() != AbstractType::Unit) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+
+    auto* pUnit = static_cast<UnitClass*>(pTechno);
+    bool deploying = false;
+    __try {
+        deploying = pUnit->Deploying;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        deploying = false;
+    }
+    lua_pushboolean(L, deploying ? 1 : 0);
+    return 1;
+}
+
+// obj:IsUndeploying() -> bool
+// Returns true if the unit is currently in the process of undeploying.
+int Techno_IsUndeploying(lua_State* L) {
+    auto* pTechno = CheckTechno(L, 1);
+    if (!ValidateTechno(pTechno)) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+
+    if (pTechno->WhatAmI() != AbstractType::Unit) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+
+    auto* pUnit = static_cast<UnitClass*>(pTechno);
+    bool undeploying = false;
+    __try {
+        undeploying = pUnit->Undeploying;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        undeploying = false;
+    }
+    lua_pushboolean(L, undeploying ? 1 : 0);
     return 1;
 }
 
@@ -797,7 +1194,7 @@ int game_GetUnitsInRadius(lua_State* L) {
 
         // Get coords and compute distance.
         // Leptons overflow signed 32-bit when squared (1 cell = 256 leptons),
-        // so the delta math is 64-bit (same pattern as SubTurretManager).
+        // so the delta math is 64-bit.
         CoordStruct coords = pTechno->GetCoords();
         long long dx = static_cast<long long>(coords.X) - static_cast<long long>(x) * 256;
         long long dy = static_cast<long long>(coords.Y) - static_cast<long long>(y) * 256;
@@ -811,212 +1208,12 @@ int game_GetUnitsInRadius(lua_State* L) {
     return 1;
 }
 
-// === Gate 10.2: EventHook diagnostics (player attack-order interception) ===
+// M10 multi-turret bindings removed 2026-09-21 (see CHANGELOG). IronCurtain kept below.
+// (M10 SetSubTurretTarget / FireSubTurret / ClearSubTurrets / SetSplitTargets /
+// FireSplitSalvo removed 2026-09-21 with the SubTurretManager.)
 
-// game:GetEventHookOverrideCount() -> int
-// Сколько явных приказов атаки игрока на корабли-спауэнеры сейчас удерживается.
-int game_GetEventHookOverrideCount(lua_State* L) {
-    lua_pushinteger(L, static_cast<lua_Integer>(EventHook::OverrideCount()));
-    return 1;
-}
-
-// game:ClearEventHookOverrides() -> nil
-// Полная очистка кэша переопределений (вручную, для отладки).
-int game_ClearEventHookOverrides(lua_State* L) {
-    EventHook::ClearAll();
-    return 0;
-}
-
-// === Gate 10: Multi-Turret System ===
-int Techno_AddSubTurret(lua_State* L) {
-    auto* pTechno = CheckTechno(L, 1);
-    if (!ValidateTechno(pTechno)) { lua_pushboolean(L, 0); return 1; }
-    int section = (int)luaL_checkinteger(L, 2);
-    int offX = (int)luaL_checkinteger(L, 3);
-    int offY = (int)luaL_checkinteger(L, 4);
-    int offZ = (int)luaL_checkinteger(L, 5);
-    int rot = luaL_optinteger(L, 6, 8);
-    int rof = luaL_optinteger(L, 7, 45);
-    bool ok = SubTurretManager::Instance().AddTurret(pTechno, section, offX, offY, offZ, rot, rof);
-    lua_pushboolean(L, ok ? 1 : 0);
-    return 1;
-}
-// techno:GetSubTurretCount() -> int
-int Techno_GetSubTurretCount(lua_State* L) {
-    auto* pTechno = CheckTechno(L, 1);
-    if (!ValidateTechno(pTechno)) { lua_pushinteger(L, 0); return 1; }
-    auto* v = SubTurretManager::Instance().GetTurrets(pTechno);
-    lua_pushinteger(L, v ? (lua_Integer)v->size() : 0);
-    return 1;
-}
-// techno:GetSubTurret(idx) -> table or nil
-int Techno_GetSubTurret(lua_State* L) {
-    auto* pTechno = CheckTechno(L, 1);
-    if (!ValidateTechno(pTechno)) { lua_pushnil(L); return 1; }
-    int idx = (int)luaL_checkinteger(L, 2); // 1-based
-    auto* v = SubTurretManager::Instance().GetTurrets(pTechno);
-    if (!v || idx < 1 || idx > (int)v->size()) { lua_pushnil(L); return 1; }
-    auto& d = (*v)[idx-1];
-    lua_createtable(L, 0, 9);
-    lua_pushinteger(L, d.voxelSection); lua_setfield(L, -2, "section");
-    lua_pushinteger(L, d.offset.X); lua_setfield(L, -2, "offX");
-    lua_pushinteger(L, d.offset.Y); lua_setfield(L, -2, "offY");
-    lua_pushinteger(L, d.offset.Z); lua_setfield(L, -2, "offZ");
-    lua_pushinteger(L, d.facing); lua_setfield(L, -2, "facing");
-    lua_pushinteger(L, d.targetFacing); lua_setfield(L, -2, "targetFacing");
-    lua_pushinteger(L, d.rot); lua_setfield(L, -2, "rot");
-    lua_pushinteger(L, d.rofTimer); lua_setfield(L, -2, "rofTimer");
-    lua_pushinteger(L, d.baseRof); lua_setfield(L, -2, "baseRof");
-    return 1;
-}
-// techno:SetSubTurretTarget(idx, target) -> bool
-int Techno_SetSubTurretTarget(lua_State* L) {
-    auto* pTechno = CheckTechno(L, 1);
-    if (!ValidateTechno(pTechno)) { lua_pushboolean(L, 0); return 1; }
-    int idx = (int)luaL_checkinteger(L, 2);
-    void* ud = luaL_testudata(L, 3, kMetaName);
-    TechnoClass* pTarget = ud ? *static_cast<TechnoClass**>(ud) : nullptr;
-    if (pTarget && !ValidateTechno(pTarget)) pTarget = nullptr;
-    auto* v = SubTurretManager::Instance().GetTurrets(pTechno);
-    if (!v || idx < 1 || idx > (int)v->size()) { lua_pushboolean(L, 0); return 1; }
-    (*v)[idx-1].target = pTarget;
-    lua_pushboolean(L, 1);
-    return 1;
-}
-// techno:FireSubTurret(idx, target) -> bool
-int Techno_FireSubTurret(lua_State* L) {
-    auto* pTechno = CheckTechno(L, 1);
-    if (!ValidateTechno(pTechno)) { lua_pushboolean(L, 0); return 1; }
-    int idx = (int)luaL_checkinteger(L, 2);
-    void* ud = luaL_testudata(L, 3, kMetaName);
-    TechnoClass* pTarget = ud ? *static_cast<TechnoClass**>(ud) : nullptr;
-    if (!pTarget || !ValidateTechno(pTarget)) { lua_pushboolean(L, 0); return 1; }
-    bool ok = SubTurretManager::Instance().FireTurret(pTechno, (size_t)(idx-1), pTarget);
-    lua_pushboolean(L, ok ? 1 : 0);
-    return 1;
-}
-// techno:ClearSubTurrets() -> nil
-int Techno_ClearSubTurrets(lua_State* L) {
-    auto* pTechno = CheckTechno(L, 1);
-    if (!ValidateTechno(pTechno)) return 0;
-    SubTurretManager::Instance().RemoveTechno(pTechno);
-    return 0;
-}
-// techno:SetSplitTargets({target1, target2, ...}) -> bool
-// Распределяет переданные цели по свободным башням (1 цель на 1 башню).
-int Techno_SetSplitTargets(lua_State* L) {
-    auto* pTechno = CheckTechno(L, 1);
-    if (!ValidateTechno(pTechno)) { lua_pushboolean(L, 0); return 1; }
-
-    luaL_checktype(L, 2, LUA_TTABLE);
-
-    std::vector<TechnoClass*> targets;
-    lua_Integer n = luaL_len(L, 2);
-    for (lua_Integer i = 1; i <= n; ++i) {
-        lua_geti(L, 2, i);
-        void* ud = luaL_testudata(L, -1, kMetaName);
-        TechnoClass* pTarget = ud ? *static_cast<TechnoClass**>(ud) : nullptr;
-        if (pTarget && !ValidateTechno(pTarget)) pTarget = nullptr;
-        targets.push_back(pTarget);
-        lua_pop(L, 1);
-    }
-
-    bool ok = SubTurretManager::Instance().AssignSplitTargets(pTechno, targets);
-    lua_pushboolean(L, ok ? 1 : 0);
-    return 1;
-}
-// techno:FireSplitSalvo() -> bool
-// Принудительно пускает все башни по их назначенным целям.
-int Techno_FireSplitSalvo(lua_State* L) {
-    auto* pTechno = CheckTechno(L, 1);
-    if (!ValidateTechno(pTechno)) { lua_pushboolean(L, 0); return 1; }
-    bool ok = SubTurretManager::Instance().FireSplitSalvo(pTechno);
-    lua_pushboolean(L, ok ? 1 : 0);
-    return 1;
-}
-
-// Одноразовый лог, что переопределение урона неприменимо (нет проектеля у оружия).
-bool g_damageOverrideUnavailableLogged = false;
-
-// techno:FireProjectile(weaponTypeId, target [, damage [, flightId]]) -> bool
-// Спавнит BulletClass от юнита к цели через нативный BulletTypeClass::CreateBullet
-// (путь Gate 10.2).
-//   weaponTypeId — даёт урон И warhead (AoE), напр. BlimpBomb.
-//   damage       — необязательный рычаг баланса: переопределяет урон снаряда.
-//   flightId     — необязательный: проектilе (полёт: Speed, ROT/homing) берётся
-//                  из этого оружия (напр. Maverick — быстрая самонаводящаяся
-//                  ракета), если передан и существует; иначе из weaponTypeId.
-// Возвращает boolean. SEH-обёртка + ValidateTechno.
-int Techno_FireProjectile(lua_State* L) {
-    auto* pTechno = CheckTechno(L, 1);
-    if (!ValidateTechno(pTechno)) { lua_pushboolean(L, 0); return 1; }
-
-    const char* weaponId = luaL_checkstring(L, 2);
-    if (!weaponId || !*weaponId) { lua_pushboolean(L, 0); return 1; }
-
-    void* ud = luaL_testudata(L, 3, kMetaName);
-    TechnoClass* pTarget = ud ? *static_cast<TechnoClass**>(ud) : nullptr;
-    if (!pTarget || !ValidateTechno(pTarget)) { lua_pushboolean(L, 0); return 1; }
-
-    int damageOverride = static_cast<int>(luaL_optinteger(L, 4, -1)); // <0 = нет override
-    const char* flightId = luaL_optstring(L, 5, nullptr);
-
-    bool ok = false;
-    __try {
-        // Урон + warhead (AoE) — из weaponId.
-        WeaponTypeClass* pWeapon = WeaponTypeClass::Find(weaponId);
-        if (!pWeapon) { lua_pushboolean(L, 0); return 1; }
-        WarheadTypeClass* pWH = pWeapon->Warhead;
-        if (!pWH) { lua_pushboolean(L, 0); return 1; }
-
-        // Проектиль (полёт/скорость/homing) — из flightId, иначе из weaponId.
-        BulletTypeClass* pBulletType = nullptr;
-        WeaponTypeClass* pFlight = nullptr;
-        if (flightId && *flightId) {
-            pFlight = WeaponTypeClass::Find(flightId);
-            if (pFlight && pFlight->Projectile) pBulletType = pFlight->Projectile;
-        }
-        if (!pBulletType && !pWeapon->Projectile) {
-            if (!g_damageOverrideUnavailableLogged) {
-                g_damageOverrideUnavailableLogged = true;
-                LUA_LOG_WARN("[FireProjectile] weapon '{}' has no projectile/warhead; override skipped", weaponId);
-            }
-            lua_pushboolean(L, 0);
-            return 1;
-        }
-        if (!pBulletType) pBulletType = pWeapon->Projectile;
-
-        int damage = (damageOverride >= 0) ? damageOverride : pWeapon->Damage;
-        int speed = 40;
-        if (pFlight && pFlight->Speed > 0) speed = pFlight->Speed;
-        else if (pWeapon->Speed > 0) speed = pWeapon->Speed;
-
-        BulletClass* pBullet = pBulletType->CreateBullet(pTarget, pTechno, damage, pWH, speed, true);
-        if (!pBullet) { lua_pushboolean(L, 0); return 1; }
-
-        pBullet->SetTarget(pTarget);
-        pBullet->SetWeaponType(pWeapon);
-        LuaAPI::BulletHook::Register(pBullet);
-
-        // Направляем снаряд от юнита к цели (видимый полёт, тот же путь, что в sub_turret).
-        CoordStruct muzzle = pTechno->GetCoords();
-        CoordStruct dest = pTarget->GetCoords();
-        double dx = static_cast<double>(dest.X - muzzle.X);
-        double dy = static_cast<double>(dest.Y - muzzle.Y);
-        double dz = static_cast<double>(dest.Z - muzzle.Z);
-        double len = std::sqrt(dx * dx + dy * dy + dz * dz);
-        if (len < 1.0) len = 1.0;
-        BulletVelocity vel{ dx / len * speed, dy / len * speed, dz / len * speed };
-        pBullet->MoveTo(muzzle, vel);
-
-        ok = true;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        ok = false;
-    }
-
-    lua_pushboolean(L, ok ? 1 : 0);
-    return 1;
-}
+// (M10 FireProjectile removed 2026-09-21 with BulletHook; it was the only
+// BulletHook::Register caller and had no live consumers.)
 
 // techno:IronCurtain(durationFrames) -> bool
 // Применяет нативный эффект Железного занавеса (тёмный оттенок + временная
@@ -1043,12 +1240,60 @@ int Techno_IronCurtain(lua_State* L) {
     return 1;
 }
 
+// --- Bounty mark overlay (Gate 2A, draw-only) --------------------------------
+// The overlay itself lives in the DrawAsVXL detour (barrel_pitch.cpp) and is
+// keyed by UniqueID; these bindings only register/clear the mark. Draw path
+// covers UnitClass (vehicles/ships); other kinds return false (scope limit,
+// not an error in the mark system).
+//
+// obj:MarkBounty([color [, durationFrames]]) -> bool
+//   color: COLORREF (default green 0x00FF00); the C++ overlay converts it
+//   to raw 5-6-5 for DrawRect and passes it as-is to DrawText.
+//   durationFrames 0/nil = until cleared.
+int Techno_MarkBounty(lua_State* L) {
+    auto* pTechno = CheckTechno(L, 1);
+    if (!ValidateTechno(pTechno)) { lua_pushboolean(L, 0); return 1; }
+
+    unsigned int id = 0;
+    bool isUnit = false;
+    __try {
+        id = pTechno->UniqueID;
+        isUnit = (pTechno->WhatAmI() == AbstractType::Unit);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        lua_pushboolean(L, 0); return 1;
+    }
+    if (id == 0 || !isUnit) { lua_pushboolean(L, 0); return 1; }
+
+    unsigned int color = static_cast<unsigned int>(luaL_optinteger(L, 2, 0x00FF00));
+    lua_Integer dur = luaL_optinteger(L, 3, 0);
+    if (dur < 0) dur = 0;
+    LuaAPI::BarrelPitch::MarkBounty(id, color, static_cast<unsigned int>(dur));
+    lua_pushboolean(L, 1);
+    return 1;
+}
+
+// obj:ClearBountyMark() -> nil
+int Techno_ClearBountyMark(lua_State* L) {
+    auto* pTechno = CheckTechno(L, 1);
+    if (!ValidateTechno(pTechno))
+        return 0;
+    unsigned int id = 0;
+    __try { id = pTechno->UniqueID; }
+    __except (EXCEPTION_EXECUTE_HANDLER) { return 0; }
+    LuaAPI::BarrelPitch::ClearBountyMark(id);
+    return 0;
+}
+
 const luaL_Reg kTechnoMethods[] = {
     { "GetTypeName",   Techno_GetTypeName   },
     { "GetHealth",     Techno_GetHealth     },
     { "GetMaxHealth",  Techno_GetMaxHealth  },
     { "GetVeterancy",  Techno_GetVeterancy  },
     { "GetAmmo",       Techno_GetAmmo       },
+    { "SetAmmo",       Techno_SetAmmo       },
+    { "GetTurretAnimFrame", Techno_GetTurretAnimFrame },
+    { "SetTurretAnimFrame", Techno_SetTurretAnimFrame },
+    { "GetTurretAnimFrameCount", Techno_GetTurretAnimFrameCount },
     { "GetCost",       Techno_GetCost       },
     { "GetBaseSpeed",  Techno_GetBaseSpeed  },
     { "SetSpeedPercent", Techno_SetSpeedPercent },
@@ -1065,24 +1310,29 @@ const luaL_Reg kTechnoMethods[] = {
     { "Hunt",          Techno_Hunt          },
     { "Attack",        Techno_Attack        },
     { "Stop",          Techno_Stop          },
+    { "Unload",        Techno_Unload        },
     { "GetMission",    Techno_GetMission    },
     { "IsIdle",        Techno_IsIdle        },
     { "IsAttacking",   Techno_IsAttacking   },
+    { "IsOnFloor",     Techno_IsOnFloor     },
+    { "IsInAir",       Techno_IsInAir       },
+    { "IsLanding",     Techno_IsLanding     },
+    { "Return",        Techno_Return        },
+    { "Deploy",        Techno_Deploy        },
+    { "TryToDeploy",   Techno_TryToDeploy   },
+    { "Undeploy",      Techno_Undeploy      },
+    { "CanDeployNow",  Techno_CanDeployNow  },
+    { "IsDeployed",    Techno_IsDeployed    },
+    { "IsDeploying",   Techno_IsDeploying   },
+    { "IsUndeploying", Techno_IsUndeploying },
     { "GetTarget",     Techno_GetTarget     },
     { "TakeDamage",    Techno_TakeDamage    },
     { "Disable",       Techno_Disable       },
     { "SetHealthRatio", Techno_SetHealthRatio },
     { "AttachParticleSystem", Techno_AttachParticleSystem },
-    { "AddSubTurret", Techno_AddSubTurret },
-    { "GetSubTurretCount", Techno_GetSubTurretCount },
-    { "GetSubTurret", Techno_GetSubTurret },
-    { "SetSubTurretTarget", Techno_SetSubTurretTarget },
-    { "FireSubTurret", Techno_FireSubTurret },
-    { "ClearSubTurrets", Techno_ClearSubTurrets },
-    { "SetSplitTargets", Techno_SetSplitTargets },
-    { "FireSplitSalvo", Techno_FireSplitSalvo },
-    { "FireProjectile", Techno_FireProjectile },
     { "IronCurtain",    Techno_IronCurtain    },
+    { "MarkBounty",     Techno_MarkBounty     },
+    { "ClearBountyMark", Techno_ClearBountyMark },
     { nullptr, nullptr }
 };
 
@@ -1115,6 +1365,20 @@ int World_GetUnits(lua_State* L) {
     for (int i = 0; i < TechnoClass::Array.Count; ++i) {
         auto* pItem = TechnoClass::Array.GetItem(i);
         if (!pItem || pItem->WhatAmI() == AbstractType::Building)
+            continue;
+        PushTechno(L, pItem);
+        lua_seti(L, -2, ++n);
+    }
+    return 1;
+}
+
+// World.GetAircraft() -> table of all aircraft (from AircraftClass::Array)
+int World_GetAircraft(lua_State* L) {
+    lua_createtable(L, static_cast<int>(AircraftClass::Array.Count), 0);
+    int n = 0;
+    for (int i = 0; i < AircraftClass::Array.Count; ++i) {
+        auto* pItem = AircraftClass::Array.GetItem(i);
+        if (!pItem)
             continue;
         PushTechno(L, pItem);
         lua_seti(L, -2, ++n);
@@ -1272,6 +1536,61 @@ void PushTechno(lua_State* L, void* pTechno) {
     lua_setmetatable(L, -2);
 }
 
+// --- M16 Gate 1: one-shot HVA turret frame-count scan -----------------------
+
+// Logs TypeID -> TurretVoxel.HVA->FrameCount for every UnitTypeClass, plus the
+// static Type->FireAngle for context. Purpose: close the M16 UNKNOWN "how many
+// orientation matrices do stock turret HVAs actually have" with repository
+// evidence instead of assumptions. Runs once per session on the first logic
+// frame (rules/voxels are loaded by then; they are NOT loaded at DLL bootstrap).
+// SEH-guarded per item; a broken entry skips itself.
+void LogTurretHvaFrameCounts() {
+    LUA_LOG_INFO("[M16] HVA scan begin: {} UnitTypeClass entries",
+                 UnitTypeClass::Array.Count);
+
+    int voxel = 0;
+    int multi = 0;
+
+    for (int i = 0; i < UnitTypeClass::Array.Count; ++i) {
+        UnitTypeClass* pType = nullptr;
+        const char* id = nullptr;
+        int frameCount = 0;
+        int fireAngle = 0;
+        bool hasVoxelTurret = false;
+
+        __try {
+            pType = UnitTypeClass::Array.GetItem(i);
+            if (!pType) continue;
+            id = pType->get_ID();
+            fireAngle = pType->FireAngle;
+
+            if (pType->TurretVoxel.VXL && pType->TurretVoxel.HVA) {
+                hasVoxelTurret = true;
+                frameCount = pType->TurretVoxel.HVA->FrameCount;
+            }
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            LUA_LOG_WARN("[M16] HVA scan: SEH on entry {}", i);
+            continue;
+        }
+
+        if (!hasVoxelTurret)
+            continue;
+
+        ++voxel;
+
+        if (frameCount > 1)
+            ++multi;
+
+        LUA_LOG_INFO("[M16] HVA {} id={} frames={} fireAngle={}",
+                     i, id ? id : "?", frameCount, fireAngle);
+    }
+
+    LUA_LOG_INFO("[M16] HVA scan end: {} voxel-turret unit types, {} multi-frame",
+                 voxel, multi);
+    LUA_LOG_INFO("[M16] (unit types without a voxel turret are not listed)");
+}
+
+
 void RegisterTechnoBindings(lua_State* L) {
     // Userdata metatable
     luaL_newmetatable(L, kMetaName);
@@ -1288,6 +1607,8 @@ void RegisterTechnoBindings(lua_State* L) {
     lua_setfield(L, -2, "GetBuildings");
     lua_pushcfunction(L, World_GetUnits);
     lua_setfield(L, -2, "GetUnits");
+    lua_pushcfunction(L, World_GetAircraft);
+    lua_setfield(L, -2, "GetAircraft");
     lua_pushcfunction(L, World_GetAllUnits);
     lua_setfield(L, -2, "GetAllUnits");
     lua_pushcfunction(L, game_GetWaypoint);
@@ -1312,10 +1633,6 @@ void RegisterTechnoBindings(lua_State* L) {
     lua_setfield(L, -2, "GetWaypoint");
     lua_pushcfunction(L, game_GetUnitsInRadius);
     lua_setfield(L, -2, "GetUnitsInRadius");
-    lua_pushcfunction(L, game_GetEventHookOverrideCount);
-    lua_setfield(L, -2, "GetEventHookOverrideCount");
-    lua_pushcfunction(L, game_ClearEventHookOverrides);
-    lua_setfield(L, -2, "ClearEventHookOverrides");
     lua_setglobal(L, "game");
 }
 

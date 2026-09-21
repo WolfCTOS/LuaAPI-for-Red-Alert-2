@@ -25,7 +25,7 @@
 - SEH __try/__except around every engine deref; C++ exceptions must not cross SEH; keep __try in small helper functions (C2712 otherwise).
 - Validate before deref: nullptr, WhatAmI() RTTI, Health>0; StillExists() via array membership for dangling.
 - Logging: LUA_LOG_* macros, flush per line; LUA_FLUSH_LOG at critical points.
-- API surface: World.* (GetBuildings/GetUnits/GetAllUnits/GetUnitsInRadius), unit methods incl. sub-turret API (AddSubTurret/SetSplitTargets/FireSplitSalvo) and IsAttacking, AI.QueueUnit/AI.CountUnit.
+- API surface: World.* (GetBuildings/GetUnits/GetAllUnits/GetUnitsInRadius), unit methods incl. IsAttacking, AI.QueueUnit/AI.CountUnit. Sub-turret / EventHook / BulletHook / FireProjectile REMOVED 2026-09-21.
 
 ### Traps (read before touching hooks or combat)
 1. ActiveClickWith detour crashes on ANY player attack order on a TechnoClass target (spawner or not), even with trivial return. Native path works with hook disabled (kDisableActiveClickHook=true). Do not re-enable without a new interception point (Milestone 11: SetTarget/QueueMission detour or Ares/Phobos). Full story: docs/ENGINEERING_LESSONS.md section 9.
@@ -37,15 +37,23 @@
 
 ## Status (update at end of every session)
 
-### Current: Milestone 10 (v1.1) — ready for tag
-- Gate 10.1 done: sub-turret sidecar state, cleanup on death.
-- Gate 10.2 done: per-turret targeting, ROT stepping, tracer bullets (damage 0 visual for spawners, AP direct-hit otherwise), split-salvo redirect via ProcessSpawnedMissiles.
-- Gate 10.3 deferred to Milestone 11: voxel render stubs empty (InitDrawHook/DrawSubTurrets); the v1.1 presentation relies on tracers, not rotating voxels.
-- Gate 10.4 done: showcase multi_turret_battleship works (log proof: 5 DREDs x 3 turrets, distinct targets, missile #2 redirected, Lua avg 0.02-0.04 ms).
-- Player priority implemented: the player's native target (unit:GetTarget) is locked onto turret 0 and excluded from the candidate pool in AssignSplitTargets; autonomous targeting fills the remaining turrets.
-- Log hygiene done: per-frame EventHook::Update / frame logs and per-volley tracer logs demoted to trace/debug; dead-target ValidateTechno -> debug; warn/error verbosity untouched.
-- Known issues: ActiveClickWith hook disabled (needs a Milestone 11 interception point); voxel render stubs deferred to Milestone 11.
-- Next: record the demo video, tag v1.1, then Milestone 11 (ActiveClickWith/SetTarget interception + voxel rendering).
+### Current: Gate 1 PARTIAL — feature freeze (2026-09-20 closure audit)
+
+- Gate 1: items 1, 2, 4, 5, 6 CLOSED (docs/config/decision); item 3 (stale
+  house-userdata cache, dead `ResetSession`) OPEN and runtime-gated.
+  Authoritative state: `PROJECT/GATES.md`.
+- Gate 2 PARTIAL (core loop live-verified; lease/production/damage-event gaps open).
+- Gate 3 NOT PASSED (flagship ready; release checklist + media + blockers open).
+- Feature freeze per `PROJECT/DECISIONS.md`; next research: DU-1 audit
+  (`FSM/DYNAMIC_UNIT_BEHAVIOR.md`). No new implementation before DU-1 exit.
+- Actual `scripts/active_mods.txt` on disk (2026-09-21): `target_reselect`,
+  `bounty_hunter`, `smart_ai`. (`barrel_elevation_diag` / `command_authority`
+  are present but INACTIVE.) `bounty_hunter` is the rewritten v2 (ID-diff +
+  `MarkBounty`, no `OnPreDamage`) — the old "inert" label in Gate-1 records
+  is stale, see `PROJECT/GATES.md` addendum 2026-09-21. `smart_ai` = rally +
+  capture guard, no squads.
+- `OnPreDamage`/`OnUnitDestroyed`: contracts without invocation (see `API.md`).
+  Death detection = ID-diff polling. No native event architecture implemented.
 
 ### Session protocol
 - One session per sprint/task to bound context cost.

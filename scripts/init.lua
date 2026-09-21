@@ -1,26 +1,12 @@
 print("[LuaAPI] Universal ModLoader Online!")
 
--- Directory of this script (the DLL module), not the process working dir.
--- The launcher (injector.exe) writes the enabled-mod list to the ABSOLUTE path
--- <module-dir>\scripts\active_mods.txt. Reading via a CWD-relative path breaks
--- when an external client (CnCNet/Syringe) launches the game with a different
--- working directory: then the launcher and the ModLoader look at TWO DIFFERENT
--- files and the launcher-enabled mod never loads.
-local function moduleScriptDir()
-    local src = debug.getinfo(1, "S").source
-    if src and src:sub(1, 1) == "@" then src = src:sub(2) end
-    src = src:gsub("\\", "/")
-    return src:match("^(.*)/[^/]*$") or "."
-end
-
-local MODULE_DIR = moduleScriptDir()
-
--- Read enabled mod IDs from active_mods.txt (one per line, '#' comments).
--- The file is read from the module directory (where init.lua lives), i.e. exactly
--- the same file the launcher writes to.
+-- Read enabled mod IDs from scripts/active_mods.txt (one per line, '#' comments).
+-- Uses debug.getinfo to anchor the path to this script's directory,
+-- avoiding CWD issues when CnCNet/Syringe sets CWD to the client directory.
 local function loadActiveModList()
     local active = {}
-    local f = io.open(MODULE_DIR .. "/active_mods.txt", "r")
+    local scriptDir = debug.getinfo(1, "S").source:match("@?(.*[/\\])") or ""
+    local f = io.open(scriptDir .. "active_mods.txt", "r")
     if not f then
         f = io.open("scripts/active_mods.txt", "r")
     end
@@ -38,7 +24,9 @@ local function loadActiveModList()
         f:close()
     else
         -- Fallback defaults if file doesn't exist
-        active = { "delayed_explosion", "smart_ai" }
+        -- NOTE 2026-09-21: delayed_explosion no longer exists in the tree;
+        -- fall back to mods present on disk.
+        active = { "target_reselect", "smart_ai" }
     end
     return active
 end
@@ -50,19 +38,19 @@ local loadedMods = {}
 local modTiming = {}
 local lastStatsReport = os.clock()
 
--- [[DETERMINISTIC RNG SEEDING]]
--- Critical for CnCNet multiplayer: using os.clock() or os.time() causes
--- Out-of-Sync (OOS) desync between clients.
---
--- The base seed is fixed and synchronized on all clients.
--- If mods need reseeding mid-game, only use the current frame:
--- math.randomseed(current_frame + 12345)
+-- [[ДЕТЕРМИНИСТИЧНОЕ СИДИРОВАНИЕ RNG]]
+-- Критически важно для CnCNet мультиплеера: использование os.clock() или os.time()
+-- вызывает Out-of-Sync (OOS) рассинхронизацию между клиентами.
+-- 
+-- Базовый сид фиксирован и синхронизирован на всех клиентах.
+-- Если модам требуется пересидирование во время игры, должно использоваться
+-- только следящее за текущим кадром: math.randomseed(current_frame + 12345)
 math.randomseed(12345)
 
 for _, modName in ipairs(ACTIVE_MODS) do
     local ok, mod = pcall(require, "mods." .. modName .. ".main")
     if ok and mod then
-        table.insert(loadedMods, { name = modName, mod = mod })
+        table.insert(loadedMods, mod)
         modTiming[modName] = modTiming[modName] or { total_ms = 0.0, max_ms = 0.0, calls = 0 }
         print(string.format("[LuaAPI] [+] Mod active: '%s'", modName))
     else
@@ -72,19 +60,21 @@ end
 
 local welcomed = false
 
--- [[Event buses]]
--- Mods may subscribe to these events in main.lua:
---   function OnScenarioStart()  -- called once when the map loads
---   function OnUnitDestroyed(victim, killer) -- called when a unit is destroyed
--- global functions are auto-dispatched from the C++ engine.
+-- [[Событийные шины]]
+-- Моды могут подписаться на эти события в main.lua:
+--   function OnScenarioStart()  -- вызывается 1 раз при логическом кадре 1
+--   function OnUnitDestroyed(victim, killer) -- НЕ ВЫЗЫВАЕТСЯ в текущей сборке
+--      (контракт без диспетча, см. API.md) — для детекта смертей используйте
+--      ID-diff сканов (паттерн Command Authority).
+-- Глобальные колбэки — last-write-wins: их должен определять только один мод.
 
 function OnScenarioStart()
-    -- Base empty handler. Override it in your mod's main.lua.
+    -- Базовый пустой обработчик. Переопределите в main.lua своего мода.
 end
 
 function OnUnitDestroyed(victim, killer)
-    -- Base empty handler. Override it in your mod's main.lua.
-    -- victim = TechnoClass pointer (or nil), killer = TechnoClass pointer (or nil)
+    -- Базовый пустой обработчик. Переопределите в main.lua своего мода.
+    -- victim = TechnoClass pointer (или nil), killer = TechnoClass pointer (или nil)
 end
 
 function OnTick(frame)
@@ -113,10 +103,9 @@ function OnTick(frame)
     end
 
     -- Wrap each mod.Update in wall-clock timing
-    for _, entry in ipairs(loadedMods) do
-        local mod = entry and entry.mod
-        local modName = entry and entry.name
-        if mod and type(mod.Update) == "function" and modName then
+    for idx, mod in ipairs(loadedMods) do
+        if mod and type(mod.Update) == "function" then
+            local modName = ACTIVE_MODS[idx]
             local start = os.clock()
             local ok, err = pcall(mod.Update, frame)
             local elapsed_ms = (os.clock() - start) * 1000.0

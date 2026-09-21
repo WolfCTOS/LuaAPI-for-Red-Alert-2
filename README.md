@@ -10,23 +10,25 @@ The project follows three core principles:
 - 🎮 **Lua controls gameplay behavior**
 - 🛡️ **Only implemented and tested functionality is documented as verified**
 
-> **Current Release:** `v1.0.0` — Production Release  
-> **Current Development:** Milestone 11  
-> **Development API Line:** `1.1.0`  
-> **Target:** Yuri's Revenge `1.001`  
+> **Project Stage:** **Alpha** (pre-public; see `FSM/MODDB_ALPHA_RELEASE.md`)
+> **Current Release Tag:** `v1.0.0` — *historical milestone tag, not a production-release claim*
+> **Current Focus:** Documentation/gate reset (`PROJECT/GATES.md`); research: Dynamic Unit Behavior
+> **Development API Line:** `1.1.0`
+> **Target:** Yuri's Revenge `1.001`
 > **Compatibility:** Singleplayer, Skirmish, and CnCNet environments
 
 ---
 
 ## ✨ Key Features
 
-- 💥 **Sub-Frame Damage Interception** — modify or cancel incoming damage through `OnPreDamage`.
-- 📡 **Mod-Table Event Callbacks** — lifecycle and gameplay callbacks are methods on the table returned by `main.lua`.
+- 🎯 **Unit Control & Tactical AI** — issue runtime orders (`MoveTo`/`Attack`/`Stop`) and observe missions and targets; proven by live tactical showcases.
 - 👤 **House & Player API** — query players and access supported house state such as credits.
-- 🌍 **World Queries** — inspect units and buildings and perform spatial queries.
+- 🌍 **World Queries** — inspect units, buildings, and aircraft; spatial and selection queries.
 - 🚜 **Runtime Unit Spawning** — create units directly from Lua.
-- 🔫 **Multi-Turret Systems** — add runtime turret state and control split-target salvos from Lua.
+- 🔫 **Multi-Turret Systems** — REMOVED 2026-09-21 (zero live consumers; per-frame sweep + hook overhead). History in git / `PROJECT/ROADMAP.md` M10.
+- 🎮 **Input & Selected Units** — hotkey-driven mods via `Input.WasKeyPressed` and `World.GetSelectedUnits`.
 - 📨 **Engine Messaging** — display messages through the game's message system.
+- ⚠️ **Damage interception (`OnPreDamage`) is documented as a contract only — it is NOT wired in the current build.** See [`API.md`](API.md) (Callback Model) before building anything damage-reactive.
 - 🛡️ **Pointer & Lifecycle Safety** — C++ protects Lua-facing engine access against invalid runtime objects where supported.
 - 🌐 **CnCNet Support** — injection and hook handling account for the CnCNet process environment.
 - ⏱️ **Logical-Frame Callbacks** — gameplay logic can be tied to logical game frames rather than render FPS.
@@ -37,8 +39,9 @@ The project follows three core principles:
 
 | Property | Value |
 |---|---|
-| **Current Release** | `v1.0.0` |
-| **Development Milestone** | `11` |
+| **Project Stage** | Alpha (pre-public) |
+| **Current Release Tag** | `v1.0.0` (historical; see `FSM/MODDB_ALPHA_RELEASE.md`) |
+| **Current Focus** | Gate reset — `PROJECT/GATES.md` |
 | **Development API Line** | `1.1.0` |
 | **Game** | Yuri's Revenge `1.001` |
 | **Primary Process** | `gamemd.exe` |
@@ -109,12 +112,14 @@ Yuri's Revenge/
         ├── my_first_mod/
         │   └── main.lua
         │
-        ├── shield_overload/
-        │   └── main.lua
-        │
-        └── bounty_hunter/
+        └── command_authority/
             └── main.lua
 ```
+
+> The default active stack is `barrel_elevation_diag`, `command_authority`,
+> `target_reselect` (see `scripts/active_mods.txt`). `bounty_hunter` ships
+> in-tree but is inert and NOT enabled; `shield_overload` lives in
+> `scripts/mods_archive/`.
 
 ---
 
@@ -140,12 +145,15 @@ Edit:
 scripts/active_mods.txt
 ```
 
-Add one mod ID per line:
+Add one mod ID per line (use mods that exist under `scripts/mods/`):
 
 ```text
-shield_overload
-bounty_hunter
+command_authority
 ```
+
+> Do NOT enable `bounty_hunter` expecting behavior — it is inert in the
+> current build (see its header and `PROJECT/DECISIONS.md`). `shield_overload`
+> is archived under `scripts/mods_archive/`.
 
 Lines beginning with `#` are comments.
 
@@ -168,16 +176,16 @@ A standard LuaAPI mod returns a table:
 ```lua
 local MyMod = {}
 
-function MyMod.OnScenarioStart()
-    Engine.PrintMessage("My mod loaded!", 1)
-end
-
 function MyMod.Update(frame)
-    -- Gameplay logic.
+    -- Gameplay logic. Update is the one reliably dispatched mod-table method.
 end
 
 return MyMod
 ```
+
+> Engine event callbacks (`OnScenarioStart`, `OnPreDamage`,
+> `OnUnitDestroyed`) are **globals**, not mod-table methods — defining
+> `MyMod.OnScenarioStart` never fires. See Event Model below.
 
 ### 4. Launch the game
 
@@ -192,7 +200,7 @@ Check the LuaAPI log for initialization and mod-loading messages.
 Each mod lives under `scripts/mods/<mod_id>/`.
 
 ```text
-scripts/mods/bounty_hunter/
+scripts/mods/my_first_mod/
 └── main.lua
 ```
 
@@ -208,25 +216,28 @@ LuaAPI currently supports two callback mechanisms.
 
 ### Lifecycle callbacks — mod-table methods
 
-Callbacks such as `Update`, `OnScenarioStart`, `OnPreDamage`, and `OnUnitDestroyed` are defined on the table returned by the mod.
+Callbacks such as `Update` are methods on the table returned by the mod.
+Engine event callbacks (`OnScenarioStart`, `OnPreDamage`, `OnUnitDestroyed`)
+are looked up as **globals**, not mod-table methods — see [`API.md`](API.md),
+Callback Model. Note that `OnPreDamage` is additionally **not wired** in the
+current build (collected, never invoked).
 
 ```lua
 local MyMod = {}
 
-function MyMod.OnScenarioStart()
+-- Engine event callbacks are looked up as GLOBALS in the current build.
+-- Defining them as mod-table methods does NOT wire them.
+function OnScenarioStart()
     -- Scenario initialization.
 end
 
 function MyMod.Update(frame)
-    -- Logical-frame gameplay logic.
+    -- Per-logical-frame logic (the one reliably dispatched mod-table method).
 end
 
-function MyMod.OnPreDamage(attacker, target, damage, dmgType, frame, subc)
-    return nil
-end
-
-function MyMod.OnUnitDestroyed(victim, killer)
-    -- React to destruction.
+function OnUnitDestroyed(victim, killer)
+    -- ⚠️ Never dispatched in the current build (contract without invocation).
+    -- Mods must use ID-diff death detection instead; see API.md.
 end
 
 return MyMod
@@ -238,7 +249,7 @@ return MyMod
 
 ```lua
 function OnDebugCommand(text)
-    Engine.PrintMessage("Command: " .. text, 1)
+    Engine.PrintMessage("Command: " .. text)
 end
 ```
 
@@ -246,25 +257,27 @@ Only one active definition should normally provide this global callback.
 
 ---
 
-## 💥 Sub-Frame Damage Interception
+## 💥 Damage Interception — `OnPreDamage` (NOT WIRED)
 
-`OnPreDamage` can modify incoming damage before it is finally applied.
+> ⚠️ **Status in the current build:** the engine collects the global
+> `OnPreDamage` reference every frame but never invokes it with damage
+> arguments — no `ReceiveDamage` hook is installed. Live engine damage does
+> **not** reach Lua. The contract below is the intended design, kept for
+> when interception is wired; do not build damage-reactive mechanics on it yet.
+
+The intended contract (global callback, not a mod-table method):
 
 ```lua
-local ShieldMod = {}
-
-function ShieldMod.OnPreDamage(attacker, target, damage, dmgType, frame, subc)
+function OnPreDamage(attacker, target, damage, dmgType, frame, subc)
     if dmgType == "energy" or dmgType == "explosive" then
         return damage * 0.5
     end
 
     return nil
 end
-
-return ShieldMod
 ```
 
-Return values:
+Intended return values:
 
 | Return value | Result |
 |---|---|
@@ -272,7 +285,7 @@ Return values:
 | `number` | Incoming damage is replaced |
 | `0` | Damage is cancelled |
 
-Do not return negative damage values.
+Do not return negative damage values. Authoritative status: [`API.md`](API.md), Callback Model; evidence: `FSM/CAPABILITIES.md` conflict note.
 
 ---
 
@@ -352,37 +365,15 @@ The return value is the number of units actually created.
 
 ---
 
-## 🔫 Multi-Turret Systems
+## 🔫 Multi-Turret Systems — REMOVED 2026-09-21
 
-LuaAPI can expose additional runtime turret state through the multi-turret system.
-
-```lua
-unit:AddSubTurret(1, 40, 0, 15, 12, 90)
-unit:AddSubTurret(2, -40, 0, 15, 12, 90)
-```
-
-Target allocation and firing remain Lua-controlled:
-
-```lua
-unit:SetSplitTargets(targets)
-unit:FireSplitSalvo()
-```
-
-The intended architecture is:
-
-```text
-C++
- ↓
-Runtime turret state
- ↓
-Lua
- ↓
-Target selection
- ↓
-FireSplitSalvo()
-```
-
-The C++ state layer should not autonomously decide when a unit fires.
+> The native `SubTurretManager`, its Lua bindings, the spawned-missile
+> decoupling, the `BulletHook` Detonate hook, the `EventHook` module, and
+> `FireProjectile` were removed: zero live consumers in `scripts/`, plus
+> per-frame full-array sweep and per-detonation hook cost on the game
+> thread. History preserved in git and `PROJECT/ROADMAP.md` (Milestone 10).
+> The design lesson stands: C++ maintains state, Lua decides firing — but
+> ship it only with a live consumer (API principle №10).
 
 ---
 
@@ -391,7 +382,7 @@ The C++ state layer should not autonomously decide when a unit fires.
 Display messages through the `Engine` namespace:
 
 ```lua
-Engine.PrintMessage("Hello, Commander!", 1)
+Engine.PrintMessage("Hello, Commander!")
 ```
 
 This can be used for HUD feedback, development tools, and gameplay notifications.
@@ -568,11 +559,34 @@ When developing or contributing to LuaAPI:
 
 ---
 
+## ⛔ What Should Users NOT Expect Yet?
+
+- **No live damage interception** — `OnPreDamage` is collected but never
+  invoked (no `ReceiveDamage` hook). No reactive-armor/shield mechanics.
+- **No death event with payload** — `OnUnitDestroyed` is never dispatched.
+  Death detection is ID-diff polling (see Command Authority).
+- **No production-complete events** — factory queues expose counts only;
+  `AI.QueueUnit` requests are accepted but produce zero attributable output
+  live (**BLOCKED** for production-director designs).
+- **No radar/fog control, alliance switching, or superweapon API.**
+- **Multiplayer:** powers lock with 2+ humans by design; two-client behavior
+  otherwise unverified. Never use wall-clock time for gameplay decisions.
+- **Savegame loads** do not fire `OnScenarioStart`; Lua-state restore across
+  loads is unverified. Restart-guard your runtime state.
+- **No order lease:** Lua orders compete with vanilla AI re-selection;
+  a permanent override primitive does not exist.
+
+Evidence grades for every claim: [`PROJECT/GATES.md`](PROJECT/GATES.md),
+[`FSM/VERIFICATION.md`](FSM/VERIFICATION.md).
+
 ## ⚠️ Project Status
 
-LuaAPI is under active development.
+LuaAPI is an **Alpha-stage** project under active development.
 
 The API and internal architecture may change as engine integration becomes safer and more complete.
+
+Project gates and their current statuses: [`PROJECT/GATES.md`](PROJECT/GATES.md).
+Evidence ledger (what is actually verified, at which level): [`FSM/VERIFICATION.md`](FSM/VERIFICATION.md).
 
 Use the documentation corresponding to the current API version.
 
@@ -584,19 +598,6 @@ A minimal LuaAPI mod:
 
 ```lua
 local MyMod = {}
-
-function MyMod.OnScenarioStart()
-    local player = House.GetPlayer()
-
-    if not player then
-        return
-    end
-
-    Engine.PrintMessage(
-        "LuaAPI mod initialized for " .. player:GetName(),
-        1
-    )
-end
 
 function MyMod.Update(frame)
     if frame % 300 ~= 0 then
@@ -611,7 +612,7 @@ function MyMod.Update(frame)
 
     player:AddCredits(100)
 
-    Engine.PrintMessage("+$100", 1)
+    Engine.PrintMessage("+$100")
 end
 
 return MyMod

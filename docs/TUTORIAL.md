@@ -70,18 +70,20 @@ scripts/mods/my_first_mod/
 ```lua
 local MyFirstMod = {}
 
-function MyFirstMod.OnScenarioStart()
-    Engine.PrintMessage("MyFirstMod loaded!")
-end
-
 function MyFirstMod.Update(frame)
-    -- Called once per logical game frame.
+    if frame == 30 then
+        Engine.PrintMessage("MyFirstMod is running!")
+    end
 end
 
 return MyFirstMod
 ```
 
-A mod returns a Lua table. The loader calls lifecycle methods defined on that table.
+A mod returns a Lua table. The loader dispatches the table's `Update(frame)`
+method every logical frame. Other engine callbacks (`OnScenarioStart`,
+`OnUnitDestroyed`) are looked up as **global** functions in the current build —
+defining them as mod-table methods does not wire them (see
+[Responding to Events](#responding-to-events)).
 
 ### Step 3: Enable the Mod
 
@@ -101,7 +103,9 @@ The entry must match the directory name. Lines beginning with `#` are comments.
 
 ### Step 4: Test
 
-Start a skirmish. The `OnScenarioStart()` callback should display the message through the engine message system.
+Start a skirmish. Thirty frames in, `Update` should display the message through
+the engine message system. If nothing appears, inspect `LuaAPI.log` for loader
+errors (see [Common Pitfalls](#common-pitfalls)).
 
 ---
 
@@ -114,7 +118,7 @@ LuaAPI exposes implemented functionality through namespaces and validated engine
 | `House` | House/player access and economy | `House.GetPlayer()` |
 | `World` | Unit, building, and map queries | `World.GetUnits()` |
 | `Engine` | Engine/HUD helpers | `Engine.PrintMessage("Hello")` |
-| `game` | Lower-level/legacy diagnostics and map helpers | `game.GetEventHookOverrideCount()` |
+| `game` | Lower-level map helpers | `game.GetUnitsInRadius()` |
 | `Techno` | Methods available on engine objects | `unit:GetTypeName()` |
 
 The native layer validates engine objects before exposing or operating on them. Lua references should still be treated as short-lived because an engine object can become invalid after destruction or a session transition.
@@ -194,24 +198,37 @@ end
 
 Use logical frames for deterministic gameplay timing.
 
-### `OnScenarioStart()`
+### `OnScenarioStart()` — global
 
-Use it for post-scenario initialization:
+Defined as a **global** function, it runs once at `CurrentFrame == 1` after
+scenario initialization:
 
 ```lua
-function MyFirstMod.OnScenarioStart()
+function OnScenarioStart()
     Engine.PrintMessage("Scenario initialized")
 end
 ```
 
-Do not assume this callback restores runtime state after a savegame is loaded. Systems that require runtime state must handle that lifecycle explicitly.
+> ⚠️ Defining `MyFirstMod.OnScenarioStart` (mod-table method) does **not** fire
+> in the current build. Only the global lookup is dispatched.
 
-### `OnPreDamage(...)`
+Do not assume this callback restores runtime state after a savegame is loaded —
+it does not fire on savegame load. Systems that require runtime state must
+handle that lifecycle explicitly.
 
-This callback runs at the damage-processing boundary and can replace incoming damage:
+### `OnPreDamage(...)` — NOT WIRED in the current build
+
+> ⚠️ **This callback does not fire today.** The engine collects the global
+> `OnPreDamage` reference but never invokes it with damage arguments (no
+> `ReceiveDamage` hook is installed). The contract below is the intended
+> design, kept for when interception is wired. Do not build anything
+> damage-reactive on it yet — authoritative status: [`API.md`](../API.md),
+> Callback Model.
+
+Intended contract (global function, damage-processing boundary):
 
 ```lua
-function MyFirstMod.OnPreDamage(attacker, target, damage, dmgType, frame, subc)
+function OnPreDamage(attacker, target, damage, dmgType, frame, subc)
     local player = House.GetPlayer()
 
     if player and target and target:GetOwner() == player then
@@ -222,7 +239,7 @@ function MyFirstMod.OnPreDamage(attacker, target, damage, dmgType, frame, subc)
 end
 ```
 
-Return values:
+Intended return values:
 
 - `number` — replaces the incoming damage.
 - `0` — cancels the damage.
@@ -230,24 +247,28 @@ Return values:
 
 Never return negative damage values.
 
-### `OnUnitDestroyed(victim, killer)`
+For damage-adjacent behavior that **does** work today, observe aftermath from
+`Update` (HP drops between scans) — see the Command Authority mod for the
+proven pattern.
+
+### `OnUnitDestroyed(victim, killer)` — not dispatched in the current build
+
+Defined as a **global** function, but the C++ dispatch branch is unreachable
+(nothing ever queues the callback), so it **never fires** — there is no
+`(nil, nil)` placeholder call either. Nil-guard and do not build
+death-reactive logic on it:
 
 ```lua
-function MyFirstMod.OnUnitDestroyed(victim, killer)
-    if not victim then
-        return
+function OnUnitDestroyed(victim, killer)
+    if not victim or not killer then
+        return -- current build: never dispatched
     end
-
-    local victimType = victim:GetTypeName()
-    local killerType = killer and killer:GetTypeName() or "unknown"
-
-    Engine.PrintMessage(
-        victimType .. " destroyed by " .. killerType
-    )
 end
 ```
 
-`killer` may be `nil` for engine-side causes such as environmental damage or other non-unit sources.
+For real death detection today, diff ID-keyed scans between frames
+(disappearance = probable death) — the proven pattern in the Command Authority
+mod.
 
 ---
 
@@ -300,24 +321,12 @@ end
 
 The return value is the number of units actually created. Normal spawning can use the implementation's nearby-cell fallback when the requested location is unavailable.
 
-### Sub-Turrets
+### Sub-Turrets — REMOVED 2026-09-21
 
-Milestone 10 exposes explicit sub-turret state and split-salvo firing:
-
-```lua
-unit:AddSubTurret(1, 40, 0, 15, 12, 90)
-unit:SetSplitTargets({enemy})
-unit:FireSplitSalvo()
-```
-
-For split-salvo behavior with multiple targets:
-
-```lua
-unit:SetSplitTargets({enemyA, enemyB, enemyC})
-unit:FireSplitSalvo()
-```
-
-Target acquisition remains Lua gameplay logic; the native layer maintains turret state and performs the explicit operation requested by Lua.
+> The Milestone 10 sub-turret / split-salvo API was removed (zero live
+> consumers). Do not use `AddSubTurret` / `SetSplitTargets` /
+> `FireSplitSalvo` — the bindings no longer exist. History in
+> `PROJECT/ROADMAP.md` (M10) and git.
 
 ---
 
@@ -333,21 +342,25 @@ end
 
 `IsAlive()` checks liveness at that moment. It does not make a stored engine reference permanently safe.
 
-### 2. Handle `OnPreDamage` correctly
+### 2. `OnPreDamage` is NOT wired; `OnUnitDestroyed` is never dispatched
 
-Pass damage through:
+The damage-interception callback **does not fire** in the current build, and
+`OnUnitDestroyed` **never fires either** (no placeholder call). See the events section above for
+workable alternatives (aftermath polling, ID-diff death detection).
+
+Pass damage through (intended contract only):
 
 ```lua
 return nil
 ```
 
-Reduce it:
+Reduce it (intended contract only):
 
 ```lua
 return damage * 0.5
 ```
 
-Cancel it:
+Cancel it (intended contract only):
 
 ```lua
 return 0
@@ -457,24 +470,10 @@ unit:SetHealthRatio(ratio)
 unit:AttachParticleSystem(name)
 ```
 
-### Sub-Turret
-
-```lua
-unit:AddSubTurret(section, offX, offY, offZ, rot, rof)
-unit:GetSubTurretCount()
-unit:GetSubTurret(index)
-unit:SetSplitTargets(targets)
-unit:FireSplitSalvo()
-unit:ClearSubTurrets()
-```
-
 ### Engine / Diagnostics
 
 ```lua
 Engine.PrintMessage(text)
-
-game.GetEventHookOverrideCount()
-game.ClearEventHookOverrides()
 ```
 
 ### Lifecycle
@@ -483,14 +482,18 @@ game.ClearEventHookOverrides()
 function MyMod.Update(frame)
 end
 
-function MyMod.OnScenarioStart()
+-- Engine event callbacks are GLOBALS (current build), not mod-table methods.
+function OnScenarioStart()
 end
 
-function MyMod.OnPreDamage(attacker, target, damage, dmgType, frame, subc)
+-- NOT WIRED in the current build — intended contract only.
+function OnPreDamage(attacker, target, damage, dmgType, frame, subc)
     return nil
 end
 
-function MyMod.OnUnitDestroyed(victim, killer)
+-- Global; NEVER dispatched in the current build (contract without
+-- invocation — use ID-diff death detection instead).
+function OnUnitDestroyed(victim, killer)
 end
 ```
 

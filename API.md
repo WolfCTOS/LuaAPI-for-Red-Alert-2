@@ -3,7 +3,7 @@
 > **Version:** `1.1.0`  
 > **Milestone:** `11`  
 > **Target:** `gamemd.exe` — Yuri's Revenge 1.001  
-> **Last Updated:** `2026-08-31`
+> **Last Updated:** `2026-09-21` (Extras-2 sweep; no version bump, no behavior change)
 
 This document is the reference for the **currently implemented LuaAPI interface**.
 
@@ -222,6 +222,23 @@ unit:Hunt()
 
 ---
 
+## `unit:Attack(target)`
+
+Orders a mobile unit to attack a specific target object.
+
+```lua
+local ok = unit:Attack(enemy)
+```
+
+Uses the native `SetTarget` + `QueueMission(Attack)` path (not the
+player-click path). Only works for mobile `FootClass`-derived objects;
+returns `false` for buildings and invalid targets. The assigned target
+can be read back with `unit:GetTarget()`.
+
+**Returns:** `boolean`.
+
+---
+
 ## `unit:IsIdle()`
 
 Checks whether a mobile unit is currently in `Guard`, `Stop`, or `Sleep` mission state.
@@ -245,6 +262,83 @@ if unit:IsAttacking() then
     -- attacking
 end
 ```
+
+**Returns:** `boolean`.
+
+---
+
+## `unit:GetMission()`
+
+Reads the object's current native mission (`TechnoClass::CurrentMission`).
+
+```lua
+local mission = unit:GetMission()
+-- "Guard", "Move", "Attack", "Stop", ... (or a numeric code when no name resolves)
+```
+
+**Returns:** `string` or `number` (`nil` when validation fails).
+
+---
+
+## `unit:IsOnFloor()`
+
+Checks whether the object is currently on the ground (landed).
+
+```lua
+if unit:IsOnFloor() then
+    -- unit is on the ground
+end
+```
+
+For aircraft: returns `true` when landed on a helipad or airfield; `false` when airborne.
+For ground units: typically always `true`.
+
+**Returns:** `boolean`.
+
+---
+
+## `unit:IsInAir()`
+
+Checks whether the object is currently airborne.
+
+```lua
+if unit:IsInAir() then
+    -- unit is flying
+end
+```
+
+For aircraft: returns `true` when flying; `false` when landed.
+For ground units: typically always `false`.
+
+**Returns:** `boolean`.
+
+---
+
+## `unit:IsLanding()`
+
+Checks whether an aircraft is currently in the landing descent phase.
+
+```lua
+if unit:IsLanding() then
+    -- aircraft is descending to land
+end
+```
+
+Only meaningful for `AircraftClass` with `FlyLocomotionClass`. Returns `false` for non-aircraft.
+
+**Returns:** `boolean`.
+
+---
+
+## `unit:Return()`
+
+Orders an aircraft to return to the nearest airfield/helipad and land (native `Mission::Return`).
+
+```lua
+local ok = unit:Return()
+```
+
+Only works for `AircraftClass`. Returns `true` if the mission was queued successfully.
 
 **Returns:** `boolean`.
 
@@ -299,22 +393,26 @@ Buildings use their power/disabled state; mobile objects use the engine's paraly
 
 ---
 
-## `unit:SetHealthRatio(ratio)`
+## `unit:SetHealthRatio(percent)`
 
-Sets health using a normalized ratio.
+Sets health using a percent value (the implementation divides by 100).
 
 ```lua
-unit:SetHealthRatio(0.35)
+unit:SetHealthRatio(35)
 ```
 
 Examples:
 
 ```text
-0.35 = 35%
-1.00 = 100%
+35  = 35%
+100 = 100%
 ```
 
-**Returns:** `boolean`.
+> ⚠️ Fractional 0–1 inputs do not work as fractions here: the value is
+> truncated to an integer first, so `1.0` means ~1%, not 100%.
+> Pass 0–100.
+
+**Returns:** no value.
 
 ---
 
@@ -334,132 +432,53 @@ unit:AttachParticleSystem("DamageSmokeSys")
 
 ---
 
-# 🔫 Sub-Turret API
+## `unit:MarkBounty([color [, durationFrames]])`
 
-LuaAPI exposes a native sidecar sub-turret system for additional turret state and explicit firing.
-
-## `unit:AddSubTurret(section, offX, offY, offZ, rot, rof)`
-
-Adds a sub-turret to a techno.
+Registers a draw-only bounty overlay (rectangle + `BOUNTY` label) for the
+unit, drawn in the `DrawAsVXL` detour after the original draw call. Keyed by
+`UniqueID`, never by pointer; expires by logical frame, explicit clear, or
+session reset. Simulation state is untouched (CnCNet-safe).
 
 ```lua
-unit:AddSubTurret(1, 40, 0, 15, 12, 90)
+unit:MarkBounty()            -- green (money), until cleared
+unit:MarkBounty(0x00FF00, 4500)
 ```
 
-| Parameter | Type | Description |
-|---|---|---|
-| `section` | `number` | Voxel section index |
-| `offX` | `number` | X offset in leptons |
-| `offY` | `number` | Y offset in leptons |
-| `offZ` | `number` | Z offset in leptons |
-| `rot` | `number` | Rotation step/speed |
-| `rof` | `number` | Base rate of fire in logical frames |
+**Parameters:**
 
-**Returns:** `boolean`.
+- `color` — `COLORREF` (default `0x00FF00`, green); converted internally to
+  raw 5-6-5 for the rectangle, passed as-is to the label text
+- `durationFrames` — `0`/omitted = until cleared
+
+**Returns:** `boolean` (`false` for non-`Unit` kinds — the detour covers
+vehicles/ships only — and invalid objects).
 
 ---
 
-## `unit:GetSubTurretCount()`
+## `unit:ClearBountyMark()`
 
-Returns the number of sub-turrets currently attached.
-
-```lua
-local count = unit:GetSubTurretCount()
-```
-
-**Returns:** `number`.
-
----
-
-## `unit:GetSubTurret(index)`
-
-Returns the internal state of a sub-turret.
+Removes the unit's bounty overlay registration.
 
 ```lua
-local turret = unit:GetSubTurret(1)
-```
-
-**Returns:** table or `nil`.
-
-The returned table contains:
-
-```text
-section
-offX
-offY
-offZ
-facing
-targetFacing
-rot
-rofTimer
-baseRof
-```
-
-Indexes are **1-based**.
-
----
-
-## `unit:SetSubTurretTarget(index, target)`
-
-Assigns one explicit target to one sub-turret.
-
-```lua
-unit:SetSubTurretTarget(1, enemy)
-```
-
-**Returns:** `boolean`.
-
----
-
-## `unit:FireSubTurret(index, target)`
-
-Explicitly fires one sub-turret at a validated target.
-
-```lua
-unit:FireSubTurret(1, enemy)
-```
-
-**Returns:** `boolean`.
-
----
-
-## `unit:ClearSubTurrets()`
-
-Removes the unit's sub-turret state from the native manager.
-
-```lua
-unit:ClearSubTurrets()
+unit:ClearBountyMark()
 ```
 
 **Returns:** no value.
 
 ---
 
-## `unit:SetSplitTargets(targets)`
+# 🔫 Sub-Turret API — REMOVED 2026-09-21
 
-Assigns a Lua array of targets across available sub-turrets.
-
-```lua
-unit:SetSplitTargets({enemyA, enemyB, enemyC})
-```
-
-One supplied target is assigned per available turret according to the native split-target implementation.
-
-**Returns:** `boolean`.
-
----
-
-## `unit:FireSplitSalvo()`
-
-Fires the configured sub-turrets at their assigned targets.
-
-```lua
-unit:FireSplitSalvo()
-```
-
-**Returns:** `boolean`.
-
-> 🧠 Target acquisition remains gameplay logic. The native sub-turret manager stores state, handles safe references, rotation/timers, and performs explicit firing requested by Lua.
+> The native `SubTurretManager` sidecar (`src/sub_turret.*`), its Lua
+> bindings (`AddSubTurret` / `GetSubTurretCount` / `GetSubTurret` /
+> `SetSubTurretTarget` / `FireSubTurret` / `ClearSubTurrets` /
+> `SetSplitTargets` / `FireSplitSalvo`), the spawned-missile decoupling,
+> the `BulletHook` Detonate hook (`src/bullet_hook.*`), the `EventHook`
+> spawner-target module (`src/event_hook.*`), and `FireProjectile` were
+> removed — zero live consumers in `scripts/`, per-frame full-array sweep
+> and per-detonation hook overhead on the game thread. History preserved in
+> git and in `PROJECT/ROADMAP.md` (Milestone 10). `IronCurtain` (standalone,
+> synchronous) is kept.
 
 ---
 
@@ -752,31 +771,8 @@ local units = game.GetUnitsInRadius(100, 100, 15)
 
 ---
 
-## `game:GetEventHookOverrideCount()`
-
-Returns the current number of entries in the event-hook target override cache.
-
-```lua
-local count = game.GetEventHookOverrideCount()
-```
-
-**Returns:** `number`.
-
-> ⚠️ This is a diagnostic API, not a general gameplay targeting API.
-
----
-
-## `game:ClearEventHookOverrides()`
-
-Clears the event-hook target override cache.
-
-```lua
-game.ClearEventHookOverrides()
-```
-
-**Returns:** no value.
-
----
+> `game:GetEventHookOverrideCount()` / `game:ClearEventHookOverrides()`
+> were removed 2026-09-21 with the `EventHook` module.
 
 # 💬 Engine API
 
@@ -798,6 +794,32 @@ Engine.PrintMessage("Hello, Commander!")
 
 ---
 
+## `Engine.ClearBountyMarks()`
+
+Clears every bounty overlay registration (global reset; also runs
+automatically on session reset).
+
+```lua
+Engine.ClearBountyMarks()
+```
+
+**Returns:** no value.
+
+---
+
+## `Engine.SetBountyDrawMode(mode)`
+
+Crash-isolation diagnostic switch: `0`=off (registry live, no pixels),
+`1`=rectangle only, `2`=text only, `3`=full (default).
+
+```lua
+Engine.SetBountyDrawMode(1)
+```
+
+**Returns:** `boolean` (`false` for out-of-range input).
+
+---
+
 # 🎮 Game API
 
 ## `Game.GetDebugHudText()`
@@ -814,18 +836,176 @@ This is a development/debug helper. It is not the logical frame API.
 
 ---
 
+# 🧰 Implemented Extras (undocumented until 2026-09-20)
+
+The following capabilities exist in the current build but were previously
+absent from this reference. They are **implemented and source-verified**
+(`src/lua_engine.cpp`, `src/bindings_techno.cpp`, `src/weapon_override.cpp`);
+unless a live-game consumer is on record they are graded UNVERIFIED LIVE, and
+all of them are **dev/diagnostic helpers first** — treat stability and exact
+behavior as experimental.
+
+### `Engine.WeaponExists(id)` → `boolean`
+
+Checks whether a weapon ID exists in rules (`WeaponTypeClass::Find`). SEH-wrapped;
+returns `false` on error or empty id.
+
+```lua
+if Engine.WeaponExists("ZeusTrail") then
+    -- safe to reference the weapon
+end
+```
+
+### `Engine.SetHudMuted(bool)` / `Engine.IsHudMuted()` → `nil` / `boolean`
+
+Mutes/unmutes LuaAPI HUD output globally (affects `Engine.PrintMessage`
+display); state is also logged. Use to silence a mod's HUD without touching
+the game's own messages.
+
+```lua
+Engine.SetHudMuted(true)
+if Engine.IsHudMuted() then ... end
+```
+
+### Global `WeaponOverride` table (dev/diagnostic — weapon swap at vet levels)
+
+Installs a `GetPrimaryWeapon` hook (installed at DLL init; degrades to vanilla
+behavior with a warning if the hook fails).
+
+```lua
+WeaponOverride.Set(typeId, vetLevel, weaponId) -- -> boolean
+WeaponOverride.Get(typeId, vetLevel)           -- -> string | nil
+WeaponOverride.Clear()                         -- clear all
+WeaponOverride.Clear(typeId)                   -- clear one type
+WeaponOverride.Clear(typeId, vetLevel)         -- clear one entry
+```
+
+Per-session state; cleared on session reset. Veteran level naming (`Rookie`/
+`Veteran`/`Elite`-class keys) follows the implementation in
+`src/weapon_override.cpp` — verify the exact key form in source before use.
+
+### `World.GetAircraft()` → table of airborne technos
+
+Returns airborne technos (same object contract as `World.GetUnits()`).
+
+### `World.GetSelectedUnits()` / `World.GetSelectedTechnos()` → table
+
+Returns the player's currently selected objects (reads
+`ObjectClass::CurrentObjects`). `GetSelectedUnits` returns `UnitClass` objects;
+`GetSelectedTechnos` the general set. Consumers must re-validate per use
+(`IsAlive`) — selection contents change with player input at any moment.
+Used live by the `dynamic_objective_defense` showcase (Gate 12.2).
+
+> These entries completed the docs-vs-source sweep for Gate 1 (2026-09-20).
+> The 2026-09-21 sweep below reopens the list: it found ~25 further
+> implemented-but-undocumented bindings. If you find an implemented binding
+> missing from this reference, record it rather than relying on it silently.
+
+### Implemented Extras-2 (sweep 2026-09-21 — source-verified, mostly UNVERIFIED LIVE)
+
+Source of truth: `src/bindings_techno.cpp` (`kTechnoMethods`,
+`RegisterTechnoBindings`), `src/lua_engine.cpp` (`CreateEngine`),
+`src/barrel_pitch.cpp` (`RegisterBindings`), `src/bindings_production.cpp`.
+Grading: implemented + source-verified; UNVERIFIED LIVE unless a live
+consumer is named. Dev/diagnostic framing — stability not promised.
+
+#### `Techno` info / economy reads (used live by `bounty_hunter` v2)
+
+```lua
+local vet  = unit:GetVeterancy() -- "rookie" | "veteran" | "elite" (pcall-guarded by mods)
+local cost = unit:GetCost()       -- rules price, number (reward math base)
+```
+
+#### `Techno` ammo / speed (no live consumer on record)
+
+```lua
+local ammo = unit:GetAmmo()
+unit:SetAmmo(n)
+local speed = unit:GetBaseSpeed()
+unit:SetSpeedPercent(pct)
+```
+
+#### `Techno` orders beyond `MoveTo/Attack/Hunt` (no `Stop` section existed before)
+
+```lua
+unit:Stop()        -- native Stop mission; the mission name checked by IsIdle
+unit:Unload()      -- transport unload primitive
+unit:Scatter()     -- documented above; listed here for completeness
+```
+
+#### `Techno` harvest primitives (no live consumer on record)
+
+```lua
+local loc = unit:GetHarvestLocation() -- harvest anchor query
+unit:HarvestAt(x, y)                  -- harvest order primitive
+```
+
+#### `Techno` deploy family (consumer: `heli_repair_test` diagnostic)
+
+```lua
+unit:Deploy()          -- returns boolean
+unit:TryToDeploy()
+unit:Undeploy()
+unit:CanDeployNow()    -- -> boolean (gate before Deploy)
+unit:IsDeployed()      -- -> boolean
+unit:IsDeploying()     -- -> boolean
+unit:IsUndeploying()   -- -> boolean
+```
+
+#### `Techno` experimental combat (no live consumer on record)
+
+```lua
+unit:IronCurtain(frames)    -- invulnerability primitive (standalone, kept)
+```
+
+> `FireProjectile` removed 2026-09-21 with `BulletHook` (was its only
+> `Register` caller). The whole M10 sub-turret family
+> (`AddSubTurret` / `SetSplitTargets` / `FireSplitSalvo` / …) removed
+> the same day — see §Sub-Turret API.
+
+#### `Input.WasKeyPressed(vk)` → `boolean` (live consumers: `command_authority`, `bounty_hunter` F6, `tesla_mcv` T)
+
+Edge-triggered (pressed-now AND not-pressed-before), per
+`src/bindings_techno.cpp:1678`. State in `g_keyPrevState[256]`.
+
+```lua
+if Input.WasKeyPressed(0x54) then -- T, once per press
+end
+```
+
+#### Global `AI` table — production (BLOCKED live, do not design on it)
+
+Registered in `src/bindings_production.cpp:120-124`; absent from this
+reference until now. `PROJECT/GATES.md` Gate 2 records
+`AI.QueueUnit` as accepted-but-no-output live (2 runs) — BLOCKED.
+
+```lua
+AI.QueueUnit(house, "APOC") -- -> boolean (accepted, not produced live)
+AI.CountUnit(house, "APOC") -- -> integer (factory queue counts)
+```
+
+#### `Engine` extras beyond §Engine API
+
+```lua
+Engine.GetBarrelPitchOverride(unitId)   -- -> number | nil (manual pitch read-back)
+Engine.GetBarrelPitchAuto(unitId)       -- -> number, live sample (used by barrel_elevation_diag)
+Engine.ClearBarrelPitchOverride(unitId) -- clear one manual override
+Engine.ClearAllBarrelPitchOverrides()   -- clear all manual overrides
+Engine.SetPersistentBarrelPitch(typeId, deg)   -- persistent type-field path (M16 static experiment)
+Engine.ClearPersistentBarrelPitch(typeId)
+Engine.version -- string field on the Engine table ("0.2.0" in src; tracks code, not API.md version)
+```
+
+---
+
 # 📡 Callback Model
 
-LuaAPI uses a mod-table callback model for gameplay callbacks. Mods return a table and the loader dispatches implemented callback methods.
+LuaAPI uses a mod-table callback model for the per-frame gameplay callback. Mods return a table and the loader dispatches its `Update` method.
 
 A typical mod has the form:
 
 ```lua
 local MyMod = {}
-
-function MyMod.OnScenarioStart()
-    -- initialization
-end
 
 function MyMod.Update(frame)
     -- logical-frame gameplay logic
@@ -834,16 +1014,24 @@ end
 return MyMod
 ```
 
-The current engine also maintains callback registries for damage, scenario-start, and unit-destruction events.
+Engine event callbacks (`OnPreDamage`, `OnScenarioStart`,
+`OnUnitDestroyed`) are looked up as **globals**, not mod-table methods:
+defining `MyMod.OnPreDamage` alone never fires. Define a global
+function instead.
 
-### `OnPreDamage(...)`
+### `OnPreDamage(...)` (NOT WIRED — intended contract only)
 
-The damage interception callback is used by the verified shield/damage pipeline to modify damage before the engine completes damage resolution.
+> ⚠️ Status: the engine collects the global `OnPreDamage` reference
+> every frame but currently never invokes it with damage arguments —
+> no `ReceiveDamage` hook is installed in this build. Live engine
+> damage does NOT reach Lua. The contract below describes the intended
+> design for when interception is wired, not working behavior. Do not
+> build a reactive-armor mechanic on this callback yet.
 
-A typical implementation is:
+Intended form:
 
 ```lua
-function MyMod.OnPreDamage(attacker, target, damage, dmgType, frame, subc)
+function OnPreDamage(attacker, target, damage, dmgType, frame, subc)
     if dmgType == "energy" then
         return damage * 0.5
     end
@@ -852,7 +1040,7 @@ function MyMod.OnPreDamage(attacker, target, damage, dmgType, frame, subc)
 end
 ```
 
-Return semantics used by the verified capability:
+Intended return semantics (unverified live):
 
 - `nil` — leave damage unchanged
 - non-negative number — replace the damage value
@@ -862,15 +1050,31 @@ Return semantics used by the verified capability:
 
 ### `OnScenarioStart()`
 
-Used by mods for post-scenario initialization, such as configuring starting units.
+Dispatched as a global once when the logical frame counter reaches 1.
+
+```lua
+function OnScenarioStart()
+    -- post-scenario initialization
+end
+```
 
 > ⚠️ Do not assume this callback runs when a saved game is loaded. Runtime systems that require persistent state must account for the savegame lifecycle.
 
-### `OnUnitDestroyed(...)`
+### `OnUnitDestroyed(...)` (NOT DISPATCHED — contract without invocation)
 
-Used by the destruction-event pipeline for gameplay reactions and cleanup.
+Defined as a global, but in the current build it is **never invoked**: the
+C++ dispatch block (`lua_engine.cpp`, Gate 7.2) only fires when callback refs
+are already queued, and nothing ever queues them — the branch is unreachable.
+There is currently no destruction detection behind it. Do not build
+death-reactive logic on this callback; use ID-diff death detection instead.
+When (and if) a native death hook lands, the intended form is:
 
-The exact native payload should be kept synchronized with the implementation when the callback contract changes.
+```lua
+function OnUnitDestroyed(victim, killer)
+    if victim == nil then return end
+    -- not dispatched in the current build; intended form only
+end
+```
 
 ### `Update(frame)`
 
@@ -937,6 +1141,90 @@ CnCNet may launch `gamemd-spawn.exe`; integrations must therefore resolve the ac
 7. **Use 64-bit or floating-point arithmetic where squared spatial values can exceed 32-bit range.**
 8. **Drive gameplay timing from logical frames, not render FPS.**
 9. **Treat hook/signature mismatches as compatibility conditions to investigate, not automatically as fatal errors.**
+
+---
+
+# 🔭 Barrel Elevation (M16, experimental)
+
+Dynamic barrel pitch/elevation for voxel-turret units. The automatic mode is
+always on in the diagnostic mod: every unit with a voxel turret gets a
+distance-based pitch (8° at 4 cells → 55° at 14 cells) via a draw-time
+`FireAngle` swap in a `UnitClass::DrawAsVXL` detour (`src/barrel_pitch.cpp`).
+Draw-only, client-local, simulation untouched — CnCNet-safe.
+
+> ⚠️ **Asset requirement (proven 2026-09-20):** stock YR vehicles fuse turret
+> and barrel into one voxel, and `FireAngle` only rotates a SEPARATE barrel
+> voxel (ModEnc; community-confirmed). On stock units the mechanism applies
+> but cannot show visible movement. Visible elevation requires an asset with
+> a separate barrel voxel and/or a multi-frame turret HVA (pose frames).
+
+## `Engine.SetBarrelPitchOverride(unitId, pitchDegrees)`
+
+Manual pitch for one unit. `0` horizontal, `90` straight up, negative allowed
+(below horizontal), clamped to `[-90, 90]`.
+
+```lua
+Engine.SetBarrelPitchOverride(unitId, 35.0)
+```
+
+**Returns:** `true`.
+
+---
+
+## `Engine.SetBarrelPitchAuto(unitId, enabled)`
+
+Per-unit AUTO mode: pitch computed natively each draw call from the live
+target distance; without a target the unit draws vanilla.
+
+```lua
+Engine.SetBarrelPitchAuto(unitId, true)
+```
+
+**Returns:** `true`.
+
+---
+
+## `Engine.SetBarrelPitchAutoAll(enabled)`
+
+Global AUTO mode (used by the diagnostic mod, no keys): every voxel-turret
+unit — player and AI alike — pitches by its live target distance.
+
+```lua
+Engine.SetBarrelPitchAutoAll(true)
+```
+
+**Returns:** `true`.
+
+---
+
+## `Engine.GetBarrelPitchAutoCount()`
+
+Number of units that drew with an AUTO-computed pitch on recent frames.
+
+```lua
+local n = Engine.GetBarrelPitchAutoCount()
+```
+
+**Returns:** `number`.
+
+---
+
+## `unit:GetTurretAnimFrame()` / `unit:SetTurretAnimFrame(frame)` /
+## `unit:GetTurretAnimFrameCount()`
+
+HVA pose-frame access on the turret voxel (the TS elevation mechanism).
+`SetTurretAnimFrame` writes `TurretAnimFrame`; the engine wraps by
+`FrameCount`. `GetTurretAnimFrameCount` reads
+`Type->TurretVoxel.HVA->FrameCount` (0 for SHP turrets / no turret).
+
+```lua
+local count = unit:GetTurretAnimFrameCount()
+if count > 1 then
+    unit:SetTurretAnimFrame(count - 1) -- high pitch pose
+end
+```
+
+**Returns:** frame `number` / applied frame `number` / frame-count `number`.
 
 ---
 

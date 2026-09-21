@@ -15,6 +15,11 @@ It focuses on practical examples rather than API definitions:
 - How can modders reproduce the same functionality?
 
 > ⚠️ **Important:** Only mechanics explicitly marked as **VERIFIED** should be treated as proven capabilities of the current implementation.
+>
+> **Evidence authority (2026-09-20):** per-claim evidence grades live in
+> [`FSM/VERIFICATION.md`](../FSM/VERIFICATION.md); the project gate model and
+> pass/fail criteria live in [`PROJECT/GATES.md`](GATES.md). Where a case study
+> below and the ledger disagree, the ledger wins.
 
 ---
 
@@ -34,12 +39,16 @@ It focuses on practical examples rather than API definitions:
 
 # 🛡️ Case Study 1 — Sub-Frame Reactive Energy Shields
 
-**Status:** ✅ **VERIFIED**  
-**Reference implementation:** `shield_overload`
+**Status:** ⚠️ **CONTRACT DOCUMENTED, NOT WIRED IN CURRENT BUILD**
+(archive reference only — see note below)  
+**Reference implementation:** `shield_overload` (archived; uses a
+registration call that has no binding and a table-method callback the
+engine never dispatches)
 
-### 🎯 Outcome
+### 🎯 Outcome (intended — requires wired interception, NOT live)
 
-LuaAPI can intercept incoming damage before the engine applies it to the target.
+If `OnPreDamage` were wired, LuaAPI could intercept incoming damage before
+the engine applies it to the target.
 
 This makes it possible to implement:
 
@@ -80,20 +89,22 @@ damage damage  damage
 ### 📝 Lua Recipe
 
 ```lua
--- scripts/mods/shield_overload/main.lua
+-- Intended form (NOT live: the engine never invokes this today).
+-- Must be GLOBAL: table-method callbacks are never dispatched.
 
-local ShieldMod = {}
-
-function ShieldMod.OnPreDamage(attacker, target, damage, dmgType, frame, subc)
+function OnPreDamage(attacker, target, damage, dmgType, frame, subc)
     if dmgType == "energy" or dmgType == "explosive" then
         return damage * 0.5
     end
 
     return nil
 end
-
-return ShieldMod
 ```
+
+> The engine collects the global reference each frame but has no
+> `ReceiveDamage` hook, so live damage never reaches Lua in this
+> build. Keep this recipe as the intended contract, not a working
+> mechanic.
 
 ### ⚠️ Engineering Lessons
 
@@ -105,12 +116,18 @@ return ShieldMod
 
 # 💰 Case Study 2 — Dynamic Bounties & Economy
 
-**Status:** ✅ **VERIFIED**  
-**Reference implementation:** `bounty_hunter`
+**Status:** ⚠️ **RECIPE STALE — active `bounty_hunter` mod is inert**
+(it defines a table-method `OnPreDamage` the engine never dispatches,
+and its `Update` no-ops). Engine-credit writes themselves
+(`AddCredits`) are implemented; the event-driven bounty loop below is
+aspirational until damage events are wired.  
+**Reference implementation:** `bounty_hunter` (see note)
 
-### 🎯 Outcome
+### 🎯 Outcome (pattern works via aftermath polling; the event-driven loop below is aspirational)
 
-LuaAPI can implement dynamic credit rewards based on combat events.
+LuaAPI can implement dynamic credit rewards based on observed combat
+(aftermath polling, Command Authority pattern). Engine-credit writes
+(`AddCredits`) are implemented.
 
 This enables:
 
@@ -132,25 +149,22 @@ The general flow is:
 ### 📝 Lua Recipe
 
 ```lua
--- scripts/mods/bounty_hunter/main.lua
+-- Intended form (NOT live: damage events are not wired; also note the
+-- current PrintMessage takes text only, no color argument).
 
-local BountyMod = {}
-
-function BountyMod.OnPreDamage(attacker, target, damage, dmgType, frame, subc)
+function OnPreDamage(attacker, target, damage, dmgType, frame, subc)
     if attacker and attacker.GetOwner then
         local ownerHouse = attacker:GetOwner()
         local player = House.GetPlayer()
 
         if ownerHouse and player and ownerHouse == player then
             ownerHouse:AddCredits(50)
-            Engine.PrintMessage("[Bounty] +$50 combat reward", 2)
+            Engine.PrintMessage("[Bounty] +$50 combat reward")
         end
     end
 
     return nil
 end
-
-return BountyMod
 ```
 
 ### ⚠️ Engineering Lessons
@@ -170,8 +184,19 @@ Always validate the attacker before accessing its owner.
 
 # 🚢 Case Study 3 — Battle-Damaged Starting Fleet
 
-**Status:** ✅ **VERIFIED**  
-**Reference implementation:** `damaged_fleet`
+**Status:** ⚠️ **VERIFIED IN THE INITIAL RELEASE; STALE IN CURRENT BUILDS** —
+three independent staleness issues in the recipe below:
+1. it uses the **table-method** `OnScenarioStart`, and the current engine
+   dispatches only the **global** `OnScenarioStart` (see `API.md` Callback
+   Model) — convert to a global before reuse;
+2. it calls `unit:SetHealthRatio(0.35)` — the current binding takes a
+   **percent scale** (`API.md`: pass `35`, not `0.35`; fractional inputs
+   truncate toward ~0%);
+3. the reference mod lives in `scripts/mods_archive/damaged_fleet/`, not in
+   the active tree.
+The health/visual modifications themselves remain proven mechanics; the
+callback wiring and the scale in the recipe are what went stale.  
+**Reference implementation:** `damaged_fleet` (archived)
 
 ### 🎯 Outcome
 
@@ -198,11 +223,9 @@ The mod can then:
 ### 📝 Lua Recipe
 
 ```lua
--- scripts/mods/damaged_fleet/main.lua
+-- scripts/mods_archive/damaged_fleet/main.lua (archived; global form required)
 
-local FleetMod = {}
-
-function FleetMod.OnScenarioStart()
+function OnScenarioStart()  -- GLOBAL: a MyMod.OnScenarioStart method never fires
     local player = House.GetPlayer()
 
     if not player then
@@ -214,13 +237,11 @@ function FleetMod.OnScenarioStart()
             and unit:GetOwner() == player
             and unit:GetTypeName() == "DEST" then
 
-            unit:SetHealthRatio(0.35)
+            unit:SetHealthRatio(35)  -- percent scale (API.md); NOT 0.35
             unit:AttachParticleSystem("DamageSmokeSys")
         end
     end
 end
-
-return FleetMod
 ```
 
 ### ⚠️ Engineering Lessons
@@ -233,10 +254,15 @@ Use `OnScenarioStart()` for post-load initialization.
 
 ---
 
-# 🚢 Case Study 4 — Multi-Turret Batteries
+# 🚢 Case Study 4 — Multi-Turret Batteries — REMOVED 2026-09-21
 
-**Status:** ✅ **VERIFIED**  
-**Reference implementation:** `multi_turret_battleship`
+**Status:** 🔴 **REMOVED** — `SubTurretManager` (`src/sub_turret.*`), its
+bindings, the spawned-missile decoupling, `BulletHook`, `EventHook`, and
+`FireProjectile` were deleted (zero live consumers; per-frame sweep + hook
+overhead). The record below stands as history: bindings WERE verified in
+their time, the showcase mod was already absent from the tree.  
+**Reference implementation:** `multi_turret_battleship` (absent; see
+`FSM/MODDB_ALPHA_RELEASE.md` Small 3)
 
 ### 🎯 Outcome
 
@@ -309,11 +335,9 @@ Use 64-bit arithmetic for large coordinate differences.
 ### 📝 Lua Recipe
 
 ```lua
--- scripts/mods/multi_turret_battleship/main.lua
+-- (was scripts/mods/multi_turret_battleship/main.lua — absent from the tree)
 
-local MultiTurretMod = {}
-
-function MultiTurretMod.OnScenarioStart()
+function OnScenarioStart()  -- GLOBAL: a mod-table method never fires
     local player = House.GetPlayer()
 
     if not player then
@@ -331,6 +355,8 @@ function MultiTurretMod.OnScenarioStart()
         end
     end
 end
+
+local MultiTurretMod = {}
 
 function MultiTurretMod.Update(frame)
     if frame % 30 ~= 0 then
@@ -374,8 +400,15 @@ return MultiTurretMod
 
 # 🌐 Case Study 5 — CnCNet Multiplayer & Development Tools
 
-**Status:** ✅ **VERIFIED**  
-**Reference implementations:** `spawn_test`, `debug_console`
+**Status:** 🟡 **PRIMITIVES VERIFIED, BUNDLE NOT RE-RUN** —
+CnCNet attach, `SpawnUnit`, `GetSelectedUnits` each have live sessions on
+record (Gate 11/12.2/CA); the `OnDebugCommand` console path is source-wired
+(`CallDebugCommand`, pcall) with no live consumer on record; both reference
+implementations are archived/absent (see above). Re-run before showcasing
+as a bundle.  
+**Reference implementations:** `spawn_test` (`scripts/mods_archive/`), debug
+console (global `OnDebugCommand`; the `debug_console` mod file is not in the
+tree — the recipe below is the contract)
 
 ### 🎯 Outcome
 
@@ -427,7 +460,7 @@ This prevents gameplay logic from executing multiple times simply because one cl
 ### 📝 Lua Recipe — Development Spawn
 
 ```lua
--- scripts/mods/spawn_test/main.lua
+-- scripts/mods_archive/spawn_test/main.lua
 
 local SpawnTest = {}
 
@@ -453,8 +486,7 @@ function SpawnTest.Update(frame)
     )
 
     Engine.PrintMessage(
-        "Spawned " .. count .. " APOC",
-        1
+        "Spawned " .. count .. " APOC"
     )
 end
 
@@ -466,7 +498,7 @@ return SpawnTest
 `OnDebugCommand` is a global callback.
 
 ```lua
--- scripts/mods/debug_console/main.lua
+-- Global OnDebugCommand contract (no debug_console mod file in the tree).
 
 function OnDebugCommand(text)
     local count, typeId =
@@ -499,7 +531,16 @@ end
 # 🧩 Case Study 6 — Lua Gameplay Framework (Milestone 14)
 
 **Status:** 🔵 **FRAMEWORK LOGIC VERIFIED** (in-game runtime verification pending)  
-**Reference implementation:** `tactical_patrol` + [`docs/FRAMEWORK.md`](../docs/FRAMEWORK.md)
+**Reference implementation:** `tactical_patrol` (`scripts/mods_archive/`; the
+`scripts/mods/` path in older records is stale) + [`docs/FRAMEWORK.md`](../docs/FRAMEWORK.md)
+
+> Doc-sync note: the recipe below previously started from
+> `require("framework.init")` (`Framework.update` / `Framework.enableUnitEvents`
+> / `Framework.UnitController`). That module **does not exist in the tree** —
+> there is no `Framework.update` driver and no `unit_created`/`unit_destroyed`
+> emitter; `CombatStateTracker` emits `combat_unit_invalidated` /
+> `combat_state_changed`. Compose the leaf modules directly until and unless a
+> framework entry module lands.
 
 ### 🎯 Outcome
 
@@ -510,7 +551,8 @@ native bindings. It is pure Lua — no new native bindings — and provides:
 - **Timer** — frame-based `after`/`every`/`at` scheduling, cancellation.
 - **Query** — `enemies_in_range`, `nearest_enemy`, `units_by_house`, etc.
 - **Task** — `MoveTo`/`Attack`/`Wait` nodes with `Sequence`/`Loop` composites.
-- **UnitController** — one-unit `move_to`/`attack`/`patrol`/`stop`, tracked by id.
+- **CombatStateTracker** — id-keyed snapshots, `combat_state_changed` /
+  `combat_unit_invalidated` emissions (polled, not native).
 
 The goal is API **composability**, not API surface: a modder composes
 `UnitController:patrol(...)`, `Query.nearest_enemy(...)`, and an `onTaskDone`
@@ -531,22 +573,16 @@ Only add native primitive if missing ← M14 added none
 ### 📝 Lua Recipe — a composable guard
 
 ```lua
-local Framework = require("framework.init")
-local Controller = Framework.UnitController
-
-local function onTaskDone(_, _, mode)
-    if mode == "attack" then agent:patrol({ {x=90,y=90}, {x=120,y=90} }) end
-end
+-- Compose leaf modules directly (no UnitController module exists in-tree;
+-- scripts/framework/unit_controller.lua is the TacticalPatrol demo itself).
+local EventBus = require("framework.event_bus")
+local Query = require("framework.query")
+local Timer = require("framework.timer")
 
 function MyMod.Update(frame)
-    Framework.update(frame)
-    if agent then
-        agent:update(frame)
-        if not agent:has_task() then
-            local e = Framework.Query.nearest_enemy(agent:unit(), 300)
-            if e then agent:attack(e) else agent:patrol({ {x=90,y=90}, {x=120,y=90} }) end
-        end
-    end
+    Timer.update(frame)
+    -- per-unit logic here: Query.nearest_enemy(...) -> unit:attack(e),
+    -- tracked by id and re-resolved every frame (see CombatStateTracker).
 end
 ```
 
@@ -554,8 +590,8 @@ end
 
 - **Do not add a native binding "for convenience."** M14 added zero; every
   requirement was already solvable by composing `MoveTo`/`Attack`/`GetUnitsInRadius`.
-- **Never retain a stale `TechnoClass*`.** The controller tracks units by id and
-  re-resolves them each frame; `unit_destroyed` is a value snapshot, not a pointer.
+- **Never retain a stale `TechnoClass*`.** Track units by id and
+  re-resolve them each frame; death reports are value snapshots, not pointers.
 - **Session reset is handled by the VM.** Recreating the Lua state clears all
   listeners/timers/controllers; no framework cross-session leak.
 - **Timers must use logical frames** (not `os.time`) or you risk CnCNet OOS.

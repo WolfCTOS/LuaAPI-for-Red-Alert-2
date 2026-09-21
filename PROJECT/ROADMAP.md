@@ -2,9 +2,9 @@
 
 > **Target Platform:** `gamemd.exe` — Yuri's Revenge 1.001  
 > **Repository:** https://github.com/WolfCTOS/LuaAPI-for-Red-Alert-2  
-> **Current Release:** `v1.0.0` Production Release  
-> **Current Development:** Milestone 14 (Lua Gameplay Framework)  
-> **Last Updated:** September 11, 2026
+> **Current Release:** `v1.0.0` (historical tag; project operates as pre-public **Alpha** — see `FSM/MODDB_ALPHA_RELEASE.md`)  
+> **Current Development:** Feature freeze — documentation/gate reset (`PROJECT/GATES.md`); next research track: Dynamic Unit Behavior (`FSM/DYNAMIC_UNIT_BEHAVIOR.md`)  
+> **Last Updated:** September 20, 2026
 
 This roadmap tracks the evolution of LuaAPI from runtime embedding to safe native bindings, CnCNet integration, advanced combat systems, and Lua-driven tactical gameplay.
 
@@ -25,11 +25,14 @@ Milestone 14 runs on two tracks: **Track A** — a Lua-side gameplay framework o
 | Phase 3 | Milestone 7 — Spatial API & Events | ⚠️ CODE COMPLETE, RUNTIME ISSUES |
 | Phase 4 | Milestone 8 — Beta Hardening | ✅ DONE / VERIFIED |
 | Phase 5 | Milestone 9 — Production Release v1.0 | ✅ DONE / VERIFIED |
-| Phase 6 | Milestone 10 — Multi-Turret & Advanced Combat | 🟡 CORE COMPLETE |
+| Phase 6 | Milestone 10 — Multi-Turret & Advanced Combat | 🔴 REMOVED 2026-09-21 |
 | Phase 7 | Milestone 11 — CnCNet Compatibility & Dev Tools | ✅ DONE |
 | Phase 8 | Milestone 12 — Unit Control API & Tactical AI | 🟡 SHOWCASE VERIFIED |
 | Phase 9 | Milestone 13 — Event System Restoration | ⏸️ DEFERRED / OPEN |
 | Phase 10 | Milestone 14 — Lua Gameplay Framework + Runtime Research | 🔵 LOGIC VERIFIED; ✅ 14.8 SHOWCASE VERIFIED / 🔬 RESEARCH ACTIVE |
+| Phase 11 | Milestone 16 — Dynamic Barrel Elevation | 🟢 LOGIC COMPLETE — awaiting separate-barrel-voxel asset |
+| Phase 12 | Feature freeze — documentation/gate reset | 🔵 IN PROGRESS (`PROJECT/GATES.md`) |
+| Phase 13 | Dynamic Unit Behavior research | ⚪ READY FOR RESEARCH (`FSM/DYNAMIC_UNIT_BEHAVIOR.md`, DU-1..DU-4) |
 
 ---
 
@@ -64,15 +67,30 @@ Established the C++ ↔ Lua bridge for engine-backed `TechnoClass` objects.
 
 Implemented interception around the engine damage-processing path.
 
+> Source audit (2026-09-20): the current tree collects the *global*
+> `OnPreDamage` reference every frame (`src/lua_engine.cpp`) but
+> contains **no invocation site and no `ReceiveDamage` hook**, so live
+> engine damage does not reach Lua. More precise than "race
+> conditions": the call was never wired, not merely racy. Restoration
+> scope is the invocation path itself (Milestone 13).
+
 ### [x] Gate 4.2 — Damage Modification Pipeline
 
 Lua can pass damage through, modify it, or return `0` to cancel it.
+
+> Same audit note as 4.1: contract documented, invocation unwired.
+> Treat as intended design, not working behavior.
 
 ### [x] Gate 4.3 — `shield_overload` Validation
 
 Validated through the `shield_overload` showcase.
 
 **Status:** ✅ VERIFIED in the initial release; ⚠️ BROKEN in current builds.
+
+> The archived consumer additionally uses `game_RegisterEvent`, which
+> has no binding, and a table-method callback the engine never
+> dispatches — so the showcase cannot validate anything today even
+> apart from the missing invocation.
 
 ---
 
@@ -121,20 +139,42 @@ Validated lifecycle and economy APIs through the `bounty_hunter` showcase.
 
 **Status:** ✅ VERIFIED in the initial release; ⚠️ BROKEN in current builds due to the event system.
 
+> Audit note (2026-09-20): triple-dead — table-method `OnPreDamage` (global
+> lookup only), `OnPreDamage` itself unwired, nonexistent `house_AddCredits`
+> call. Removed from `scripts/active_mods.txt`; kept as historical reference
+> mod (`PROJECT/DECISIONS.md`, Gate 1 item 2).
+
 ---
 
 ## [x] Milestone 7 — Alpha-2: Spatial Map API & Extended Events
 
 > **Status:** ⚠️ **CODE COMPLETE, RUNTIME ISSUES**  
 > Spatial queries work. Event hooks (`OnScenarioStart`, `OnUnitDestroyed`) are implemented but do not fire due to initialization race conditions and missing `pcall`. The `damaged_fleet` showcase has syntax errors and does not load. Restoration is planned for Milestone 13.
+>
+> Source audit (2026-09-20): the "race conditions" framing is imprecise.
+> `OnScenarioStart` **does** fire (global lookup at logical frame 1, pcall —
+> `src/lua_engine.cpp:1028-1084`); `OnUnitDestroyed` was **never wired** — its
+> dispatch branch is unreachable (no queued refs, `nil` payload by design of a
+> path that cannot execute), not merely racy. `damaged_fleet` additionally uses
+> a table-method callback the engine never dispatches. Restoration scope is the
+> invocation path itself (Milestone 13).
 
 ### [x] Gate 7.1 — `OnScenarioStart`
 
 Implemented post-scenario initialization callbacks.
 
+> Audit note: dispatched as a global once at logical frame 1; does NOT fire
+> on savegame load. Working as designed; lifecycle caveat documented in `API.md`.
+
 ### [x] Gate 7.2 — `OnUnitDestroyed`
 
 Implemented destruction-event handling for gameplay systems.
+
+> Audit note (2026-09-20): contract without invocation — never dispatched in
+> the current build (unreachable dispatch branch, no native death hook). The
+> `[x]` above is the historical record; treat as intended design, not working
+> behavior. Death detection today is ID-diff polling (Command Authority
+> pattern).
 
 ### [x] Gate 7.3 — Spatial Queries
 
@@ -186,13 +226,24 @@ Published LuaAPI for external C&C modding communities and testers.
 
 **Release status:** ✅ `v1.0.0`
 
+> Currency note (2026-09-20): despite the v1.0 mark above, the project
+> currently operates as a pre-public Alpha (see AGENTS.md status and
+> `FSM/MODDB_ALPHA_RELEASE.md`, which is the operative release
+> checklist). Do not cite this milestone as evidence of a finished
+> public release.
+
 ---
 
-## 🟡 Milestone 10 — Multi-Turret & Advanced Combat
+## 🔴 Milestone 10 — Multi-Turret & Advanced Combat — REMOVED 2026-09-21
 
-> **Status:** 🟡 **CORE COMPLETE**  
+> **Status:** 🔴 **REMOVED** (was 🟡 CORE COMPLETE) — implementation
+> (`SubTurretManager`, bindings, missile decoupling, `BulletHook`,
+> `EventHook`, `FireProjectile`) deleted: zero live consumers in `scripts/`
+> plus per-frame full-array sweep and per-detonation hook overhead. Gates
+> below stand as the historical record; do not treat them as current
+> capabilities.  
 > **Version target:** `v1.1`  
-> **Goal:** Break the vanilla single-target / single-turret limitation while keeping native C++ systems passive and Lua-driven.
+> **Goal (historical):** Break the vanilla single-target / single-turret limitation while keeping native C++ systems passive and Lua-driven.
 
 ### [x] Gate 10.1 — Sub-Turret Memory Model & Lifecycle
 
@@ -228,6 +279,10 @@ unit:FireSplitSalvo()
 Validated through `multi_turret_battleship`.
 
 **Status:** ✅ VERIFIED
+
+> Doc-sync note: the mod is absent from `scripts/` (only a stale copy under
+> `build/Release/scripts/mods/`); re-verify on the current build before
+> showcasing (same condition as `FSM/MODDB_ALPHA_RELEASE.md` Small 3).
 
 ### [x] Gate 10.5 — Spawned Missile Decoupling
 
@@ -306,12 +361,16 @@ Fixed house userdata caching (`PushHouse` caches `HouseClass* → Lua registry r
 
 Added the `patrol_demo` showcase: anchors a combat unit (skips MCV), patrols between two points, engages enemies in radius with a 100-frame cooldown, and ignores neutrals/civilians/vehicles.
 
+> Doc-sync note: `patrol_demo/` is not present in the source tree (no record
+> under `scripts/`); the showcase record above stands as history.
+
 **Implementation status:** ✅ COMPLETE  
 **Runtime verification:** ✅ VERIFIED
 
 ### [x] Gate 12.2 — Dynamic Objective Defense
 
-Created `dynamic_objective_defense`, a public showcase mod that:
+Created `dynamic_objective_defense` (not present in the source tree — record
+stands as history), a public showcase mod that:
 
 1. Selects a unit manually and activates the defender with **Numpad1**.
 2. Scans `World.GetBuildings()` for an objective (`CAOILD`, `CAHOSP`, `CAAIRP`, or a captured `CA*` building).
@@ -376,8 +435,12 @@ Hotkey spam and mixed multi-select behavior are also not stress-tested. `World.G
 > `OnScenarioStart` / `OnUnitDestroyed` / `OnPreDamage`) is **not yet complete**,
 > and the native event callbacks are not wired in the current build. M14 does
 > **not** rebuild that event system. The framework drives itself from `Update()`
-> (the one callback the loader reliably dispatches) and provides `unit_created` /
-> `unit_destroyed` through a low-frequency poll behind the EventBus instead.
+> (the one callback the loader reliably dispatches). (`OnScenarioStart` fires
+> at frame 1; `OnPreDamage`/`OnUnitDestroyed` never fire — see `API.md`.)
+> Polling-based death/state observation behind the EventBus uses the
+> `combat_unit_invalidated` / `combat_state_changed` names (there is no
+> `unit_created` / `unit_destroyed` emitter and no `Framework.update` driver
+> in the tree).
 >
 > **Native constraint respected:** exactly **zero** native bindings were added.
 > Every primitive the framework needs (`MoveTo`, `Attack`, `Stop`, `GetPosition`,
@@ -453,6 +516,9 @@ behind it, and the file required `framework.init` back, which recursed into a
 C stack overflow for every `require("framework.init")` consumer (fixed by
 switching it to leaf requires). Gate 14.5 needs the module written, not just
 a consumer wired.
+> Doc-sync note: `scripts/framework/unit_controller.lua` still returns the
+> TacticalPatrol demo (`UnitControl = nil` by its own header comment) — no
+> UnitController module exists in the tree.
 
 ### [x] Gate 14.6 — Framework integration
 
@@ -462,6 +528,12 @@ driver (`Framework.update(frame)`) plus an opt-in unit event tracker
 and `unit_destroyed` (id + value snapshot — never a stale pointer). The first
 scan seeds silently. Session reset is handled inherently by VM recreation.
 
+> Doc-sync note: `scripts/framework/init.lua` **does not exist in the tree** —
+> there is no `Framework.update` driver and no `unit_created`/`unit_destroyed`
+> emitter. The `[x]` above is the historical record. Leaf modules
+> (`event_bus`, `timer`, `query`, `task`, `combat_state`) exist; polled death
+> observation emits `combat_unit_invalidated` / `combat_state_changed`.
+
 **Status:** ✅ FRAMEWORK LOGIC VERIFIED.
 **In-game:** 🔴 OPEN — Smart AI bypasses `Framework.update()` and drives
 `ForceGroup` directly; the polled `unit_created`/`unit_destroyed` events have
@@ -470,7 +542,9 @@ subscribing kill-confirmations (also feeds 14.8 evidence).
 
 ### [x] Gate 14.7 — Tactical Patrol showcase
 
-Implemented `scripts/mods/tactical_patrol/`: a combat unit patrols two flanks,
+Implemented `scripts/mods_archive/tactical_patrol/` (archived; the
+`scripts/mods/` path in older records is stale): a combat unit patrols two
+flanks,
 breaks off to attack via `Query.nearest_enemy`, and auto-resumes patrol via the
 controller's `onTaskDone` hook. Demonstrates the full
 `UnitController → Task → Query → EventBus/Timer → native primitives` stack.
@@ -501,6 +575,10 @@ independent same-frame decisions per squad (`squad_2 CHANGETARGET` while others
 zero `FRAMEWORK-ERR` after the integer-cell centroid fix (was 6348 in 2
 pre-fix sessions); zero neutral/civilian targets; zero MCV drafts. Consumer:
 Smart AI squads (merged from `tactical_reassess`), driven via `squadTick`.
+> Doc-sync note: the showcasing `multi_force` mod is archived and the current
+> `smart_ai/main.lua` (rally + capture guard, 232 lines) contains no squads
+> and no `squadTick` — the sessions stand as records; the consumer wiring does
+> not exist in the current tree.
 Caveat (accepted for balance, unrelated to the showcase): Smart AI base defense
 is off by an unresolved scoping error, so `[AI] attack` lines are absent.
 
