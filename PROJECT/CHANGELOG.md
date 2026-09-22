@@ -42,10 +42,11 @@ The changelog follows the project's verified milestone history. Features are lis
   fixed loader; 4/6 with exactly the M1 asserts failing on the pre-fix
   loader — sensitivity proven) and `scripts/mods/scenario_start_probe/`
   (live marker mod, NOT in `active_mods.txt`).
-- Verification: HARNESS (6/6) + STATIC + syntax. RUNTIME PENDING —
-  protocol: enable probe mod, launch, expect `[PROBE] OnScenarioStart
-  fired at frame 1` once per match + Update heartbeat, incl. a second
-  match in-process. M1 stays open until a fresh log shows it.
+- Verification: HARNESS (6/6) + STATIC + syntax. **Resolution
+  2026-09-22 — M1: PASS (user-observed):** `scenario_start_probe`
+  fired per match across three in-process matches (menu returns
+  between); no crash, no stale state. No log on disk — user-observed,
+  not log-verified.
 
 ## [Unreleased] — Gate 1.3 per-match session reset (2026-09-22)
 

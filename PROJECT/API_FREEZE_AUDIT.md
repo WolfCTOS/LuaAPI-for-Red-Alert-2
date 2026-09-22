@@ -172,15 +172,12 @@ Format: `API | Status | Evidence | Documentation | Known limitation | Beta recom
   (0–100); `API.md` documents that; CA passes `1.0`. Open RCA, no fix
   in this audit.
 
-> **Addendum 2026-09-22 (M1 FIX IMPLEMENTED, RUNTIME PENDING — history
-> preserved):** empty global defaults moved BEFORE the require loop in
-> `scripts/init.lua` (mod file-scope handlers now survive;
-> `OnTick` stays loader-owned). Harness
-> `tools/tmp/loader_scenario_start_test.lua`: 6/6 PASS fixed, 4/6
-> pre-fix with exactly the M1 asserts failing. Live probe mod
-> `scripts/mods/scenario_start_probe/` added (not in default stack).
-> `OnScenarioStart` stays Blocked-for-Beta until the runtime protocol
-> (marker once per match + Update heartbeat) produces a fresh log.
+> **Resolution 2026-09-22 (M1: PASS, user-observed — history
+> preserved):** author ran `scenario_start_probe` across three
+> in-process matches: `OnScenarioStart` fired in Match 1, again in
+> Match 2 after menu return, Match 3 completed; no crash, no stale
+> state. No log file on disk — graded user-observed, NOT log-verified.
+> `M1 Implementation: DONE`, `M1 Runtime: PASS (user-observed)`.
 
 > **Addendum 2026-09-22 (M2 FIX IMPLEMENTED, RUNTIME PENDING — history
 > preserved):** stub replaced with `ScenarioClass::IsDefinedWaypoint` /

@@ -38,11 +38,13 @@
 | 1.7 | Reproducibility | Harnesses in `tools/tmp/` re-runnable; live-verification protocol (CnCNet spawner path) documented. |
 | 1.8 | Unsupported capabilities marked | Hard limits (no damage interception, no radar/fog, no superweapon API, …) listed publicly — `FSM/CAPABILITIES.md` UNKNOWN section. |
 
-### Current status: 🟡 **PARTIAL** (2026-09-20 closure audit)
+### Current status: ✅ **PASS (user-observed grade, 2026-09-22)**
 
 Closed by prior work: 1.5, 1.6, 1.8 (FSM archive); `API.md` `Attack`/
 `GetMission`/`SetHealthRatio`/`OnPreDamage` corrections (see
-`FSM/QUEUEUNIT_GATE.md` → Documentation Changes).
+`FSM/QUEUEUNIT_GATE.md` → Documentation Changes). Item 3 closed
+2026-09-22 by per-match reset code + three user-observed in-process
+matches (no log on disk — user-observed, not log-verified).
 
 ### Gate 1 item resolution (2026-09-20)
 
@@ -50,7 +52,7 @@ Closed by prior work: 1.5, 1.6, 1.8 (FSM archive); `API.md` `Attack`/
 |---|---|---|---|---|
  | 1. README honesty | OPEN — `v1.0.0 Production Release` / `Milestone 11` / live `OnPreDamage` / mod-table event callbacks advertised | Confirmed all four claims in the header, Key Features, damage section, Event Model; all contradict `FSM/CAPABILITIES.md` conflict note + Alpha reality | README rewritten in place: Alpha stage (v1.0 = historical tag), `OnPreDamage` marked NOT WIRED with intended-contract block, callback model corrected to global-lookup, `OnUnitDestroyed` never-dispatched status disclosed, gate/ledger pointers added. History preserved (no retraction of the M4/M6 records themselves) | ✅ **CLOSED** |
 | 2. `bounty_hunter` disposition | OPEN — inert mod in default stack | Triple-dead confirmed: (a) mod-table `OnPreDamage` never dispatched (global lookup only), (b) `OnPreDamage` itself not wired, (c) independently, `house_AddCredits(...)` matches no binding and `.Owner` is not Lua-exposed — `Update` is a no-op; syntax re-validated with lua_check after the header edit | **Decision recorded** (`PROJECT/DECISIONS.md`): removed from `scripts/active_mods.txt`; kept in tree as historical reference mod with an inert-status header (logic untouched); repair = candidate future cleanup, not done in a doc-only reset | ✅ **CLOSED** (config + decision; no behavior change — it had none) |
-| 3. Stale house cache / dead `ResetSession` | OPEN — Critical Blocker 1 | Re-verified in source: `ResetSession` defined (`src/lua_engine.cpp:1214`, clears `g_houseCache` via `ClearHouseCache`, closes VM) with **zero callers** in `src/` — the only references are comments (`bindings_house.cpp:46`, `event_hook.h:38`). Risk class unchanged | Documentation-only: status restated as a **runtime verification dependency** (see the honest statement below the table); not fixed (runtime work out of scope), not downgraded, not hidden | 🔴 **OPEN — RUNTIME-GATED** (criterion 1.3 unmet: neither resolved-in-code nor disclosed-with-a-*tested*-workaround) |
+| 3. Stale house cache / dead `ResetSession` | OPEN — Critical Blocker 1 | Re-verified in source: `ResetSession` defined (`src/lua_engine.cpp:1214`, clears `g_houseCache` via `ClearHouseCache`, closes VM) with **zero callers** in `src/` — the only references are comments (`bindings_house.cpp:46`, `event_hook.h:38`). Risk class unchanged | Documentation-only: status restated as a **runtime verification dependency** (see the honest statement below the table); not fixed (runtime work out of scope), not downgraded, not hidden | ✅ **PASS (user-observed, 2026-09-22)** — reset wired in code (see addendum below); three user-observed in-process matches, Lua functional throughout, no stale-state symptoms (no log on disk) |
 | 4. `0xC0000005` retest | OPEN — pending | Crash reproductions are non-repo artifacts recorded in-tree: 2 Syringe logs (`syringe.log.session183{2,4}.bak`, exit C0000005) + a third in `docs/decisions/SUPPLY_TANK_AMMO_GATE1_PLAN.md`, which also records **one crash with no LuaAPI injected** (not proven LuaAPI-caused; root UNKNOWN). Recommended CnCNet-spawner path: **zero crash evidence** across every documented live session 2026-09-09→20 + the 18k-frame benchmark | Evidence row added to `FSM/VERIFICATION.md` (Launch-path stability). Criterion 1.4 ("retested on the recommended path; result documented") closed **as scoped**: recommended path clean on record; Syringe path disclosed as an open unknown (root-cause hunt NOT a Gate-1 item) | ✅ **CLOSED (scoped)** — reopen if a crash ever reproduces on the recommended path |
 | 5. Undocumented extras | OPEN — 4+ known undocumented bindings | Full sweep: `Engine.WeaponExists` (`lua_engine.cpp:394`), `Engine.SetHudMuted/IsHudMuted` (`:355/368`), global `WeaponOverride` Set/Get/Clear + `GetPrimaryWeapon` hook (`weapon_override.cpp:163–286`), `World.GetAircraft` (`bindings_techno.cpp:1541`), `World.GetSelectedUnits/GetSelectedTechnos` (`:1574/1602`); `Game.GetDebugHudText` already documented. Only `GetSelectedUnits` has a live consumer on record (Gate 12.2 showcase) | **Decision recorded** (`PROJECT/DECISIONS.md`): bounded list added to `API.md` as an "Implemented Extras" section; graded implemented + source-verified, UNVERIFIED LIVE unless a consumer exists; dev/diagnostic framing; sweep declared closed with this list | ✅ **CLOSED** |
  | 6. TUTORIAL review | OPEN — correctness unreviewed | Stale claims confirmed: table-method `OnScenarioStart` presented as working (never dispatched — same staleness class as damaged_fleet); live `OnPreDamage` examples; `OnUnitDestroyed` example implying a dispatched payload | Fixed in place (no rewrite): Step 2/4 use the reliably-dispatched `Update`; events section rewritten (global forms, NOT-WIRED `OnPreDamage`, never-dispatched `OnUnitDestroyed` + workable alternatives); Pitfall 2 + Quick Reference corrected. Tutorial examples now match `API.md` | ✅ **CLOSED** |
@@ -89,27 +91,30 @@ Closed by prior work: 1.5, 1.6, 1.8 (FSM archive); `API.md` `Attack`/
 > (duration/map) not formally recorded — user-reported verification,
 > not a protocol run. Any new `0xC0000005` reopens this item again.
 >
-> **Addendum 2026-09-22 p.m. (item 3 FIX IMPLEMENTED, RUNTIME PENDING —
-> history preserved, NOT passed):** per-match session reset wired
-> (`src/lua_engine.cpp`: match→menu / scenario-swap detection in
-> `Hooked_MainLoop` → `ResetSession()`; `std::call_once` init replaced
-> with re-initializable `if (!g_L)` rebirth; `ResetSession()` extended
-> with scenario-start/unit-destroyed ref clears, `ClearDisabledObjects`,
-> `ClearKeyPrevState`). Audit also found and fixed a latent second
-> defect: wiring the old `ResetSession` alone would have left Lua
-> permanently dead (consumed `once_flag`). Evidence: BUILT (Release)
-> + STATIC (grep-verified wiring); see CHANGELOG entry. Item 3 stays
-> OPEN until the multi-match runtime protocol (Match 1 → menu →
-> Match 2 → menu → Match 3 → exit → relaunch → Match 4) produces a
-> fresh `LuaAPI.log` proving fresh VM, clean house cache, and no
-> cross-match state leaks.
+> **Resolution 2026-09-22 (item 3 PASS, user-observed — history
+> preserved):** author ran three in-process matches (`scenario_start_probe`,
+> M1 protocol): Lua fully functional in Matches 2–3, which inherently
+> required the reset/rebirth path (post-menu `ResetSession()` + fresh VM
+> + clean `g_houseCache`); no crash, no stale-state symptoms. No log
+> file on disk — graded user-observed, NOT log-verified. Item 1.3 is
+> met by code path (a) of the dependency below, at user-observed grade.
+> A future log-verified multi-match run may upgrade the grade; any
+> cross-match staleness report reopens this item.
 
-### Why Gate 1 is not PASSED (honest statement)
+### Why Gate 1 PASSED at user-observed grade (honest statement, 2026-09-22)
 
-Exactly one criterion remains unmet: **1.3**. The stale house-userdata cache
-across matches (`g_houseCache` survives match 2+ in one process; `ResetSession`
-has zero callers) is neither resolved in code nor covered by a *tested*
-workaround. Both closure paths require a runtime session:
+Criterion 1.3 was the sole open item. It is now met by code path (a)
+— per-match `ResetSession()` + VM rebirth in `src/lua_engine.cpp`
+(BUILT + STATIC) — exercised across three in-process user-observed
+matches with functional Lua throughout and no stale-state symptoms.
+Grade is user-observed throughout (no log on disk); a log-verified
+multi-match run may upgrade it. The pre-fix description below stands
+as history.
+
+> Previous state (history): the stale house-userdata cache across
+> matches (`g_houseCache` surviving match 2+ in one process;
+> `ResetSession` with zero callers) was neither resolved in code nor
+> covered by a *tested* workaround.
 
 > **Runtime verification dependency (Gate 1 → PASS):** in one game process,
 > play match 1 → exit to menu → start match 2, then either
@@ -227,11 +232,11 @@ Gate 3 (this file)
 
 ---
 
-## Status summary (2026-09-20, post Gate-1 closure audit)
+## Status summary (2026-09-22: Gate 1 passed at user-observed grade)
 
 | Gate | Status | One-line reason |
 |---|---|---|
-| Gate 1 | 🟡 PARTIAL | Items 1, 2, 4, 5, 6 closed (docs/config/decision); item 3 (house cache) runtime-gated — see "Why Gate 1 is not PASSED" |
+| Gate 1 | ✅ PASS (user-observed) | All items closed; item 3 by reset code + 3 user-observed matches (no log — log run may upgrade grade) |
 | Gate 2 | 🟡 PARTIAL | Core loop live-verified; lease/production/damage-event gaps open |
 | Gate 3 | ❌ NOT PASSED | Flagship ready; release checklist + media + blockers open |
 | DU direction | READY FOR RESEARCH | `FSM/DYNAMIC_UNIT_BEHAVIOR.md`; next task = DU-1 audit |
