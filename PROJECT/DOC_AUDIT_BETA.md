@@ -106,6 +106,14 @@ harness-only, stub, or internal leaks into the Beta promise.
 > error, healthy-mod continuation, dedup, re-log on change;
 > pre-fix loader fails exactly the error asserts). Live-game error
 > surfacing still needs a runtime run — E1 stays open until then.
+>
+> Live-session note 2026-09-22 (`LuaAPI.log` 18:28–18:38, ~10 min,
+> 313+ `Update` calls per mod across 5 healthy mods, zero error lines,
+> M1/M2 probe markers nominal): the E1-modified `OnTick` loop ran
+> cleanly at volume — no-regression support only. No failing mod was
+> present, so the `if not ok` branch never executed live; the
+> error-path criteria remain without runtime evidence. E1 Runtime
+> still PENDING.
 
 ## F. BETA-READY DOCUMENTATION
 
