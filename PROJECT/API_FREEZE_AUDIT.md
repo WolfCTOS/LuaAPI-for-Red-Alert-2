@@ -211,6 +211,18 @@ Format: `API | Status | Evidence | Documentation | Known limitation | Beta recom
    normal behavior, documented tuning, harnessed).
 5. `target_reselect` (default stack) has no restart guard (unlike the
    other four stack mods) — add or document before Beta.
+   **RESOLVED 2026-09-22 (PASS — no guard required, audit-only):** the
+   mod's sole persistent state is `victims` (id → primitives, no
+   userdata, no timers, no EventBus, requires only stateless
+   `framework.util`); it dies with the VM in `ResetSession()` and is
+   re-created by the per-match require, so cross-match staleness is
+   impossible by construction. Double-init within a match is
+   impossible (single require per VM). Remaining edge is cosmetic
+   only: no frame-backwards guard means a savegame load may log one
+   spurious VICTIM/VICTIM_LOST line; orders still require live
+   attackers + live threat, self-corrects next tick. Existing
+   harness `reset()` clears fixtures only — no restart test exists,
+   none needed for this state shape.
 6. Clean-machine install test + external modder test not performed
    (Steps 6–7) — no evidence either way.
 
