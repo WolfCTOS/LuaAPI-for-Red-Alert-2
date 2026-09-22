@@ -191,6 +191,13 @@ Format: `API | Status | Evidence | Documentation | Known limitation | Beta recom
 > (2+ distinct positions matching the map + `nil` for invalid ids +
 > second-match re-probe) produces a fresh log.
 
+> **Resolution 2026-09-22 (M2 GetWaypoint: PASS, user-observed — history
+> preserved):** author ran `waypoint_probe` in two in-process matches:
+> valid ids returned distinct correct positions, `-1`/`702` → `nil`,
+> identical behavior after menu return, no crash or stale state. No log
+> file on disk — graded user-observed, NOT log-verified. `GetWaypoint`
+> enters the Beta-promisable surface under its documented contract.
+
 ## 7. Remaining Beta blockers from this audit
 
 1. Gate 1.3 runtime evidence pending (unchanged by this audit).

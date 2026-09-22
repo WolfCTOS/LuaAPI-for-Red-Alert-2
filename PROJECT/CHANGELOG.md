@@ -24,9 +24,10 @@ The changelog follows the project's verified milestone history. Features are lis
   menu → second-match re-probe).
 - Verification: BUILT (Release, exit 0) + STATIC + probe syntax. No
   headless harness possible (native Scenario state unmockable — same
-  class as QueueUnit). RUNTIME PENDING — M2 stays open until a fresh
-  log shows 2+ distinct waypoint positions matching the map's
-  `[Waypoints]` plus `nil` for invalid ids.
+  class as QueueUnit). **Resolution 2026-09-22 — M2 GetWaypoint: PASS
+  (user-observed):** `waypoint_probe` verified in two in-process
+  matches; valid waypoint coordinates matched the map; invalid IDs
+  returned nil. No log on disk — user-observed, not log-verified.
 
 ### Fixed — loader order only (`scripts/init.lua`, no C++/API/gameplay change)
 

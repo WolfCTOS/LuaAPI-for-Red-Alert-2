@@ -28,8 +28,8 @@ Evidence levels are never mixed. Column meanings:
 |---|---|
 | Harness | N/A BY DESIGN — native `ScenarioClass` state is unmockable headless (same class as QueueUnit); no mock asserts would prove engine behavior |
 | Static | `game_GetWaypoint` + `ReadWaypointSafe` SEH helper (`src/bindings_techno.cpp`); YRpp-pinned `IsDefinedWaypoint [0..701]` / `GetWaypointCoords`; probe mod syntax-checked |
-| Runtime | PENDING — protocol: `[WPPROBE]` block, 2+ distinct positions matching the map's `[Waypoints]`, `nil` for invalid ids, re-probe after menu → second match |
-| User-observed | none |
+| Runtime | USER-OBSERVED PASS 2026-09-22 (no log on disk — recorded as user-observed, NOT log-verified): probe enabled in-game; Match 1 valid ids returned distinct correct positions; `-1`/`702` → `nil`; Match 2 after menu return behaved identically; no crash, no stale state |
+| User-observed | author ran `waypoint_probe` in two in-process matches and confirmed all six M2 criteria |
 | Limitations | `cell` field of the stub era removed (only `{x, y}` promised); colon-call form errors like all plain namespace functions |
 
 ### War Reporter (ARCHIVED)
