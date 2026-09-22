@@ -68,6 +68,27 @@ Closed by prior work: 1.5, 1.6, 1.8 (FSM archive); `API.md` `Attack`/
 > (referenced by older records) is absent from disk — archive references
 > remain historical until re-verified.
 
+> **Addendum 2026-09-22 (item 4 REOPENED by its own rule, history preserved):**
+> a `0xC0000005` reproduced ON the recommended path — CnCNet client →
+> SyringeEx (`gamemd-spawn.exe` + Ares + Phobos + spawner, 2761 hooks) →
+> injector OK → ~3 min match → write-AV `0xC0000005 at 0x007BA745`
+> (second-chance `0x007BC806`), exit C0000005. Lua layer healthy to the
+> end (no `OnTick`/SEH/CRITICAL lines; last `LuaAPI.log` 12:30:35, crash
+> 12:30:37). Prime suspect (correlated, NOT proven): bounty-overlay draw
+> path — faulting `EBX (0x0D5A3570)` equals the `surfP` of the active
+> bounty mark (id `1047757`, coords jumping incl. negatives); our
+> minidump wrote 0 bytes (dumper failure, secondary issue). The "zero
+> crash evidence on the recommended path" claim above stands as history
+> up to 2026-09-20; item 4 returns to OPEN until the draw path is
+> exonerated or fixed and a clean session is recorded.
+>
+> **Resolution 2026-09-22 p.m. (item 4 re-CLOSED, scoped):** user
+> live-tested the fixed build — clean session, no crash, one rectangle
+> as predicted. Fix: Composite-only paint + once-per-frame guard
+> (`src/barrel_pitch.cpp`, CHANGELOG entry). Session details
+> (duration/map) not formally recorded — user-reported verification,
+> not a protocol run. Any new `0xC0000005` reopens this item again.
+
 ### Why Gate 1 is not PASSED (honest statement)
 
 Exactly one criterion remains unmet: **1.3**. The stale house-userdata cache

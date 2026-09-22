@@ -6,6 +6,23 @@ The changelog follows the project's verified milestone history. Features are lis
 
 ---
 
+## [Unreleased] — Bounty-overlay crash fix (2026-09-22)
+
+### Fixed — `src/barrel_pitch.cpp` (draw path only, no gameplay change)
+
+- Root cause (confirmed by user observation + code inspection): the bounty
+  overlay painted on BOTH Primary and Composite surfaces — the "two
+  rectangles" seen at crash time. The 2026-09-22 crash session faulted
+  with our Primary surface pointer in `EBX` (`0x0D5A3570`).
+- Fix: Composite-only painting (Primary solely as null-fallback) + one
+  paint per unit per logical frame (double-draw ghost guard,
+  `s_paintedFrame`, pruned with the mark). Belt-and-braces comments
+  updated. `DrawText`/`DrawRect` signatures verified against
+  `third_party/YRpp/Surface.h`; detour reads remain SEH-guarded.
+- Verification: clean Release rebuild + redeploy (BUILT + STATIC).
+  Live confirmation pending: one rectangle expected, no crash on the
+  bounty session. Gate 1 item 4 stays OPEN until then.
+
 ## [Unreleased] — Milestone 10 removal (2026-09-21)
 
 ### Removed — multi-turret & advanced combat stack

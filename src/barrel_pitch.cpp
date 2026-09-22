@@ -63,6 +63,10 @@ struct BountyMark {
 };
 std::unordered_map<unsigned int, BountyMark> g_bountyMarks;
 
+// Crash fix 2026-09-22: last painted logical frame per mark (double-draw
+// ghost guard — one paint per unit per frame). Pruned with the mark.
+std::unordered_map<unsigned int, unsigned int> s_paintedFrame;
+
 // Diagnostic draw mode (crash isolation A-E): 0=off, 1=rect only,
 // 2=text only, 3=full. Read in the detour on the game thread, written
 // from the Lua game thread (same thread) or the debug console - no lock.
@@ -225,16 +229,13 @@ static bool BountyIdPresentSafe(unsigned int unitId) {
 // uses: position from pLocation, fixed offsets). Half-extents are a chosen
 // marker size (~Rhino footprint), NOT derived from BoundingRect.
 //
-// Gate 3A flicker probe: the scene may be composed on Composite and blitted
-// to Primary (or vice versa), so a Primary-only overlay can be erased by the
-// compose pass. Until the surface topology is proven by the frame probe
-// below, the mark is painted on BOTH Primary and Composite (whichever exist
-// and differ) — negligible cost for a single target, strictly temporary
-// belt-and-braces to be removed once the probe log identifies the live path.
-// Probe verdict 2026-09-21: Composite pointer ALTERNATES every frame while
-// Primary/Hidden/Alternate stay stable (live log) — the compose path is
-// live, so Composite painting stays; Primary painting is kept as the
-// harmless supplement (confined to the tactical view by the clip below).
+// Surface topology (probes 2026-09-21): Composite is the live compose path
+// (pointer alternates every frame by double-buffer design); Primary painting
+// was a temporary belt-and-braces supplement. REMOVED 2026-09-22: the double
+// paint rendered TWO rectangles (user-observed at crash time) and the crash
+// session faulted with our Primary surface pointer in EBX — Composite only
+// since, Primary solely as a fallback when Composite is null. One paint per
+// unit per logical frame (double-draw ghost guard in DrawBountyIfMarked).
 
 // Gate 3A ghost RCA: the raw DrawRect/DrawText calls are UNCLIPPED, while
 // the engine clips all its own drawing to the tactical viewport. When the
@@ -283,24 +284,23 @@ static void DrawBountyOverlaySafe(unsigned int unitId, unsigned int color,
         int ty = Coords.Y - kHalfH - 16;
         const bool textInView = (tx >= v.X && tx < v.X + v.Width
             && ty >= v.Y && ty < v.Y + v.Height);
-        DSurface* pP = DSurface::Primary;
-        DSurface* pC = DSurface::Composite;
+        // Crash fix 2026-09-22: paint Composite ONLY (frame-probe verdict —
+        // the live compose path). The former Primary+Composite double paint
+        // rendered TWO rectangles (user-observed at the crash) and doubled
+        // draw-path exposure; the crash session faulted with our Primary
+        // surface pointer in EBX (0x0D5A3570).
+        DSurface* pS = DSurface::Composite;
+        bool onPrimary = false;
+        if (!pS) { pS = DSurface::Primary; onPrimary = true; }
         const bool doRect = (mode != 2);
         const bool doText = (mode != 1);
         unsigned painted = 0;
-        if (pP) {
+        if (pS) {
             if (doRect)
-                pP->DrawRect(&r, rectColor);
+                pS->DrawRect(&r, rectColor);
             if (doText && textInView)
-                pP->DrawText(L"BOUNTY", tx, ty, static_cast<COLORREF>(color));
-            painted |= 1;
-        }
-        if (pC && pC != pP) {
-            if (doRect)
-                pC->DrawRect(&r, rectColor);
-            if (doText && textInView)
-                pC->DrawText(L"BOUNTY", tx, ty, static_cast<COLORREF>(color));
-            painted |= 2;
+                pS->DrawText(L"BOUNTY", tx, ty, static_cast<COLORREF>(color));
+            painted |= (onPrimary ? 1u : 2u);
         }
         if (pPaintedMask)
             *pPaintedMask = painted;
@@ -375,10 +375,16 @@ static void DrawBountyIfMarked(unsigned int unitId, bool pitched,
         return;
     const unsigned int color = it->second.color;
     const unsigned int until = it->second.untilFrame;
-    if (CurrentFrameSafe() >= until) {
+    const unsigned int curFrame = CurrentFrameSafe();
+    if (curFrame >= until) {
         g_bountyMarks.erase(it); // lazy expiry, no Lua round-trip needed
+        s_paintedFrame.erase(unitId);
         return;
     }
+    auto pf = s_paintedFrame.find(unitId);
+    if (pf != s_paintedFrame.end() && pf->second == curFrame)
+        return; // double-draw ghost: one paint per unit per logical frame
+    s_paintedFrame[unitId] = curFrame;
     const size_t regSize = g_bountyMarks.size();
     unsigned painted = 0;
     if (g_bountyDrawMode != 0) {
@@ -606,6 +612,7 @@ void ClearAll() {
     g_lastAutoPitch.clear();
     g_autoAll = false;
     g_bountyMarks.clear(); // marks never leak across a session
+    s_paintedFrame.clear();
 
     // Restore every persistent type-field write so the type list never leaks
     // a test FireAngle across a session.
@@ -656,12 +663,14 @@ void MarkBounty(unsigned int unitId, unsigned int color, unsigned int durationFr
 
 void ClearBountyMark(unsigned int unitId) {
     g_bountyMarks.erase(unitId);
+    s_paintedFrame.erase(unitId);
     LUA_LOG_INFO("[Bounty] clear id={} reg={}", unitId, g_bountyMarks.size());
 }
 
 void ClearBountyMarks() {
     const size_t n = g_bountyMarks.size();
     g_bountyMarks.clear();
+    s_paintedFrame.clear();
     if (n > 0)
         LUA_LOG_INFO("[Bounty] clear-all n={}", n);
 }

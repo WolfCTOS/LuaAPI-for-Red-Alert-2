@@ -233,11 +233,20 @@ real TypeID to `VALUABLE_TYPES` when supplied |
   `docs/decisions/SUPPLY_TANK_AMMO_GATE1_PLAN.md` — which also records that
   **one crash occurred with no LuaAPI injected** (crash not proven
   LuaAPI-caused; root cause UNKNOWN).|
-| Runtime | **on the recommended CnCNet-spawner path, zero crashes are on
-  record** across every documented live session 2026-09-09 → 2026-09-20
-  (M14.1 live, Gate 14.8's four sessions, CA sessions, QueueUnit v1/v2,
-  M16's five sessions); the 18k-frame benchmark run also reports 0 crashes
-  (`BENCHMARK.md`). Clean-exit session: ~305 s, exit `0x00000000`.
+| Runtime | **until 2026-09-20, zero crashes were on record** on the
+  recommended CnCNet-spawner path (M14.1 live, Gate 14.8's four sessions,
+  CA sessions, QueueUnit v1/v2, M16's five sessions; 18k-frame benchmark
+  0 crashes; clean-exit session ~305 s, exit `0x00000000`). **2026-09-22:
+  FIRST crash on the recommended path** — CnCNet → SyringeEx →
+  `gamemd-spawn.exe` (+Ares/Phobos/spawner) → ~3 min match → write-AV
+  `0xC0000005 at 0x007BA745` (then `0x007BC806`), exit C0000005.
+  Lua layer clean to the end (no errors; last log 12:30:35, crash
+  12:30:37). Prime suspect correlated-not-proven: bounty-overlay draw
+  (`EBX == surfP` of live mark id `1047757`); minidump 0 bytes (dumper
+  failure). Item 4 REOPENED per its own rule. **2026-09-22 p.m.: fix
+  (Composite-only + once-per-frame guard) user-verified live — clean
+  session, no crash, one rectangle. Item 4 re-CLOSED (scoped); session
+  details not formally recorded.**
 | User-observed | none beyond the Syringe reproductions above.
 | Limitations | absence of recorded crashes on the recommended path is
   evidence of stability ON THAT PATH ONLY; it is NOT a disproval of the
