@@ -216,7 +216,7 @@ return MyMod
 
 Run `injector.exe` and start Yuri's Revenge.
 
-Check the LuaAPI log for initialization and mod-loading messages.
+Check `LuaAPI.log` (written next to `LuaAPI.dll`) for initialization and mod-loading messages.
 
 ---
 

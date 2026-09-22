@@ -51,7 +51,7 @@ Yuri's Revenge/
 
 Run the injector according to the release instructions.
 
-After starting the game, inspect `LuaAPI.log` if you need to diagnose loading or script errors.
+After starting the game, inspect `LuaAPI.log` (written next to `LuaAPI.dll`) if you need to diagnose loading or script errors.
 
 ---
 
@@ -299,7 +299,7 @@ house:SpawnUnit(typeId, count, x, y, facing, force, action)
 Example:
 
 ```lua
-function MyFirstMod.OnScenarioStart()
+function OnScenarioStart()
     local player = House.GetPlayer()
     if not player then
         return
@@ -318,6 +318,9 @@ function MyFirstMod.OnScenarioStart()
     Engine.PrintMessage("Spawned " .. created .. " APOC")
 end
 ```
+
+> Scenario-start handlers must be **globals** (see above) — the
+> mod-table form `MyFirstMod.OnScenarioStart` never fires.
 
 The return value is the number of units actually created. Normal spawning can use the implementation's nearby-cell fallback when the requested location is unavailable.
 
@@ -464,9 +467,9 @@ unit:IsIdle()
 unit:MoveTo(x, y)
 unit:Scatter()
 unit:Hunt()
-unit:TakeDamage(amount, warhead)
+unit:TakeDamage(amount, [warhead])
 unit:Disable(frames)
-unit:SetHealthRatio(ratio)
+unit:SetHealthRatio(percent) -- 0-100 scale (35 = 35%); fractional 0-1 inputs do NOT work as fractions
 unit:AttachParticleSystem(name)
 ```
 

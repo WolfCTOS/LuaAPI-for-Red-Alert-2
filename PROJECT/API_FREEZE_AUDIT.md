@@ -23,7 +23,7 @@ Format: `API | Status | Evidence | Documentation | Known limitation | Beta recom
 |---|---|---|---|---|---|
 | `mod.Update(frame)` | Stable | Runtime (every live session; `init.lua` pcall dispatch) | `API.md`, `README.md`, `TUTORIAL.md` match source | Logical frames only; no wall-clock | **Beta core** |
 | `OnTick(frame)` global (loader) | Internal | Static (defined by `init.lua:80`, dispatched from C++) | Absent from `API.md` Callback Model | Mods must NOT define it (loader overwrites); use `Update` | Internal; document as loader-owned |
-| `OnScenarioStart()` global | Blocked | Static (C++ fires at frame 1) BUT loader-shadowed (M1, below) | `API.md`/tutorial teach file-scope global that never fires | No fire on savegame load; mod handler wiped by `init.lua` | Do NOT promise; fix loader order first |
+| `OnScenarioStart()` global | Experimental | Static + user-observed (M1: fired per match ×3 matches, no log on disk) | Matches since M1 loader fix | No fire on savegame load; one definition wins across mods | Experimental (user-observed); needs log-verified run for Stable |
 | `OnPreDamage()` global | Blocked | Static (ref collected, never invoked; no `ReceiveDamage` hook) | Honestly marked NOT WIRED in `API.md`/`README.md` | No damage-reactive mechanics possible | Do NOT promise |
 | `OnUnitDestroyed()` global | Blocked | Static (unreachable dispatch branch, never invoked) | Honestly marked never-dispatched | Death detection = ID-diff polling | Do NOT promise |
 | `OnDebugCommand(text)` global | Experimental | Static (wired via pcall in `ProcessDebugInput`); zero consumers | `API.md` documents form | Dev tool; last-write-wins across mods | Experimental dev tool |
@@ -93,7 +93,7 @@ Format: `API | Status | Evidence | Documentation | Known limitation | Beta recom
 | `World.GetAircraft` | Unverified | Static; zero consumers | Documented (Extras) | — | Do not promise |
 | `World.GetSelectedUnits` | Experimental | Historic runtime (Gate 12.2) but showcasing mod ABSENT from tree | Documented; consumer pointer stale | Selection changes anytime; re-validate | Experimental; needs current-tree live proof |
 | `World.GetSelectedTechnos` | Unverified | Static; zero consumers | Documented (Extras) | — | Do not promise |
-| `World.GetWaypoint` / `game.GetWaypoint` | Blocked | Static: STUB — ignores id, always returns `{0,0}` (M2) | Documented as real map query — misleading | Returns origin for every id | Do NOT promise; fix or remove before Beta |
+| `World.GetWaypoint` / `game.GetWaypoint` | Experimental | Static + user-observed (M2: distinct positions, nil cases, 2 matches, no log on disk) | Matches since M2 real lookup | 0-based `[0..701]`; undefined/no-scenario → nil | Experimental (user-observed); needs log-verified run for Stable |
 | `game.GetUnitsInRadius` | Stable-equivalent | Same C function as `World.` form | Colon-syntax headers misleading (M3) | Dot-call only | Fold into `World.`; deprecate `game.` twin |
 
 ### Engine / Game / Input / AI / WeaponOverride
@@ -101,13 +101,13 @@ Format: `API | Status | Evidence | Documentation | Known limitation | Beta recom
 | API | Status | Evidence | Documentation | Known limitation | Beta recommendation |
 |---|---|---|---|---|---|
 | `Engine.PrintMessage(text)` | Stable | Runtime | Matches (no color arg — honest) | HUD mute flag global | **Beta core** |
-| `Engine.SetBountyDrawMode` | Experimental | Static + temporary crash-diagnostic use (F6 cycling in-mod) | Documented (Extras-2) | Exists for crash isolation; remove mod-side cycling before Beta | Experimental; strip diagnostic use |
+| `Engine.SetBountyDrawMode` | Experimental | Static (native binding; mod-side F6 cycling removed 2026-09-22) | Documented (Extras-2) | Dev crash-isolation tool, no default-stack use | Experimental dev tool |
 | `Engine` barrel-pitch family (Auto/Override/Persistent/Clear/GetAutoCount) | Experimental | Static + historic live (M16 sessions) | Documented (§Barrel Elevation + Extras-2) | Invisible on stock single-voxel turrets | Experimental (asset-gated) |
 | `Engine.WeaponExists` | Unverified | Static; zero consumers | Documented (Extras) | — | Internal/dev |
 | `Engine.SetHudMuted` / `IsHudMuted` | Internal | Static; zero consumers | Documented (Extras) | Global HUD flag | Internal |
 | `Engine.version` (`"0.2.0"`) | Internal | Static | Documented (tracks code, not API version) | Value disagrees with API.md `1.1.0` by design | Internal |
 | `Game.GetDebugHudText` | Internal | Static; zero consumers | Documented | Dev HUD helper | Internal |
-| `Input.WasKeyPressed(vk)` | Stable | Runtime (CA hotkeys; bounty F6; tesla T historically) | Documented (edge-trigger + 256-state) | Global edge state (now reset per match — fix runtime-pending) | **Beta core** with documented edge semantics |
+| `Input.WasKeyPressed(vk)` | Stable | Runtime (CA hotkeys; tesla T historically) | Documented (edge-trigger + 256-state) | Global edge state, reset per match (Gate 1.3 PASS user-observed) | **Beta core** with documented edge semantics |
 | `WeaponOverride.Set` / `Get` / `Clear` | Experimental | Static; zero consumers; hook degrades to vanilla w/ warning | Documented as dev/diagnostic | Per-session state; vet-key form must be read from source | Experimental dev tool |
 | `AI.QueueUnit` | Blocked | Runtime: accepted-but-no-output, 2 headless runs (`FSM/QUEUEUNIT_GATE.md`) | Honestly marked BLOCKED in `API.md` | No production-director systems possible | Do NOT promise |
 | `AI.CountUnit` | Unverified | Static; zero consumers; no harness | Documented (Extras-2, BLOCKED-adjacent) | Factory-queue counts only | Do NOT promise |
@@ -127,6 +127,7 @@ Format: `API | Status | Evidence | Documentation | Known limitation | Beta recom
 
 ## 2. Experimental API list (usable with warnings, not promised)
 
+`OnScenarioStart` (M1 user-observed); `World/game.GetWaypoint` (M2 user-observed);
 `OnDebugCommand`; `GetVeterancy/GetCost`; `Disable`; `SetHealthRatio` (pending scale RCA); bounty mark family + draw mode; barrel-pitch family + turret HVA frames; `World.GetSelectedUnits`; `WeaponOverride` family.
 
 ## 3. Internal API list (exposed but not Beta surface)
@@ -137,9 +138,11 @@ Format: `API | Status | Evidence | Documentation | Known limitation | Beta recom
 
 `IsAttacking`; `IsOnFloor/IsInAir/IsLanding/Return`; deploy family (7); `Scatter/Unload`; `GetAmmo/SetAmmo/GetBaseSpeed/SetSpeedPercent`; harvest pair; `TakeDamage/IronCurtain/AttachParticleSystem`; `house:SetCredits/GetPowerOutput/GetPowerDrain`; `World.GetAircraft/GetSelectedTechnos`; `AI.CountUnit`; all framework leaf modules (harness-only); `unit_controller` module (absent — demo file).
 
-## 5. Blocked API list (mechanism absent or fake — must not be promised)
+## 5. Blocked API list (mechanism absent — must not be promised)
 
-`OnPreDamage` (not wired); `OnUnitDestroyed` (never dispatched); `OnScenarioStart` for modders (loader-shadowed, M1); `World/game.GetWaypoint` (stub returns origin, M2); `AI.QueueUnit` (accepted, no output); `Framework.update` emitter (file absent).
+`OnPreDamage` (not wired); `OnUnitDestroyed` (never dispatched);
+`AI.QueueUnit` (accepted, no output); `Framework.update` emitter (file absent).
+(`OnScenarioStart` and `GetWaypoint` left this list via user-observed M1/M2 — see Experimental.)
 
 ## 6. Documentation mismatches (new + carried)
 

@@ -6,6 +6,28 @@ The changelog follows the project's verified milestone history. Features are lis
 
 ---
 
+## [Unreleased] — Beta documentation audit (2026-09-22)
+
+### Fixed — documentation only (no code)
+
+- Tutorial: SpawnUnit example used non-firing table-method
+  `MyFirstMod.OnScenarioStart` → global form + warning; Quick
+  Reference `TakeDamage(amount, [warhead])` optional arg,
+  `SetHealthRatio(percent)` 0–100 note; log-path stated
+  (`LuaAPI.log` next to `LuaAPI.dll`) in README + tutorial.
+- Freeze-audit corrections: `OnScenarioStart`/`GetWaypoint`
+  Blocked→Experimental (M1/M2 user-observed); stale F6-strip and
+  Gate-1.3-pending qualifiers updated.
+- Full report: `PROJECT/DOC_AUDIT_BETA.md` (PASS/FIXED/GAPS/
+  classification/blockers/BETA-ready).
+
+### Found, not fixed (implementation blocker E1)
+
+- Per-mod `Update` errors are swallowed by `scripts/init.lua`
+  (`pcall` `err` discarded) — contradicts the documented
+  log-debugging workflow. One-line fix recorded in the audit;
+  loader code untouched per documentation-audit scope.
+
 ## [Unreleased] — M3/M4 API documentation fixes (2026-09-22)
 
 ### Fixed — documentation only (`API.md`, no code)
