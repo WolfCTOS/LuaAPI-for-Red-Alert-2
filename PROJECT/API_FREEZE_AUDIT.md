@@ -182,6 +182,15 @@ Format: `API | Status | Evidence | Documentation | Known limitation | Beta recom
 > `OnScenarioStart` stays Blocked-for-Beta until the runtime protocol
 > (marker once per match + Update heartbeat) produces a fresh log.
 
+> **Addendum 2026-09-22 (M2 FIX IMPLEMENTED, RUNTIME PENDING — history
+> preserved):** stub replaced with `ScenarioClass::IsDefinedWaypoint` /
+> `GetWaypointCoords` lookup (`src/bindings_techno.cpp`); contract
+> `{x, y}` or `nil`, 0-based `[0..701]`; `API.md` updated to match.
+> Probe mod `scripts/mods/waypoint_probe/` added (not in default stack).
+> `GetWaypoint` stays out of Beta promises until the runtime protocol
+> (2+ distinct positions matching the map + `nil` for invalid ids +
+> second-match re-probe) produces a fresh log.
+
 ## 7. Remaining Beta blockers from this audit
 
 1. Gate 1.3 runtime evidence pending (unchanged by this audit).

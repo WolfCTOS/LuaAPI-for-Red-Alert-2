@@ -6,7 +6,27 @@ The changelog follows the project's verified milestone history. Features are lis
 
 ---
 
-## [Unreleased] — M1 OnScenarioStart loader fix (2026-09-22)
+## [Unreleased] — M2 real GetWaypoint lookup (2026-09-22)
+
+### Fixed — stub replaced with engine lookup (`src/bindings_techno.cpp`)
+
+- Root cause (API Freeze Audit M2): `game_GetWaypoint` ignored its id
+  and returned constant origin `{0,0}`.
+- Fix: real lookup via YRpp-pinned `ScenarioClass::IsDefinedWaypoint`
+  (`[0..701]`) + `GetWaypointCoords` (established interface, no new
+  reverse-engineering). Returns `{x, y}` map cells, or `nil` for
+  out-of-range/undefined ids or no live scenario. Engine contact in a
+  tiny SEH helper (C2712); no caching, so inherently reset-safe. The
+  phantom `cell` field of the stub is gone — the documented `{x, y}`
+  shape holds. Same function serves `World.` and `game.` twins.
+- Scaffolding: `scripts/mods/waypoint_probe/` (inactive by default;
+  logs one `[WPPROBE]` block per match, incl. invalid ids and a
+  menu → second-match re-probe).
+- Verification: BUILT (Release, exit 0) + STATIC + probe syntax. No
+  headless harness possible (native Scenario state unmockable — same
+  class as QueueUnit). RUNTIME PENDING — M2 stays open until a fresh
+  log shows 2+ distinct waypoint positions matching the map's
+  `[Waypoints]` plus `nil` for invalid ids.
 
 ### Fixed — loader order only (`scripts/init.lua`, no C++/API/gameplay change)
 

@@ -705,7 +705,8 @@ local objects = World.GetAllUnits()
 
 ## `World.GetWaypoint(id)`
 
-Returns the coordinates of a map waypoint.
+Returns the coordinates of a map waypoint, read live from the scenario's
+waypoint table (`ScenarioClass`, engine range `[0..701]`).
 
 ```lua
 local pos = World.GetWaypoint(5)
@@ -715,7 +716,13 @@ if pos then
 end
 ```
 
-**Returns:** position table or `nil`.
+**Returns:** position table `{x, y}` in map-cell coordinates, or `nil`
+when the id is out of range (negative or `>= 702`), the waypoint is not
+defined on the current map, or no scenario is loaded.
+
+Waypoint IDs are **0-based** engine indices. The lookup reads live
+scenario state on every call (nothing cached), so it is safe across
+match resets.
 
 ---
 
@@ -749,13 +756,15 @@ The lowercase `game` namespace is a separate low-level/diagnostic namespace reta
 
 ## `game:GetWaypoint(id)`
 
-Legacy/global form of the waypoint query.
+Legacy/global form of the waypoint query (same implementation and
+contract as `World.GetWaypoint` — dot-call only, like all plain
+namespace functions).
 
 ```lua
 local pos = game.GetWaypoint(5)
 ```
 
-**Returns:** position table or `nil`.
+**Returns:** position table `{x, y}` or `nil` (same rules as above).
 
 ---
 

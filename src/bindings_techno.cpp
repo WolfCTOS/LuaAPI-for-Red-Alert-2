@@ -1158,18 +1158,44 @@ int Techno_AttachParticleSystem(lua_State* L) {
 
 // game:GetWaypoint(waypoint_id) -> table {x, y, cell}
 // Returns map coordinates for the given waypoint ID from rules/maps.
+struct WaypointRead {
+    bool ok;
+    int x;
+    int y;
+};
+
+// Tiny SEH helper: __try must not share a frame with C++ objects (C2712).
+// All engine contact (Instance read, JMP_THIS calls) happens here.
+WaypointRead ReadWaypointSafe(int idx) {
+    WaypointRead out{ false, 0, 0 };
+    __try {
+        ScenarioClass* pScen = ScenarioClass::Instance;
+        if (pScen && idx >= 0 && idx < 702 && pScen->IsDefinedWaypoint(idx)) {
+            CellStruct cell = pScen->GetWaypointCoords(idx);
+            out.ok = true;
+            out.x = static_cast<int>(cell.X);
+            out.y = static_cast<int>(cell.Y);
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        out.ok = false;
+    }
+    return out;
+}
+
 int game_GetWaypoint(lua_State* L) {
-    int waypointId = luaL_checkinteger(L, 1);
-    // Placeholder: read waypoint from RulesClass or map header.
-    // In a full implementation, this would lookup waypoint data from RulesClass::Instance.
-    // For now, return origin cell.
-    lua_createtable(L, 0, 3);
-    lua_pushinteger(L, 0);              // x
+    int waypointId = static_cast<int>(luaL_checkinteger(L, 1));
+    if (waypointId < 0 || waypointId >= 702)
+        return 0; // nil: outside the engine's [0..701] waypoint range
+
+    WaypointRead r = ReadWaypointSafe(waypointId);
+    if (!r.ok)
+        return 0; // nil: no live scenario, undefined waypoint, or engine fault
+
+    lua_createtable(L, 0, 2);
+    lua_pushinteger(L, r.x);              // x
     lua_setfield(L, -2, "x");
-    lua_pushinteger(L, 0);              // y
+    lua_pushinteger(L, r.y);              // y
     lua_setfield(L, -2, "y");
-    lua_pushinteger(L, 0);              // cell
-    lua_setfield(L, -2, "cell");
     return 1;
 }
 

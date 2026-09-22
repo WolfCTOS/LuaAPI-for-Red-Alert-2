@@ -23,6 +23,15 @@ Evidence levels are never mixed. Column meanings:
 | User-observed | none |
 | Limitations | `OnUnitDestroyed` default moved too but never dispatched (Blocked regardless); multi-mod global contention stays last-write-wins |
 
+### GetWaypoint real lookup (M2 — stub replacement)
+| Level | Status |
+|---|---|
+| Harness | N/A BY DESIGN — native `ScenarioClass` state is unmockable headless (same class as QueueUnit); no mock asserts would prove engine behavior |
+| Static | `game_GetWaypoint` + `ReadWaypointSafe` SEH helper (`src/bindings_techno.cpp`); YRpp-pinned `IsDefinedWaypoint [0..701]` / `GetWaypointCoords`; probe mod syntax-checked |
+| Runtime | PENDING — protocol: `[WPPROBE]` block, 2+ distinct positions matching the map's `[Waypoints]`, `nil` for invalid ids, re-probe after menu → second match |
+| User-observed | none |
+| Limitations | `cell` field of the stub era removed (only `{x, y}` promised); colon-call form errors like all plain namespace functions |
+
 ### War Reporter (ARCHIVED)
 | Level | Status |
 |---|---|
