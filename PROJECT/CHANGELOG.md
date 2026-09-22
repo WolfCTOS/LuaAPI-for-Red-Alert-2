@@ -19,8 +19,9 @@ The changelog follows the project's verified milestone history. Features are lis
 - Verification: HARNESS 10/10 (`loader_update_error_test.lua`;
   pre-fix loader fails exactly the error asserts) + STATIC + syntax.
   No native rebuild (Lua-only; game reads `scripts/` live).
-  RUNTIME PENDING — E1 stays open until a live run shows a real mod
-  error in the log with healthy mods continuing.
+  **Resolution — E1: PASS (log-verified + user-observed):** live log
+  shows exactly one named `E1_RUNTIME_PROBE` error line with healthy
+  mods continuing to session end. E1 CLOSED.
 
 ## [Unreleased] — Beta documentation audit (2026-09-22)
 

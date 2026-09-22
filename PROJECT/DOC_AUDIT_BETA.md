@@ -114,6 +114,15 @@ harness-only, stub, or internal leaks into the Beta promise.
 > present, so the `if not ok` branch never executed live; the
 > error-path criteria remain without runtime evidence. E1 Runtime
 > still PENDING.
+>
+> **Resolution (E1: PASS, log-verified + user-observed):** live session
+> `LuaAPI.log` 19:17–19:25 with `e1_error_probe` enabled shows exactly
+> one `[LuaAPI] Mod 'e1_error_probe' Update error: E1_RUNTIME_PROBE`
+> line (19:17:16) across hundreds of throwing frames — dedup proven;
+> mod name + message verbatim. Healthy continuation: bounty CLAIMED
+> payout and M14.1 census/timing lines through 19:25:45, clean session
+> end, no crash. Probe id removed from `active_mods.txt` afterwards
+> (probe file kept). E1 CLOSED.
 
 ## F. BETA-READY DOCUMENTATION
 
