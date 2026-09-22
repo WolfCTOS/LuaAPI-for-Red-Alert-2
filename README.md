@@ -16,7 +16,8 @@ The project follows three core principles:
 > **Current Focus:** Documentation/gate reset (`PROJECT/GATES.md`); research: Dynamic Unit Behavior
 > **Development API Line:** `1.1.0`
 > **Target:** Yuri's Revenge `1.001`
-> **Compatibility:** Singleplayer, Skirmish, and CnCNet environments
+> **Primary targets:** Singleplayer and Skirmish  
+> **CnCNet:** compatible environment and tested in practice; active CnCNet development is currently paused
 
 ---
 
@@ -30,7 +31,7 @@ The project follows three core principles:
 - 📨 **Engine Messaging** — display messages through the game's message system.
 - ⚠️ **Damage interception (`OnPreDamage`) is documented as a contract only — it is NOT wired in the current build.** See [`API.md`](API.md) (Callback Model) before building anything damage-reactive.
 - 🛡️ **Pointer & Lifecycle Safety** — C++ protects Lua-facing engine access against invalid runtime objects where supported.
-- 🌐 **CnCNet Support** — injection and hook handling account for the CnCNet process environment.
+- 🌐 **CnCNet Environment Support** — injection and hook handling account for the CnCNet process environment; active CnCNet development is currently paused.
 - ⏱️ **Logical-Frame Callbacks** — gameplay logic can be tied to logical game frames rather than render FPS.
 
 ---
@@ -92,6 +93,35 @@ The project follows three core principles:
 
 C++ provides the bridge to the Westwood engine and handles unsafe or engine-specific operations. Lua determines what the mod actually does.
 
+
+## 🧠 Why LuaAPI?
+
+LuaAPI is not intended to replace Ares or Phobos, or to duplicate their existing mechanics for the sake of having Lua equivalents.
+
+Ares and Phobos can provide powerful engine-level capabilities. LuaAPI makes the **gameplay logic around those capabilities programmable**.
+
+This means a modder can take an existing mechanic, unit, or engine capability and rethink how it works at runtime:
+
+```text
+Existing mechanic
+      ↓
+Ares / Phobos / Engine capabilities
+      ↓
+LuaAPI runtime logic
+      ↓
+Custom rules, state, targets, timers, conditions
+      ↓
+New gameplay behavior
+```
+
+For example, a basic bounty mechanic can simply reward the player for destroying an enemy unit. With LuaAPI, the same concept can become a larger gameplay system: a hidden target, a specific hunter faction, a time limit, kill streaks, changing rewards, temporary buffs, or even a reinforcement delivered to the hunter.
+
+The goal is therefore not to reinvent every existing mechanic. It is to give modders a programmable layer for **combining, extending, and rethinking existing capabilities into new gameplay systems**.
+
+> **Ares / Phobos provide capabilities. LuaAPI makes the gameplay logic programmable.**
+
+This principle also guides API development: a new LuaAPI primitive should provide a meaningful runtime capability, rather than simply duplicate an existing engine, Ares, or Phobos feature.
+
 ---
 
 ## 📁 Installation Structure
@@ -116,10 +146,9 @@ Yuri's Revenge/
             └── main.lua
 ```
 
-> The default active stack is `barrel_elevation_diag`, `command_authority`,
-> `target_reselect` (see `scripts/active_mods.txt`). `bounty_hunter` ships
-> in-tree but is inert and NOT enabled; `shield_overload` lives in
-> `scripts/mods_archive/`.
+> The default active stack is `target_reselect`, `bounty_hunter`, and
+> `smart_ai` (see `scripts/active_mods.txt`). Other showcase and diagnostic
+> mods remain available under `scripts/mods/`.
 
 ---
 
@@ -150,10 +179,6 @@ Add one mod ID per line (use mods that exist under `scripts/mods/`):
 ```text
 command_authority
 ```
-
-> Do NOT enable `bounty_hunter` expecting behavior — it is inert in the
-> current build (see its header and `PROJECT/DECISIONS.md`). `shield_overload`
-> is archived under `scripts/mods_archive/`.
 
 Lines beginning with `#` are comments.
 
@@ -355,10 +380,7 @@ local count = player:SpawnUnit(
     "hunt"
 )
 
-Engine.PrintMessage(
-    "Spawned " .. count .. " APOC",
-    1
-)
+Engine.PrintMessage("Spawned " .. count .. " APOC")
 ```
 
 The return value is the number of units actually created.
