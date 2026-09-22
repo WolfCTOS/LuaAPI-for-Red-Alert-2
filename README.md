@@ -16,7 +16,8 @@ The project follows three core principles:
 > **Current Focus:** Documentation/gate reset (`PROJECT/GATES.md`); research: Dynamic Unit Behavior
 > **Development API Line:** `1.1.0`
 > **Target:** Yuri's Revenge `1.001`
-> **Compatibility:** Singleplayer, Skirmish, and CnCNet environments
+> **Primary targets:** Singleplayer and Skirmish  
+> **CnCNet:** compatible environment and tested in practice; active CnCNet development is currently paused
 
 ---
 
@@ -30,7 +31,7 @@ The project follows three core principles:
 - 📨 **Engine Messaging** — display messages through the game's message system.
 - ⚠️ **Damage interception (`OnPreDamage`) is documented as a contract only — it is NOT wired in the current build.** See [`API.md`](API.md) (Callback Model) before building anything damage-reactive.
 - 🛡️ **Pointer & Lifecycle Safety** — C++ protects Lua-facing engine access against invalid runtime objects where supported.
-- 🌐 **CnCNet Support** — injection and hook handling account for the CnCNet process environment.
+- 🌐 **CnCNet Environment Support** — injection and hook handling account for the CnCNet process environment; active CnCNet development is currently paused.
 - ⏱️ **Logical-Frame Callbacks** — gameplay logic can be tied to logical game frames rather than render FPS.
 
 ---
@@ -145,10 +146,9 @@ Yuri's Revenge/
             └── main.lua
 ```
 
-> The default active stack is `barrel_elevation_diag`, `command_authority`,
-> `target_reselect` (see `scripts/active_mods.txt`). `bounty_hunter` ships
-> in-tree but is inert and NOT enabled; `shield_overload` lives in
-> `scripts/mods_archive/`.
+> The default active stack is `target_reselect`, `bounty_hunter`, and
+> `smart_ai` (see `scripts/active_mods.txt`). Other showcase and diagnostic
+> mods remain available under `scripts/mods/`.
 
 ---
 
@@ -179,10 +179,6 @@ Add one mod ID per line (use mods that exist under `scripts/mods/`):
 ```text
 command_authority
 ```
-
-> Do NOT enable `bounty_hunter` expecting behavior — it is inert in the
-> current build (see its header and `PROJECT/DECISIONS.md`). `shield_overload`
-> is archived under `scripts/mods_archive/`.
 
 Lines beginning with `#` are comments.
 
@@ -384,10 +380,7 @@ local count = player:SpawnUnit(
     "hunt"
 )
 
-Engine.PrintMessage(
-    "Spawned " .. count .. " APOC",
-    1
-)
+Engine.PrintMessage("Spawned " .. count .. " APOC")
 ```
 
 The return value is the number of units actually created.
