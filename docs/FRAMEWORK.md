@@ -1,7 +1,7 @@
 # 🧩 LuaAPI Gameplay Framework (Milestone 14)
 
 > **Target:** `gamemd.exe` — Yuri's Revenge 1.001  
-> **API Version:** `1.1.0`  
+> **API Version:** `2.0.0`
 > **Milestone:** 14 — Lua Gameplay Framework
 
 This document describes the **Lua-side gameplay framework** built on top of the

@@ -105,7 +105,7 @@ Format: `API | Status | Evidence | Documentation | Known limitation | Beta recom
 | `Engine` barrel-pitch family (Auto/Override/Persistent/Clear/GetAutoCount) | Experimental | Static + historic live (M16 sessions) | Documented (§Barrel Elevation + Extras-2) | Invisible on stock single-voxel turrets | Experimental (asset-gated) |
 | `Engine.WeaponExists` | Unverified | Static; zero consumers | Documented (Extras) | — | Internal/dev |
 | `Engine.SetHudMuted` / `IsHudMuted` | Internal | Static; zero consumers | Documented (Extras) | Global HUD flag | Internal |
-| `Engine.version` (`"0.2.0"`) | Internal | Static | Documented (tracks code, not API version) | Value disagrees with API.md `1.1.0` by design | Internal |
+| `Engine.version` (`"2.0.0"`) | Internal | Static | Documented (project version field) | — | Internal |
 | `Game.GetDebugHudText` | Internal | Static; zero consumers | Documented | Dev HUD helper | Internal |
 | `Input.WasKeyPressed(vk)` | Stable | Runtime (CA hotkeys; tesla T historically) | Documented (edge-trigger + 256-state) | Global edge state, reset per match (Gate 1.3 PASS user-observed) | **Beta core** with documented edge semantics |
 | `WeaponOverride.Set` / `Get` / `Clear` | Experimental | Static; zero consumers; hook degrades to vanilla w/ warning | Documented as dev/diagnostic | Per-session state; vet-key form must be read from source | Experimental dev tool |

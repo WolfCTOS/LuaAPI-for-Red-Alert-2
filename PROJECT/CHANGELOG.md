@@ -6,6 +6,21 @@ The changelog follows the project's verified milestone history. Features are lis
 
 ---
 
+## [Unreleased] — Project version 2.0.0 Beta (2026-09-22)
+
+### Changed — version references only (no behavior change)
+
+- One public version `2.0.0`: in-game watermark
+  (`src/lua_engine.cpp`), `Engine.version`, `API.md`,
+  `docs/FRAMEWORK.md`, `PROJECT/CAPABILITIES.md`,
+  `PROJECT/AI_CONTEXT.md`, `README.md` (stage Beta, release tag,
+  API line), `PROJECT/ROADMAP.md` header, freeze-audit
+  `Engine.version` row. `v1.0.0`/`1.1.0` remain cited only as
+  history. Untouched: launcher UI `1.3`, mod-manifest defaults,
+  mod versions, YR `1.001`, Ares/Phobos refs, third-party code.
+
+---
+
 ## [Unreleased] — E1 mod Update errors surfaced (2026-09-22)
 
 ### Fixed — loader only (`scripts/init.lua`, no C++/API/lifecycle change)

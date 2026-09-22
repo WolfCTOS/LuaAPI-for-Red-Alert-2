@@ -1,7 +1,7 @@
 # 💡 LuaAPI — Capabilities, Case Studies & Modder's Cookbook
 
 > **Target Platform:** `gamemd.exe` — Yuri's Revenge 1.001  
-> **API Version:** `1.1.0` — Milestone 11  
+> **API Version:** `2.0.0` — Milestone 11  
 > **Purpose:** Proven mechanics, real-world case studies, reusable Lua recipes, and engineering lessons learned while developing LuaAPI.
 
 This document describes functionality that has been **implemented and verified** in LuaAPI.

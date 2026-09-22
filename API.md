@@ -1,6 +1,6 @@
 # LuaAPI for Red Alert 2 — API Reference
 
-> **Version:** `1.1.0`  
+> **Version:** `2.0.0` (Beta)
 > **Milestone:** `11`  
 > **Target:** `gamemd.exe` — Yuri's Revenge 1.001  
 > **Last Updated:** `2026-09-21` (Extras-2 sweep; no version bump, no behavior change)
@@ -1002,7 +1002,7 @@ Engine.ClearBarrelPitchOverride(unitId) -- clear one manual override
 Engine.ClearAllBarrelPitchOverrides()   -- clear all manual overrides
 Engine.SetPersistentBarrelPitch(typeId, deg)   -- persistent type-field path (M16 static experiment)
 Engine.ClearPersistentBarrelPitch(typeId)
-Engine.version -- string field on the Engine table ("0.2.0" in src; tracks code, not API.md version)
+Engine.version -- string field on the Engine table (project version, `"2.0.0"`)
 ```
 
 ---

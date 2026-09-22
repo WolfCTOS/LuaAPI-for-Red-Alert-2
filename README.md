@@ -11,10 +11,10 @@ The project follows three core principles:
 - 🎮 **Lua controls gameplay behavior**
 - 🛡️ **Only implemented and tested functionality is documented as verified**
 
-> **Project Stage:** **Alpha** (pre-public; see `FSM/MODDB_ALPHA_RELEASE.md`)
-> **Current Release Tag:** `v1.0.0` — *historical milestone tag, not a production-release claim*
+> **Project Stage:** **Beta** (`2.0.0`; Alpha history: see `FSM/MODDB_ALPHA_RELEASE.md`)
+> **Current Release Tag:** `v2.0.0` — *Beta release (`v1.0.0` was a historical milestone tag, not a production claim)*
 > **Current Focus:** Documentation/gate reset (`PROJECT/GATES.md`); research: Dynamic Unit Behavior
-> **Development API Line:** `1.1.0`
+> **Development API Line:** `2.0.0`
 > **Target:** Yuri's Revenge `1.001`
 > **Primary targets:** Singleplayer and Skirmish  
 > **CnCNet:** compatible environment and tested in practice; active CnCNet development is currently paused
@@ -40,10 +40,10 @@ The project follows three core principles:
 
 | Property | Value |
 |---|---|
-| **Project Stage** | Alpha (pre-public) |
-| **Current Release Tag** | `v1.0.0` (historical; see `FSM/MODDB_ALPHA_RELEASE.md`) |
+| **Project Stage** | Beta (`2.0.0`) |
+| **Current Release Tag** | `v2.0.0` (Beta; `v1.0.0` was historical — see `FSM/MODDB_ALPHA_RELEASE.md`) |
 | **Current Focus** | Gate reset — `PROJECT/GATES.md` |
-| **Development API Line** | `1.1.0` |
+| **Development API Line** | `2.0.0` |
 | **Game** | Yuri's Revenge `1.001` |
 | **Primary Process** | `gamemd.exe` |
 | **CnCNet Process** | `gamemd-spawn.exe` |
@@ -615,7 +615,7 @@ Evidence grades for every claim: [`PROJECT/GATES.md`](PROJECT/GATES.md),
 
 ## ⚠️ Project Status
 
-LuaAPI is an **Alpha-stage** project under active development.
+LuaAPI is a **Beta-stage** project under active development.
 
 The API and internal architecture may change as engine integration becomes safer and more complete.
 
