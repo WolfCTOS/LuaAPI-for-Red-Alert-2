@@ -172,6 +172,16 @@ Format: `API | Status | Evidence | Documentation | Known limitation | Beta recom
   (0–100); `API.md` documents that; CA passes `1.0`. Open RCA, no fix
   in this audit.
 
+> **Addendum 2026-09-22 (M1 FIX IMPLEMENTED, RUNTIME PENDING — history
+> preserved):** empty global defaults moved BEFORE the require loop in
+> `scripts/init.lua` (mod file-scope handlers now survive;
+> `OnTick` stays loader-owned). Harness
+> `tools/tmp/loader_scenario_start_test.lua`: 6/6 PASS fixed, 4/6
+> pre-fix with exactly the M1 asserts failing. Live probe mod
+> `scripts/mods/scenario_start_probe/` added (not in default stack).
+> `OnScenarioStart` stays Blocked-for-Beta until the runtime protocol
+> (marker once per match + Update heartbeat) produces a fresh log.
+
 ## 7. Remaining Beta blockers from this audit
 
 1. Gate 1.3 runtime evidence pending (unchanged by this audit).

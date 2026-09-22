@@ -6,6 +6,26 @@ The changelog follows the project's verified milestone history. Features are lis
 
 ---
 
+## [Unreleased] — M1 OnScenarioStart loader fix (2026-09-22)
+
+### Fixed — loader order only (`scripts/init.lua`, no C++/API/gameplay change)
+
+- Root cause (API Freeze Audit M1, confirmed in source): empty global
+  defaults for `OnScenarioStart`/`OnUnitDestroyed` were defined AFTER
+  the mod require loop, wiping any file-scope handler a mod set. C++
+  frame-1 dispatch then called the loader's empty default.
+- Fix: defaults moved BEFORE the require loop (last-write-wins = mod
+  wins). `OnTick` stays loader-owned after the loop. Documented
+  file-scope pattern now works as taught; no usage change.
+- Scaffolding: `tools/tmp/loader_scenario_start_test.lua` (6/6 PASS on
+  fixed loader; 4/6 with exactly the M1 asserts failing on the pre-fix
+  loader — sensitivity proven) and `scripts/mods/scenario_start_probe/`
+  (live marker mod, NOT in `active_mods.txt`).
+- Verification: HARNESS (6/6) + STATIC + syntax. RUNTIME PENDING —
+  protocol: enable probe mod, launch, expect `[PROBE] OnScenarioStart
+  fired at frame 1` once per match + Update heartbeat, incl. a second
+  match in-process. M1 stays open until a fresh log shows it.
+
 ## [Unreleased] — Gate 1.3 per-match session reset (2026-09-22)
 
 ### Fixed — session lifecycle (`src/lua_engine.cpp`, `src/bindings_techno.cpp`)

@@ -47,6 +47,28 @@ local lastStatsReport = os.clock()
 -- только следящее за текущим кадром: math.randomseed(current_frame + 12345)
 math.randomseed(12345)
 
+-- [[Событийные шины]]
+-- Моды могут подписаться на эти события в main.lua:
+--   function OnScenarioStart()  -- вызывается 1 раз при логическом кадре 1
+--   function OnUnitDestroyed(victim, killer) -- НЕ ВЫЗЫВАЕТСЯ в текущей сборке
+--      (контракт без диспетча, см. API.md) — для детекта смертей используйте
+--      ID-diff сканов (паттерн Command Authority).
+-- Глобальные колбэки — last-write-wins: их должен определять только один мод.
+--
+-- Пустые значения ПО УМОЛЧАНИЮ определены ДО загрузки модов (M1 fix):
+-- мод, объявляющий свой глобальный обработчик на уровне файла, перезаписывает
+-- значение по умолчанию своим. Раньше было наоборот (значения по умолчанию
+-- после require затирали обработчики модов, и C++ вызывал пустую функцию).
+
+function OnScenarioStart()
+    -- Базовый пустой обработчик. Переопределите в main.lua своего мода.
+end
+
+function OnUnitDestroyed(victim, killer)
+    -- Базовый пустой обработчик. Переопределите в main.lua своего мода.
+    -- victim = TechnoClass pointer (или nil), killer = TechnoClass pointer (или nil)
+end
+
 for _, modName in ipairs(ACTIVE_MODS) do
     local ok, mod = pcall(require, "mods." .. modName .. ".main")
     if ok and mod then
@@ -59,23 +81,6 @@ for _, modName in ipairs(ACTIVE_MODS) do
 end
 
 local welcomed = false
-
--- [[Событийные шины]]
--- Моды могут подписаться на эти события в main.lua:
---   function OnScenarioStart()  -- вызывается 1 раз при логическом кадре 1
---   function OnUnitDestroyed(victim, killer) -- НЕ ВЫЗЫВАЕТСЯ в текущей сборке
---      (контракт без диспетча, см. API.md) — для детекта смертей используйте
---      ID-diff сканов (паттерн Command Authority).
--- Глобальные колбэки — last-write-wins: их должен определять только один мод.
-
-function OnScenarioStart()
-    -- Базовый пустой обработчик. Переопределите в main.lua своего мода.
-end
-
-function OnUnitDestroyed(victim, killer)
-    -- Базовый пустой обработчик. Переопределите в main.lua своего мода.
-    -- victim = TechnoClass pointer (или nil), killer = TechnoClass pointer (или nil)
-end
 
 function OnTick(frame)
     if not welcomed then

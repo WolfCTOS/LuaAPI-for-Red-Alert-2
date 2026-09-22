@@ -14,6 +14,15 @@ Evidence levels are never mixed. Column meanings:
 
 ## Ledger
 
+### Loader global-callback order (M1 — `OnScenarioStart` shadowing)
+| Level | Status |
+|---|---|
+| Harness | `tools/tmp/loader_scenario_start_test.lua`: 6/6 PASS on fixed `scripts/init.lua` (mod file-scope handler survives; `OnTick` dispatches `Update`); 4/6 on pre-fix loader with exactly the M1 survival asserts failing (sensitivity proven) |
+| Static | defaults-before-require in `scripts/init.lua`; C++ frame-1 lookup/pcall unchanged (`src/lua_engine.cpp`); probe mod `scripts/mods/scenario_start_probe/` (not in default stack) |
+| Runtime | PENDING — protocol: enable probe, launch, `[PROBE] OnScenarioStart fired at frame 1` once per match + Update heartbeat, incl. second in-process match |
+| User-observed | none |
+| Limitations | `OnUnitDestroyed` default moved too but never dispatched (Blocked regardless); multi-mod global contention stays last-write-wins |
+
 ### War Reporter (ARCHIVED)
 | Level | Status |
 |---|---|
