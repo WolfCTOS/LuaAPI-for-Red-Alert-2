@@ -92,6 +92,35 @@ The project follows three core principles:
 
 C++ provides the bridge to the Westwood engine and handles unsafe or engine-specific operations. Lua determines what the mod actually does.
 
+
+## 🧠 Why LuaAPI?
+
+LuaAPI is not intended to replace Ares or Phobos, or to duplicate their existing mechanics for the sake of having Lua equivalents.
+
+Ares and Phobos can provide powerful engine-level capabilities. LuaAPI makes the **gameplay logic around those capabilities programmable**.
+
+This means a modder can take an existing mechanic, unit, or engine capability and rethink how it works at runtime:
+
+```text
+Existing mechanic
+      ↓
+Ares / Phobos / Engine capabilities
+      ↓
+LuaAPI runtime logic
+      ↓
+Custom rules, state, targets, timers, conditions
+      ↓
+New gameplay behavior
+```
+
+For example, a basic bounty mechanic can simply reward the player for destroying an enemy unit. With LuaAPI, the same concept can become a larger gameplay system: a hidden target, a specific hunter faction, a time limit, kill streaks, changing rewards, temporary buffs, or even a reinforcement delivered to the hunter.
+
+The goal is therefore not to reinvent every existing mechanic. It is to give modders a programmable layer for **combining, extending, and rethinking existing capabilities into new gameplay systems**.
+
+> **Ares / Phobos provide capabilities. LuaAPI makes the gameplay logic programmable.**
+
+This principle also guides API development: a new LuaAPI primitive should provide a meaningful runtime capability, rather than simply duplicate an existing engine, Ares, or Phobos feature.
+
 ---
 
 ## 📁 Installation Structure
