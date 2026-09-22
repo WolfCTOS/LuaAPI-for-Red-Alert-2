@@ -218,6 +218,10 @@ Run `injector.exe` and start Yuri's Revenge.
 
 Check `LuaAPI.log` (written next to `LuaAPI.dll`) for initialization and mod-loading messages.
 
+If a mod's `Update` throws, the error is reported in the same log with
+the mod name (`[LuaAPI] Mod '<name>' Update error: ...`) without
+stopping the other mods — no separate debugging setup needed.
+
 ---
 
 ## 🧱 Mod Anatomy
@@ -494,6 +498,14 @@ Runtime state cleaned up
 
 When maintaining C++ containers, avoid erasing entries in a way that invalidates the active iterator. Deferred cleanup is preferred.
 
+### 🔁 Session lifecycle
+
+Each match starts with a fresh Lua state: when you return to the menu,
+the session resets (mod state, house cache, timers, and marks are
+cleared) and the next match re-initializes everything. Mods therefore
+do not need restart guards for match transitions — but savegame loads
+are a different lifecycle (see limitations below).
+
 ---
 
 ## 📊 Performance
@@ -664,6 +676,12 @@ If you are new to LuaAPI:
 **2.** Use [`API.md`](API.md) as the technical reference  
 **3.** Study [`CAPABILITIES.md`](PROJECT/CAPABILITIES.md) for verified examples  
 **4.** Explore the sample mods under `scripts/mods/`
+
+> For Beta scope, check the API classification (Stable / Experimental /
+> Internal / Unverified / Blocked) in
+> [`PROJECT/API_FREEZE_AUDIT.md`](PROJECT/API_FREEZE_AUDIT.md) — build
+> new mods on the Stable list; treat everything else as unsupported
+> until proven otherwise.
 
 > 🛠️ **Build small. Test frequently. Verify before documenting.**
 
