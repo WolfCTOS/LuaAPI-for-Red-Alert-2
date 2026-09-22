@@ -6,6 +6,21 @@ The changelog follows the project's verified milestone history. Features are lis
 
 ---
 
+## [Unreleased] — M3/M4 API documentation fixes (2026-09-22)
+
+### Fixed — documentation only (`API.md`, no code)
+
+- M3: `game:GetWaypoint` / `game:GetUnitsInRadius` headers corrected
+  to dot form (plain C functions — colon calls error). Full-header
+  scan: the only two wrong headers; `house:`/`unit:` colons verified
+  correct (metatable methods).
+- M4: `OnTick(frame)` added to the Callback Model as a loader-owned
+  Internal dispatcher (C++ → global `OnTick` → per-mod `Update`);
+  mods must not replace the global.
+- Same-class scan (Scatter/TakeDamage/SpawnUnit/MarkBounty/IronCurtain
+  signatures, param counts, return shapes, examples): no further
+  mismatches found.
+
 ## [Unreleased] — M2 real GetWaypoint lookup (2026-09-22)
 
 ### Fixed — stub replaced with engine lookup (`src/bindings_techno.cpp`)

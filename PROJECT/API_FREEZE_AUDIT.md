@@ -228,9 +228,16 @@ Format: `API | Status | Evidence | Documentation | Known limitation | Beta recom
 
 ---
 
-## What LuaAPI HAS vs what it CAN PROMISE to Beta modders
+> **Resolution 2026-09-22 (M3/M4 fixed, docs-only — history
+> preserved):** `game:` headers corrected to dot form (the only two
+> colon-on-plain-function headers in `API.md`; `house:`/`unit:` colons
+> verified correct metatable syntax); `OnTick(frame)` documented as a
+> loader-owned Internal dispatcher (mods use `Update`, never replace
+> the global). Same-class scan (signatures, param counts, return
+> shapes, examples for Scatter/TakeDamage/SpawnUnit/MarkBounty/
+> IronCurtain/namespaces) found no further mismatches.
 
-**HAS:** ~90 Lua-exposed functions across 8 namespaces + 5 lifecycle
+## What LuaAPI HAS vs what it CAN PROMISE to Beta modders**HAS:** ~90 Lua-exposed functions across 8 namespaces + 5 lifecycle
 callbacks + a harness-verified Lua framework, on a natively hooked
 YR 1.001 runtime with SEH-guarded bindings and per-logical-frame
 dispatch. The observe → decide → order → read-back loop is

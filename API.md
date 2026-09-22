@@ -754,7 +754,7 @@ For whole-map searches, prefer `World.GetAllUnits()` instead of using an unneces
 
 The lowercase `game` namespace is a separate low-level/diagnostic namespace retained by the current implementation.
 
-## `game:GetWaypoint(id)`
+## `game.GetWaypoint(id)`
 
 Legacy/global form of the waypoint query (same implementation and
 contract as `World.GetWaypoint` — dot-call only, like all plain
@@ -768,7 +768,7 @@ local pos = game.GetWaypoint(5)
 
 ---
 
-## `game:GetUnitsInRadius(x, y, radius)`
+## `game.GetUnitsInRadius(x, y, radius)`
 
 Legacy/global form of the spatial unit query.
 
@@ -1100,6 +1100,18 @@ end
 ```
 
 > ⏱️ Gameplay timing should use the logical game frame rather than render FPS.
+
+### `OnTick(frame)` — loader-owned (Internal)
+
+Global dispatcher owned by the loader (`scripts/init.lua`), not by mods.
+The C++ frame handler calls it once per logical frame with the current
+engine frame number; it fans out to every loaded mod's `Update(frame)`
+inside per-mod error isolation.
+
+Mods must define `Update` on their returned table — never replace the
+global `OnTick` (the loader defines it after loading mods, so a
+mod-defined `OnTick` would be overwritten and would break dispatch for
+every other mod).
 
 ### `OnDebugCommand(text)`
 
