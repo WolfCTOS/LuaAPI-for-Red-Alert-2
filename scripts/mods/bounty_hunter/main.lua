@@ -310,23 +310,6 @@ function BountyHunter.Update(frame)
             S.nextSelect = frame + TUNING.SELECT_EVERY
         end
     end
-
-    -- TEMPORARY crash-isolation diagnostic (Tests B-E): F6 cycles the
-    -- native draw mode live without rebuilds (3=full,1=rect,2=text,0=off).
-    -- Edge-triggered by the engine; pcall-guarded for older DLLs. Remove
-    -- after the isolation verdict.
-    if Input and Input.WasKeyPressed then
-        local okK, pressed = pcall(Input.WasKeyPressed, 0x75)
-        if okK and pressed then
-            S.drawModes = S.drawModes or { 3, 1, 2, 0 }
-            S.drawIdx = (S.drawIdx or 1) % #(S.drawModes) + 1
-            local mode = S.drawModes[S.drawIdx]
-            local okM = Engine.SetBountyDrawMode
-                and pcall(Engine.SetBountyDrawMode, mode)
-            say(string.format("draw mode=%d %s", mode,
-                okM and "(native ack)" or "(native N/A)"))
-        end
-    end
 end
 
 return BountyHunter

@@ -972,7 +972,7 @@ unit:IronCurtain(frames)    -- invulnerability primitive (standalone, kept)
 > (`AddSubTurret` / `SetSplitTargets` / `FireSplitSalvo` / …) removed
 > the same day — see §Sub-Turret API.
 
-#### `Input.WasKeyPressed(vk)` → `boolean` (live consumers: `command_authority`, `bounty_hunter` F6, `tesla_mcv` T)
+#### `Input.WasKeyPressed(vk)` → `boolean` (live consumers: `command_authority` hotkeys, `tesla_mcv` T)
 
 Edge-triggered (pressed-now AND not-pressed-before), per
 `src/bindings_techno.cpp:1678`. State in `g_keyPrevState[256]`.

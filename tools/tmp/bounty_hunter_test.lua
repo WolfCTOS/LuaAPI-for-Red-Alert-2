@@ -12,12 +12,10 @@ local CURRENT_FRAME = 0
 local MARKS = {}   -- unitId -> {color, dur}
 local CLEARS = {}  -- unitId -> count
 local GLOBAL_CLEARS = 0
-local DRAW_MODES = {} -- SetBountyDrawMode call history
 
 local Engine = {
     PrintMessage = function(msg) LOG[#LOG + 1] = tostring(msg) end,
     ClearBountyMarks = function() GLOBAL_CLEARS = GLOBAL_CLEARS + 1 end,
-    SetBountyDrawMode = function(mode) DRAW_MODES[#DRAW_MODES + 1] = mode return true end,
 }
 
 local KEYS_DOWN = {}
@@ -296,15 +294,6 @@ runTo(CURRENT_FRAME + TUN.SCAN_EVERY)
 T(S.target == nil, "visual-off: destruction detected")
 T(HOUSES.P._credits - creditsBefore == 1575, "visual-off: payout still works")
 BH.TUNING.VISUAL_ENABLED = true
-
--- ---------------------------------------------------------------------------
--- 12. F6 diagnostic: cycles native draw mode live
--- ---------------------------------------------------------------------------
-KEYS_DOWN[0x75] = true
-step(CURRENT_FRAME + 1)
-KEYS_DOWN[0x75] = false
-T(#DRAW_MODES == 1 and DRAW_MODES[1] == 1, "F6: first press requests mode 1 (rect)")
-T(logCount("draw mode=1") == 1, "F6: mode announced")
 
 print(string.format("BOUNTY TESTS: %d passed, %d failed", passed, failed))
 if failed > 0 then os.exit(1) end

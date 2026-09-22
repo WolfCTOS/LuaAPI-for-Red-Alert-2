@@ -202,9 +202,13 @@ Format: `API | Status | Evidence | Documentation | Known limitation | Beta recom
    silently dead `OnScenarioStart`. Fix + re-verify before Beta.
 3. M2 waypoint stub — remove, wire, or clearly mark non-functional
    before Beta (it is currently a documented fake query).
-4. `SetBountyDrawMode` F6 cycling + `VISUAL_ENABLED` diagnostics are
+4. ~~`SetBountyDrawMode` F6 cycling + `VISUAL_ENABLED` diagnostics are
    temporary crash-isolation code in the DEFAULT active mod —
-   strip before Beta packaging.
+   strip before Beta packaging.~~ **RESOLVED 2026-09-22:** F6
+   draw-mode block removed from `bounty_hunter` (isolation verdict
+   was already in); native `SetBountyDrawMode` binding kept as a dev
+   tool. `VISUAL_ENABLED` flag intentionally kept (default-true =
+   normal behavior, documented tuning, harnessed).
 5. `target_reselect` (default stack) has no restart guard (unlike the
    other four stack mods) — add or document before Beta.
 6. Clean-machine install test + external modder test not performed
