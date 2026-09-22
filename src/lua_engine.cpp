@@ -22,13 +22,13 @@ extern "C" {
 #include <YRPP.h>
 
 #include <string>
-#include <mutex>
 #include <cstring>
 #include <cstdio>
 
 namespace LuaAPI {
 
 bool IsInGameMatch();
+void ResetSession();
 
 namespace {
 
@@ -47,7 +47,6 @@ constexpr uintptr_t kLoadStringAddr = 0x00734E60;
 bool g_loggedFirstFire = false;
 
 std::wstring g_moduleDir;
-std::once_flag g_engineOnce;
 bool g_scriptReady = false;
 lua_State* g_L = nullptr;
 
@@ -221,6 +220,36 @@ void __cdecl Hooked_MainLoop()
         g_loggedFirstFire = true;
         LUA_LOG_INFO("MainLoop hook fired! (first execution)");
     }
+
+    // Gate 1.3 — per-match session hygiene. The Lua VM is per-PROCESS by
+    // construction (lazy init below); without a reset, g_houseCache and all
+    // mod state leak across matches in one process. The MainLoop detour is
+    // the only lifecycle observation point available (no scenario-load hook
+    // exists), so track the two reliable transitions here:
+    //   match -> menu (IsInGameMatch true -> false), or
+    //   scenario swap (ScenarioClass::Instance pointer change while in-match,
+    //   e.g. a campaign mission change with no menu gap in between).
+    // A backwards frame counter alone (savegame load within one scenario)
+    // does NOT reset native state; mods cover that with frame-backwards
+    // guards. ResetSession touches no live engine objects (registry clears
+    // + lua_close; type-field restores are SEH-guarded), so firing it here
+    // — after the original loop ran — is safe during teardown.
+    static bool s_wasInMatch = false;
+    static ScenarioClass* s_lastScenario = nullptr;
+
+    const bool inMatch = IsInGameMatch();
+    ScenarioClass* const scen = ScenarioClass::Instance;
+
+    if (g_L && s_wasInMatch && !inMatch) {
+        LUA_LOG_INFO("Match ended (return to menu): resetting Lua session");
+        ResetSession();
+    } else if (g_L && inMatch && s_lastScenario && scen != s_lastScenario) {
+        LUA_LOG_INFO("Scenario changed mid-session: resetting Lua session");
+        ResetSession();
+    }
+
+    s_wasInMatch = inMatch;
+    s_lastScenario = scen;
 
     // 2. Profile frame end (before Lua dispatch)
     HookProfilerEndFrame();
@@ -1108,17 +1137,21 @@ void OnGameFrame() {
         }
     }
 
-    // Lazily bring up the Lua engine ONCE, on the main game thread.
-    std::call_once(
-        g_engineOnce,
-        []() {
-            if (!g_moduleDir.empty()) {
-                g_L = CreateEngine();
+    // Lazily bring up the Lua engine on the main game thread.
+    // Re-initializable by design (Gate 1.3): after a ResetSession
+    // (g_L == nullptr) the next in-match frame rebuilds the VM and re-runs
+    // init.lua, so every match starts from a fresh Lua state. (A
+    // std::call_once guard stood here before Gate 1.3; once consumed it
+    // could never re-fire after a reset, which would have left Lua
+    // permanently dead for the rest of the process.)
+    if (!g_L) {
+        if (!g_moduleDir.empty()) {
+            g_L = CreateEngine();
 
-                if (g_L)
-                    RunInitScript(g_L);
-            }
-        });
+            if (g_L)
+                RunInitScript(g_L);
+        }
+    }
 
     if (!g_L || !g_scriptReady)
         return;
@@ -1185,11 +1218,37 @@ void ResetSession() {
 
     g_preDamageCallbackRefs.clear();
 
+    // Gate 1.3: scenario-start / unit-destroyed refs are the same
+    // cross-session leak class — drop them here as well.
+    for (int ref : g_scenarioStartCallbackRefs) {
+        luaL_unref(
+            g_L,
+            LUA_REGISTRYINDEX,
+            ref);
+    }
+
+    g_scenarioStartCallbackRefs.clear();
+
+    for (int ref : g_unitDestroyedCallbackRefs) {
+        luaL_unref(
+            g_L,
+            LUA_REGISTRYINDEX,
+            ref);
+    }
+
+    g_unitDestroyedCallbackRefs.clear();
+
     // Clear per-session weapon overrides.
     LuaAPI::WeaponOverride::ClearAll();
 
     // Clear per-unit barrel pitch overrides (M16 path B).
     LuaAPI::BarrelPitch::ClearAll();
+
+    // Gate 1.3: drop timed-disable entries (raw TechnoClass* + stale expiry
+    // frames from the previous match) and key edge-detect state. Neither
+    // touches the engine — pure native-container clears.
+    LuaAPI::ClearDisabledObjects();
+    LuaAPI::ClearKeyPrevState();
 
     // 1b. Сброс состояния дебаг-консоли.
     ClearDebugInput();

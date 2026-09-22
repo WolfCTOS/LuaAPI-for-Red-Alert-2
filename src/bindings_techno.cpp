@@ -1502,8 +1502,7 @@ bool StillExists(TechnoClass* ptr) {
 }
 
 void ProcessDisabledObjects(unsigned int currentFrame) {
-    for (auto it = g_disabledEntries.begin(); it != g_disabledEntries.end();) {
-        // Validate BEFORE any dereference: objects destroyed by damage/victory
+    for (auto it = g_disabledEntries.begin(); it != g_disabledEntries.end();) {        // Validate BEFORE any dereference: objects destroyed by damage/victory
         // are freed by the engine and must never be touched again.
         bool alive = StillExists(it->ptr) && it->ptr->Health > 0;
         if (!alive) {
@@ -1527,6 +1526,15 @@ void ProcessDisabledObjects(unsigned int currentFrame) {
             ++it;
         }
     }
+}
+
+void ClearDisabledObjects() {
+    g_disabledEntries.clear();
+}
+
+void ClearKeyPrevState() {
+    for (int i = 0; i < 256; ++i)
+        g_keyPrevState[i] = false;
 }
 
 void PushTechno(lua_State* L, void* pTechno) {

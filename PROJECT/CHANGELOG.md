@@ -6,6 +6,40 @@ The changelog follows the project's verified milestone history. Features are lis
 
 ---
 
+## [Unreleased] — Gate 1.3 per-match session reset (2026-09-22)
+
+### Fixed — session lifecycle (`src/lua_engine.cpp`, `src/bindings_techno.cpp`)
+
+- Root causes (source audit, this session): `ResetSession()` had zero
+  callers (VM created once per process via `std::call_once`), so
+  `g_houseCache` and all mod/callback/native-registry state leaked
+  across matches. Wiring it as-is would have broken Lua permanently:
+  the consumed `once_flag` could never re-fire, leaving `g_L == nullptr`
+  forever after the first reset.
+- Fix (lifecycle only, no gameplay/API/framework changes):
+  - `Hooked_MainLoop` tracks `s_wasInMatch` + `s_lastScenario`
+    (`ScenarioClass::Instance`) and calls `ResetSession()` on
+    match → menu transition or mid-session scenario swap. Savegame
+    loads within one scenario do NOT reset native state (mods keep
+    their frame-backwards guards).
+  - Lazy VM init is re-initializable (`if (!g_L)` replaces
+    `std::call_once`): the next in-match frame rebuilds the VM and
+    re-runs `scripts/init.lua`, so each match starts fresh.
+  - `ResetSession()` now also clears the scenario-start /
+    unit-destroyed ref vectors (were pre-damage only), timed-disable
+    entries `ClearDisabledObjects()` (raw `TechnoClass*` + stale
+    expiry frames), and key edge state `ClearKeyPrevState()`.
+    Reset body touches no live engine objects (registry clears +
+    `lua_close`; type-field restores are SEH-guarded).
+- Verification: BUILT (Release, MSVC Win32, only pre-existing YRpp
+  C4731 warnings) + STATIC (grep: `g_engineOnce` gone, two live
+  reset call sites, both clears wired). RUNTIME PENDING — Gate 1.3
+  stays OPEN until the multi-match protocol below produces a fresh log:
+  Match 1 → menu → Match 2 → menu → Match 3 → exit → relaunch →
+  Match 4, checking fresh VM/init per match, clean house cache, no
+  cross-match mod/callback/mark state, no stale userdata access, Lua
+  functional throughout.
+
 ## [Unreleased] — Bounty-overlay crash fix (2026-09-22)
 
 ### Fixed — `src/barrel_pitch.cpp` (draw path only, no gameplay change)

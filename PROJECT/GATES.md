@@ -88,6 +88,21 @@ Closed by prior work: 1.5, 1.6, 1.8 (FSM archive); `API.md` `Attack`/
 > (`src/barrel_pitch.cpp`, CHANGELOG entry). Session details
 > (duration/map) not formally recorded — user-reported verification,
 > not a protocol run. Any new `0xC0000005` reopens this item again.
+>
+> **Addendum 2026-09-22 p.m. (item 3 FIX IMPLEMENTED, RUNTIME PENDING —
+> history preserved, NOT passed):** per-match session reset wired
+> (`src/lua_engine.cpp`: match→menu / scenario-swap detection in
+> `Hooked_MainLoop` → `ResetSession()`; `std::call_once` init replaced
+> with re-initializable `if (!g_L)` rebirth; `ResetSession()` extended
+> with scenario-start/unit-destroyed ref clears, `ClearDisabledObjects`,
+> `ClearKeyPrevState`). Audit also found and fixed a latent second
+> defect: wiring the old `ResetSession` alone would have left Lua
+> permanently dead (consumed `once_flag`). Evidence: BUILT (Release)
+> + STATIC (grep-verified wiring); see CHANGELOG entry. Item 3 stays
+> OPEN until the multi-match runtime protocol (Match 1 → menu →
+> Match 2 → menu → Match 3 → exit → relaunch → Match 4) produces a
+> fresh `LuaAPI.log` proving fresh VM, clean house cache, and no
+> cross-match state leaks.
 
 ### Why Gate 1 is not PASSED (honest statement)
 
