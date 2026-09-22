@@ -38,6 +38,10 @@ local loadedMods = {}
 local modTiming = {}
 local lastStatsReport = os.clock()
 
+-- Per-mod last reported Update error (E1): dedup key so a permanently
+-- broken mod logs once per distinct error instead of every frame.
+local modLastError = {}
+
 -- [[ДЕТЕРМИНИСТИЧНОЕ СИДИРОВАНИЕ RNG]]
 -- Критически важно для CnCNet мультиплеера: использование os.clock() или os.time()
 -- вызывает Out-of-Sync (OOS) рассинхронизацию между клиентами.
@@ -107,12 +111,23 @@ function OnTick(frame)
         end
     end
 
-    -- Wrap each mod.Update in wall-clock timing
+    -- Wrap each mod.Update in wall-clock timing. Failures are ISOLATED
+    -- per mod and REPORTED (E1): one broken mod neither stops the loader
+    -- nor fails silently. Dedup by message (see modLastError) so the log
+    -- gets one line per distinct error, not one per frame.
     for idx, mod in ipairs(loadedMods) do
         if mod and type(mod.Update) == "function" then
             local modName = ACTIVE_MODS[idx]
             local start = os.clock()
             local ok, err = pcall(mod.Update, frame)
+            if not ok then
+                local msg = tostring(err)
+                if modLastError[modName] ~= msg then
+                    modLastError[modName] = msg
+                    print(string.format("[LuaAPI] Mod '%s' Update error: %s",
+                        tostring(modName), msg))
+                end
+            end
             local elapsed_ms = (os.clock() - start) * 1000.0
             -- Accumulate timing for this mod
             if modTiming[modName] then

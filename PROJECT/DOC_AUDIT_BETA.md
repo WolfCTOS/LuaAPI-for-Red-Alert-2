@@ -96,6 +96,17 @@ harness-only, stub, or internal leaks into the Beta promise.
   Beta-relevant (modder self-debugging) — recommend as the next
   stabilization fix before packaging.
 
+> **Resolution 2026-09-22 (E1 FIX IMPLEMENTED, RUNTIME PENDING —
+> history preserved):** `OnTick` now logs
+> `[LuaAPI] Mod '<name>' Update error: <msg>` via the existing
+> `print`→`LuaAPI.log` path on first occurrence per distinct message
+> (dedup guards the per-frame log-flood trap); pcall isolation
+> unchanged, healthy mods dispatch normally.
+> Harness `tools/tmp/loader_update_error_test.lua`: 10/10 (named
+> error, healthy-mod continuation, dedup, re-log on change;
+> pre-fix loader fails exactly the error asserts). Live-game error
+> surfacing still needs a runtime run — E1 stays open until then.
+
 ## F. BETA-READY DOCUMENTATION
 
 **YES, with the recorded caveats:** after F1–F5, the documentation

@@ -6,6 +6,22 @@ The changelog follows the project's verified milestone history. Features are lis
 
 ---
 
+## [Unreleased] — E1 mod Update errors surfaced (2026-09-22)
+
+### Fixed — loader only (`scripts/init.lua`, no C++/API/lifecycle change)
+
+- Root cause: per-mod `pcall` `err` discarded — broken mods failed
+  silently, contradicting the documented log-debugging workflow.
+- Fix: first occurrence per distinct message logs
+  `[LuaAPI] Mod '<name>' Update error: <msg>` through the existing
+  `print`→`LuaAPI.log` path (dedup prevents per-frame log floods);
+  pcall isolation and dispatch order unchanged.
+- Verification: HARNESS 10/10 (`loader_update_error_test.lua`;
+  pre-fix loader fails exactly the error asserts) + STATIC + syntax.
+  No native rebuild (Lua-only; game reads `scripts/` live).
+  RUNTIME PENDING — E1 stays open until a live run shows a real mod
+  error in the log with healthy mods continuing.
+
 ## [Unreleased] — Beta documentation audit (2026-09-22)
 
 ### Fixed — documentation only (no code)
