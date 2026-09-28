@@ -121,8 +121,10 @@
 
 local Mod = {}
 
-local SWEEP_INTERVAL = 5     -- fast loop: everything calibrated in sweeps keeps
-                             -- its ratios; wall-clock response ~3x faster
+local SWEEP_INTERVAL = 3     -- fast loop v0.9.17: everything calibrated in sweeps
+                             -- keeps its ratios; wall-clock response x1.7 vs 5f
+                             -- (one-pass wake ~(6+2)x3 = 24f ~= 1.6s). Sweep
+                             -- cost ~0.5ms -> ~0.9ms, well inside the frame.
 local BOX            = 16
 local MAX_PER_SWEEP  = 4000   -- global backstop only (pathological cases)
 local BOX_WRITE_BUDGET = 80   -- writes per object box per sweep: the wake fills
@@ -187,7 +189,31 @@ local HEARTBEAT      = 600
 -- contested (recently-seen) ground is protected, never blackened, so there
 -- is nothing to flip. Open stays open (patrolled - honest), black stays
 -- black (abandoned - honest), no oscillation by construction.
-local HISTORY_SWEEPS = 10    -- sight history: cells inside live sight within the
+local HISTORY_SWEEPS = 150   -- sight-history CAP (v0.9.16 adaptive window below)
+local HISTORY_MIN    = 6     -- floor: one-pass wakes blacken fast, commuter
+                             -- corridors hold long. Protection window per cell
+                             -- = time it has been watched (lastSeen -
+                             -- firstSeen), clamped [MIN, SWEEPS]. Corridor
+                             -- seen every minute holds 150; a scout's single
+                             -- pass (span 0-3) releases in ~6+2 sweeps
+                             -- (~2.7s). WHY: fixed 150 bored everyone (dead
+                             -- wakes wait the full window); fixed 4 churned
+                             -- corridors. Watch-duration discriminates the
+                             -- two, recency alone cannot. Cone still bypasses
+                             -- for marchers.
+                             -- last N sweeps count as watched. WHY v0.9.15:
+                             -- unit audit 2026-09-29 - HISTORY WAS NEVER LONG
+                             -- ENOUGH: 10 sweeps x5f = 50f ~= 3.3s, but the
+                             -- harvester commute cycle is 30-60s (~100-180
+                             -- sweeps). The guard never engaged; corridor
+                             -- cells blackened between trips and every trip
+                             -- re-opened them (live: static base + reblack
+                             -- bursts + cleared 971->874->933 whipsaw). 150
+                             -- sweeps x5f = 750f = 50s covers full cycles:
+                             -- corridors stay open (honest - driven every
+                             -- minute). Response for steady leavers still
+                             -- comes from the progress cone (bypasses
+                             -- history); dead-scout wakes wait the window.
                              -- last N sweeps count as watched (patrol-proof).
                              -- WHY: the guard used live positions only, but a
                              -- pacing patrol returns faster than hysteresis
@@ -226,6 +252,9 @@ local overrideArmed = false
 local trailKeys, trailHas, trailCursor = {}, {}, 1
 local trailSeen = {}  -- cell key -> sweep# it was last inside live sight
                       -- (sight history for the HISTORY_SWEEPS guard)
+local firstSeen = {}  -- cell key -> sweep# of first sighting in the current
+                      -- watch era (gap > cap restarts the era in trailAdd).
+                      -- Span (lastSeen - firstSeen) sizes the guard window.
 local prevPts = {}    -- previous sweep positions for velocity ({x,y} list)
 local fastSweep = 0   -- diagnostic: writes via the fast cone this sweep
 local censusTotal, censusMine, censusPosOk, censusSightLive = 0, 0, 0, 0
@@ -466,16 +495,23 @@ local function decideCell(x, y, pts, n)
             end
         end
     end
-    -- sight history: seen within HISTORY_SWEEPS counts as watched (patrols).
-    -- Same handling as live sight: decay, unmark at 0, no blackening.
+    -- adaptive sight history (v0.9.16): protection window = watch duration
+    -- (lastSeen - firstSeen) clamped [HISTORY_MIN, HISTORY_SWEEPS]. Same
+    -- handling as live sight: decay, unmark at 0, no blackening.
     -- Fast-cone cells bypass it (they are being left, not paced).
     do
         local seen = trailSeen[key]
-        if not fast and seen ~= nil and sweeps - seen < HISTORY_SWEEPS then
-            if clearedMemory[key] or streakV[key] ~= nil then
-                if touch(key, -1, true) <= 0 then markOff(x, y, key) end
+        if not fast and seen ~= nil then
+            local first = firstSeen[key] or seen
+            local window = seen - first
+            if window < HISTORY_MIN then window = HISTORY_MIN end
+            if window > HISTORY_SWEEPS then window = HISTORY_SWEEPS end
+            if sweeps - seen < window then
+                if clearedMemory[key] or streakV[key] ~= nil then
+                    if touch(key, -1, true) <= 0 then markOff(x, y, key) end
+                end
+                return "protected"
             end
-            return "protected"
         end
     end
 
@@ -557,6 +593,12 @@ local function trailAdd(pts, n)
                             -- sight-history refresh: every sight cell, every
                             -- sweep (not just new trail entries). lastSeenAge
                             -- feeds the shroud logger (never window-pruned).
+                            -- firstSeen starts a new watch era after a long
+                            -- gap (capped), otherwise the span persists.
+                            if trailSeen[key] == nil
+                               or sweeps - trailSeen[key] > HISTORY_SWEEPS then
+                                firstSeen[key] = sweeps
+                            end
                             trailSeen[key] = sweeps
                             lastSeenAge[key] = sweeps
                             if not trailHas[key] then
@@ -808,6 +850,12 @@ local function sweep(frame)
                 trailSeen[k] = nil
             end
         end
+        -- firstSeen follows trail membership (left the trail = era over).
+        for k, _ in pairs(firstSeen) do
+            if not trailHas[k] then
+                firstSeen[k] = nil
+            end
+        end
         -- lastSeenAge lazy prune (stale only): 600 sweeps ~ several minutes.
         for k, seen in pairs(lastSeenAge) do
             if sweeps - seen > 600 then
@@ -908,6 +956,7 @@ function Mod.OnScenarioStart()
     hystSweep, hystTotal = 0, 0
     trailKeys, trailHas, trailCursor = {}, {}, 1
     trailSeen = {}
+    firstSeen = {}
     prevPts = {}
     censusTotal, censusMine, censusPosOk, censusSightLive = 0, 0, 0, 0
     censusPosFail = {}
