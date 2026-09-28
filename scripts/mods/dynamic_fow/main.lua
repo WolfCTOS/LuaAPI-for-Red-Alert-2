@@ -157,7 +157,10 @@ local TRAIL_PER_SWEEP = 12000 -- trail cells re-checked per sweep (rolling)
 local MOVE_PAD       = 1     -- extra protected ring around every object
 local STATIC_PAD     = 4     -- ring for objects that have not moved (buildings)
 local STILL_SWEEPS   = 3     -- sweeps at the same cell before an object counts as static
-local PROGRESS_MIN   = 2     -- cells of NET displacement over PROGRESS_WIN sweeps
+local PROGRESS_MIN   = 1     -- cells of NET displacement over PROGRESS_WIN sweeps
+                             -- (v0.9.18: slow walkers net ~1 cell/4sw and never
+                             -- armed the cone at 2 - the wake filled only
+                             -- after full stops. Millers still net ~0.)
                              -- to arm the fast cone (v0.9.13). WHY: per-sweep
                              -- integer deltas quantize slow walkers to 1,0,1,0
                              -- so a run counter never accumulated and the cone
@@ -448,7 +451,16 @@ local function decideCell(x, y, pts, n)
     if minOver ~= nil and minOver <= 0 then
         -- inside live sight: decay toward open, unmark at 0.
         if clearedMemory[key] or streakV[key] ~= nil then
-            if touch(key, -1, true) <= 0 then markOff(x, y, key) end
+            if touch(key, -1, true) <= 0 then
+                -- honest ledger (v0.9.19): forget only what the engine
+                -- actually re-opened. Unmarking black-in-data drops it from
+                -- every meter while the pixels stay black (silent dark
+                -- matter, worst around STATIC_PAD rings the engine never
+                -- watches). Streak is already cleaned by touch(); memory
+                -- stays until proven open.
+                local s = World.GetFogState(x, y)
+                if not s or not s.shrouded then markOff(x, y, key) end
+            end
         end
         -- diagnostic only: black-in-data inside TRUE (unpadded) engine sight?
         -- The padded ring (MOVE/STATIC_PAD) we protect but the engine never
@@ -508,7 +520,11 @@ local function decideCell(x, y, pts, n)
             if window > HISTORY_SWEEPS then window = HISTORY_SWEEPS end
             if sweeps - seen < window then
                 if clearedMemory[key] or streakV[key] ~= nil then
-                    if touch(key, -1, true) <= 0 then markOff(x, y, key) end
+                    if touch(key, -1, true) <= 0 then
+                        -- honest ledger (v0.9.19): see live-sight branch.
+                        local s = World.GetFogState(x, y)
+                        if not s or not s.shrouded then markOff(x, y, key) end
+                    end
                 end
                 return "protected"
             end
@@ -754,7 +770,11 @@ local function sweep(frame)
                 seen[key] = true
                 r = decideCell(x, y, pts, n)
             end
-            if r == "skip" then
+            if r == "skip" and not clearedMemory[key] then
+                -- honest ledger (v0.9.19): tracked-black cells stay in the
+                -- rolling trail (managed, re-checked); only untracked shroud
+                -- leaves. Otherwise a tracked cell nobody revisits becomes
+                -- silent dark matter: black in data, absent from all meters.
                 trailHas[key] = nil
                 trailKeys[i] = trailKeys[cnt]
                 trailKeys[cnt] = nil
