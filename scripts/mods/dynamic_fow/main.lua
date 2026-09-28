@@ -125,8 +125,14 @@ local SWEEP_INTERVAL = 5     -- fast loop: everything calibrated in sweeps keeps
                              -- its ratios; wall-clock response ~3x faster
 local BOX            = 16
 local MAX_PER_SWEEP  = 4000   -- global backstop only (pathological cases)
-local BOX_WRITE_BUDGET = 120  -- writes per object box per sweep: the wake fills
-local TRAIL_WRITE_BUDGET = 200 -- writes per trail pass per sweep. WHY v0.9.6:
+local BOX_WRITE_BUDGET = 80   -- writes per object box per sweep: the wake fills
+local TRAIL_WRITE_BUDGET = 120 -- writes per trail pass per sweep. Senior call
+                               -- v0.9.14: live bursts run 20-40/sweep, so these
+                               -- ceilings bind ONLY big expansion waves (which
+                               -- read as harsh full-region flips) and never
+                               -- touch the normal trickle. Fill stretches over
+                               -- more sweeps instead of flashing at once.
+                               -- WHY v0.9.6:
                                -- a whole matured region flipping in ONE sweep
                                -- reads as a harsh step chasing the unit (live
                                -- 2026-09-28: lower wake fills first, then the
@@ -149,6 +155,15 @@ local TRAIL_PER_SWEEP = 12000 -- trail cells re-checked per sweep (rolling)
 local MOVE_PAD       = 1     -- extra protected ring around every object
 local STATIC_PAD     = 4     -- ring for objects that have not moved (buildings)
 local STILL_SWEEPS   = 3     -- sweeps at the same cell before an object counts as static
+local PROGRESS_MIN   = 2     -- cells of NET displacement over PROGRESS_WIN sweeps
+                             -- to arm the fast cone (v0.9.13). WHY: per-sweep
+                             -- integer deltas quantize slow walkers to 1,0,1,0
+                             -- so a run counter never accumulated and the cone
+                             -- cycled arm/disarm = filling in WAVES. Net
+                             -- progress separates travel (meters) from milling
+                             -- (circles/pacers net ~0) including sub-cell
+                             -- speeds. Chrono-teleports can't false-fire: the
+                             -- proximity match radius (4) drops them as new.
 local FAST_VEL       = 1     -- cells/sweep: objects moving at least this fast get a
                              -- fast-blacken cone behind them (v0.9.7). WHY: the
                              -- delay exists to tell "passing through" from
@@ -172,7 +187,7 @@ local HEARTBEAT      = 600
 -- contested (recently-seen) ground is protected, never blackened, so there
 -- is nothing to flip. Open stays open (patrolled - honest), black stays
 -- black (abandoned - honest), no oscillation by construction.
-local HISTORY_SWEEPS = 6     -- sight history: cells inside live sight within the
+local HISTORY_SWEEPS = 10    -- sight history: cells inside live sight within the
                              -- last N sweeps count as watched (patrol-proof).
                              -- WHY: the guard used live positions only, but a
                              -- pacing patrol returns faster than hysteresis
@@ -213,6 +228,17 @@ local trailSeen = {}  -- cell key -> sweep# it was last inside live sight
                       -- (sight history for the HISTORY_SWEEPS guard)
 local prevPts = {}    -- previous sweep positions for velocity ({x,y} list)
 local fastSweep = 0   -- diagnostic: writes via the fast cone this sweep
+local censusTotal, censusMine, censusPosOk, censusSightLive = 0, 0, 0, 0
+local censusPosFail = {}  -- up to 4 type names with unreadable position
+local lastSeenAge = {}    -- cell key -> sweep# last inside live sight, NEVER
+                          -- pruned on the guard window (unlike trailSeen): the
+                          -- shroud logger measures abandonment-to-blacken age
+                          -- from it. Lazy-pruned past 600 sweeps (stale).
+local shroudAgeSum, shroudAgeN = 0, 0      -- mean age accumulator (window)
+local shroudMaxBurst, shroudActiveSw = 0, 0 -- burst stats (window)
+local shroudPrevTotal, shroudPrevFrame = 0, nil -- window baseline
+                          -- (guard-hole candidates: no disc, yet possibly
+                          -- seeing - or not seeing - per the engine)
 local orphanSweep = 0 -- diagnostic: open cells nobody manages (not in trail,
 local orphanSample = {} -- no streak, outside all sights). Persistent orphans
                       -- = coverage hole (dotted trails): visited by no box
@@ -270,14 +296,19 @@ local function playerObjects()
     local objs = World.GetAllUnits()
     if not objs or #objs == 0 then return nil, nil end
     local pts, n = {}, 0
+    censusTotal, censusMine, censusPosOk, censusSightLive = #objs, 0, 0, 0
+    censusPosFail = {}
     for _, u in ipairs(objs) do
         if u:GetOwner() == player then
+            censusMine = censusMine + 1
             local p = u:GetPosition()
             if p and p.x and p.y then
+                censusPosOk = censusPosOk + 1
                 local sight = SIGHT_FALLBACK
                 local ok, s = pcall(function() return u:GetSight() end)
                 if ok and type(s) == "number" and s > 0 then
                     sight = math.min(s, SIGHT_MAX)
+                    censusSightLive = censusSightLive + 1
                 end
                 if not sightModeLogged then
                     sightModeLogged = true
@@ -289,6 +320,12 @@ local function playerObjects()
                 end
                 n = n + 1
                 pts[n] = { x = p.x, y = p.y, sight = math.max(sight, PROTECT) }
+            else
+                -- position unreadable: guard-hole candidate, record the type
+                if #censusPosFail < 4 then
+                    local ok2, tn = pcall(function() return u:GetTypeName() end)
+                    censusPosFail[#censusPosFail + 1] = (ok2 and tn) or "?"
+                end
             end
         end
     end
@@ -416,12 +453,15 @@ local function decideCell(x, y, pts, n)
     -- observation for fast cells, two otherwise).
     local fast = false
     do
-        local vv = FAST_VEL * FAST_VEL
+        -- sustained travel only: 4-sweep net displacement >= PROGRESS_MIN.
+        -- Millers/circlers/pacers net ~0 and never qualify; steady walkers
+        -- do, including sub-cell speeds. Direction = the net vector itself.
+        local pp = PROGRESS_MIN * PROGRESS_MIN
         for i = 1, n do
-            local vx = pts[i].vx or 0
-            local vy = pts[i].vy or 0
-            if vx * vx + vy * vy >= vv then
-                local dot = (x - pts[i].x) * vx + (y - pts[i].y) * vy
+            if (pts[i].prog2 or 0) >= pp then
+                local pdx = pts[i].pdx or 0
+                local pdy = pts[i].pdy or 0
+                local dot = (x - pts[i].x) * pdx + (y - pts[i].y) * pdy
                 if dot <= -1 then fast = true break end
             end
         end
@@ -473,6 +513,16 @@ local function decideCell(x, y, pts, n)
         -- C++ clears the 0x18 pair + Center/Edge (sim honesty). The mark
         -- carries the visual over the whole blackened cell.
         markOn(x, y, key)
+        -- shroud logger: abandonment age of this cell (sweeps since last
+        -- seen). Cells never seen (box corners admitted on visit) carry no
+        -- stamp and are excluded from the mean.
+        do
+            local ls = lastSeenAge[key]
+            if ls ~= nil then
+                shroudAgeSum = shroudAgeSum + (sweeps - ls)
+                shroudAgeN = shroudAgeN + 1
+            end
+        end
         -- HOLE FACTORY FIX (v0.9.8): box corners (BOX=16) reach past sight
         -- discs, so written cells there were never trail members. If the
         -- engine later re-explored one (reblack) while out of box range, it
@@ -505,8 +555,10 @@ local function trailAdd(pts, n)
                         if x >= 0 and x <= 511 then
                             local key = y * 512 + x
                             -- sight-history refresh: every sight cell, every
-                            -- sweep (not just new trail entries).
+                            -- sweep (not just new trail entries). lastSeenAge
+                            -- feeds the shroud logger (never window-pruned).
                             trailSeen[key] = sweeps
+                            lastSeenAge[key] = sweeps
                             if not trailHas[key] then
                                 trailHas[key] = true
                                 trailKeys[#trailKeys + 1] = key
@@ -539,9 +591,12 @@ local function sweep(frame)
         end
         stillPrev = newStill
     end
-    -- velocities by proximity matching (no stable IDs): nearest previous
-    -- position within 4 cells; unmatched objects count as standing still
-    -- (conservative: no fast cone for unknowns).
+    -- motion history by proximity matching (no stable IDs): nearest previous
+    -- position within 4 cells; unmatched objects start fresh (conservative:
+    -- no fast cone for unknowns). Each entry carries 3 back-positions, so
+    -- NET progress over PROGRESS_WIN=4 sweeps is measurable with sub-cell
+    -- resolution (v0.9.13: per-sweep integer run quantized slow walkers to
+    -- 1,0,1,0 and the cone cycled = waves).
     do
         for i = 1, n do
             local best, bd2 = nil, 16
@@ -552,14 +607,28 @@ local function sweep(frame)
                 if d2 < bd2 then best, bd2 = j, d2 end
             end
             if best ~= nil then
-                pts[i].vx = pts[i].x - prevPts[best].x
-                pts[i].vy = pts[i].y - prevPts[best].y
+                local pv = prevPts[best]
+                pts[i].h1x, pts[i].h1y = pv.x, pv.y
+                pts[i].h2x, pts[i].h2y = pv.h1x, pv.h1y
+                pts[i].h3x, pts[i].h3y = pv.h2x, pv.h2y
             else
-                pts[i].vx, pts[i].vy = 0, 0
+                pts[i].h1x, pts[i].h1y = pts[i].x, pts[i].y
+                pts[i].h2x, pts[i].h2y = pts[i].x, pts[i].y
+                pts[i].h3x, pts[i].h3y = pts[i].x, pts[i].y
             end
+            -- 4-sweep net displacement (travel vs milling signal).
+            local pdx = pts[i].x - (pts[i].h3x or pts[i].x)
+            local pdy = pts[i].y - (pts[i].h3y or pts[i].y)
+            pts[i].pdx, pts[i].pdy = pdx, pdy
+            pts[i].prog2 = pdx * pdx + pdy * pdy
         end
         local keep = {}
-        for i = 1, n do keep[i] = { x = pts[i].x, y = pts[i].y } end
+        for i = 1, n do
+            keep[i] = { x = pts[i].x, y = pts[i].y,
+                        h1x = pts[i].x, h1y = pts[i].y,
+                        h2x = pts[i].h1x, h2y = pts[i].h1y,
+                        h3x = pts[i].h2x, h3y = pts[i].h2y }
+        end
         prevPts = keep
     end
     local cx, cy = centroid(pts, n)
@@ -707,6 +776,10 @@ local function sweep(frame)
         pcall(World.FlushShroudRedraw)
     end
 
+    -- shroud-logger burst stats (window).
+    if did > 0 then shroudActiveSw = shroudActiveSw + 1 end
+    if did > shroudMaxBurst then shroudMaxBurst = did end
+
     sweeps   = sweeps + 1
     total    = total + did
     skipped  = skipped + skip
@@ -735,6 +808,43 @@ local function sweep(frame)
                 trailSeen[k] = nil
             end
         end
+        -- lastSeenAge lazy prune (stale only): 600 sweeps ~ several minutes.
+        for k, seen in pairs(lastSeenAge) do
+            if sweeps - seen > 600 then
+                lastSeenAge[k] = nil
+            end
+        end
+        -- shroud logger window report: volumes as rate + mean abandonment
+        -- age + burst shape. Seconds: frames/15; sweeps: x5 frames.
+        do
+            local dt = frame - (shroudPrevFrame or frame)
+            local dTotal = total - (shroudPrevTotal or 0)
+            local rate = dt > 0 and (dTotal / (dt / 15)) or 0
+            local meanAge = (shroudAgeN or 0) > 0
+                and (shroudAgeSum / shroudAgeN) or 0
+            print(string.format(
+                "[DFOW] SHROUD f=%d window=%df total=%d +%d cells rate=%.1f/s meanAge=%.1fsw (%.1fs) maxBurst=%d activeSw=%d",
+                frame, dt, total, dTotal, rate, meanAge, meanAge * 5 / 15,
+                shroudMaxBurst or 0, shroudActiveSw or 0))
+            shroudPrevTotal, shroudPrevFrame = total, frame
+            shroudAgeSum, shroudAgeN = 0, 0
+            shroudMaxBurst, shroudActiveSw = 0, 0
+        end
+        -- v0.9.11 trail shuffle: insertion order is row-major (disc/box
+        -- row loops), so contiguous cursor slices under a binding budget
+        -- painted parallel dotted ROWS (live 2026-09-28: banded speckle
+        -- after v0.9.10 ballooned the trail into slicing). Fisher-Yates
+        -- every LOG_EVERY sweeps makes each slice a uniform sample: same
+        -- coverage rate, no spatial bands. Unseeded PRNG = deterministic
+        -- (no os.time per MP-determinism rule); one fixed permutation still
+        -- breaks row contiguity. Cursor resets (old index meaningless).
+        if #trailKeys > 1 then
+            for k = #trailKeys, 2, -1 do
+                local j = math.random(k)
+                trailKeys[k], trailKeys[j] = trailKeys[j], trailKeys[k]
+            end
+            trailCursor = 1
+        end
     end
 
     if sweeps % LOG_EVERY == 0 or bad > 0 then
@@ -750,6 +860,10 @@ local function sweep(frame)
         if (orphanSweep or 0) > 0 then
             print("[DFOW] orphan@ " .. table.concat(orphanSample, " "))
         end
+        print(string.format(
+            "[DFOW] census objs=%d mine=%d posok=%d sightlive=%d posfail=%s",
+            censusTotal or 0, censusMine or 0, censusPosOk or 0,
+            censusSightLive or 0, table.concat(censusPosFail or {}, ",")))
     end
 end
 
@@ -795,6 +909,12 @@ function Mod.OnScenarioStart()
     trailKeys, trailHas, trailCursor = {}, {}, 1
     trailSeen = {}
     prevPts = {}
+    censusTotal, censusMine, censusPosOk, censusSightLive = 0, 0, 0, 0
+    censusPosFail = {}
+    lastSeenAge = {}
+    shroudAgeSum, shroudAgeN = 0, 0
+    shroudMaxBurst, shroudActiveSw = 0, 0
+    shroudPrevTotal, shroudPrevFrame = 0, nil
     blackWatchSweep = 0
     blackWatchSample = {}
     stillPrev = {}
