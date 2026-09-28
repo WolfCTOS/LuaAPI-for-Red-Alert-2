@@ -2211,6 +2211,32 @@ static int World_SetCellShrouded(lua_State* L) {
     return 1;
 }
 
+// World.NativeReshroud() -> boolean
+// Calls the engine's own MapClass::Reshroud(CurrentPlayer) (YRpp 0x577AB0)
+// once, SEH-wrapped. Proven live 2026-09-29: blackens unseen mapped ground,
+// spares watched cells, no fault, effect persists; the per-frame vanilla
+// reveal restores sighted ground by itself. Periodic calls + vanilla reveal
+// = dynamic FOW with ZERO per-cell Lua writes (no stale pixels, no speckle,
+// native cascade + redraw by construction). The Lua mod drives it on a frame
+// timer; all guard/hysteresis machinery stays OFF in native mode (meters
+// like blackWatch/orphan keep validating from outside).
+// Single-player oriented like the rest of the write path. POD-only frame.
+static int World_NativeReshroud(lua_State* L) {
+    __try {
+        HouseClass* player = HouseClass::CurrentPlayer;
+        if (!player) {
+            lua_pushboolean(L, 0);
+            return 1;
+        }
+        MapClass::Instance.Reshroud(player);
+        lua_pushboolean(L, 1);
+        return 1;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+}
+
 // World.FlushShroudRedraw() -> boolean
 // Posts ONE tactical dirty area covering the viewport if any SetCellShrouded
 // write happened since the last flush, then clears the flag. This is the
@@ -3143,6 +3169,9 @@ void RegisterTechnoBindings(lua_State* L) {
     lua_setfield(L, -2, "SetCellShrouded");
     lua_pushcfunction(L, World_FlushShroudRedraw);
     lua_setfield(L, -2, "FlushShroudRedraw");
+    lua_pushcfunction(L, World_NativeReshroud);
+    lua_setfield(L, -2, "NativeReshroud");
+
 
     lua_pushcfunction(L, World_GetCellRadLevel);
     lua_setfield(L, -2, "GetCellRadLevel");

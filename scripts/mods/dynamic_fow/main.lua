@@ -127,7 +127,8 @@ local SWEEP_INTERVAL = 3     -- fast loop v0.9.17: everything calibrated in swee
                              -- cost ~0.5ms -> ~0.9ms, well inside the frame.
 local BOX            = 16
 local MAX_PER_SWEEP  = 4000   -- global backstop only (pathological cases)
-local BOX_WRITE_BUDGET = 80   -- writes per object box per sweep: the wake fills
+local BOX_WRITE_BUDGET = 30   -- adaptive-drain floor per box (v0.9.24); the live
+                             -- budget scales with last sweep's maturing backlog
 local TRAIL_WRITE_BUDGET = 120 -- writes per trail pass per sweep. Senior call
                                -- v0.9.14: live bursts run 20-40/sweep, so these
                                -- ceilings bind ONLY big expansion waves (which
@@ -192,17 +193,12 @@ local HEARTBEAT      = 600
 -- contested (recently-seen) ground is protected, never blackened, so there
 -- is nothing to flip. Open stays open (patrolled - honest), black stays
 -- black (abandoned - honest), no oscillation by construction.
-local HISTORY_SWEEPS = 150   -- sight-history CAP (v0.9.16 adaptive window below)
-local HISTORY_MIN    = 6     -- floor: one-pass wakes blacken fast, commuter
-                             -- corridors hold long. Protection window per cell
-                             -- = time it has been watched (lastSeen -
-                             -- firstSeen), clamped [MIN, SWEEPS]. Corridor
-                             -- seen every minute holds 150; a scout's single
-                             -- pass (span 0-3) releases in ~6+2 sweeps
-                             -- (~2.7s). WHY: fixed 150 bored everyone (dead
-                             -- wakes wait the full window); fixed 4 churned
-                             -- corridors. Watch-duration discriminates the
-                             -- two, recency alone cannot. Cone still bypasses
+local HISTORY_SWEEPS = 150   -- HOT window (v0.9.21 contention protection below)
+local HISTORY_MIN    = 6     -- floor: one-pass wakes blacken fast. Contested
+                             -- cells (proven by engine re-opens) hold HISTORY_SWEEPS.
+                             -- WHY v0.9.21: watch-duration froze MIXED zones
+                             -- (sight-wobble desync); contention is the honest
+                             -- long-protection signal. Cone still bypasses
                              -- for marchers.
                              -- last N sweeps count as watched. WHY v0.9.15:
                              -- unit audit 2026-09-29 - HISTORY WAS NEVER LONG
@@ -255,9 +251,17 @@ local overrideArmed = false
 local trailKeys, trailHas, trailCursor = {}, {}, 1
 local trailSeen = {}  -- cell key -> sweep# it was last inside live sight
                       -- (sight history for the HISTORY_SWEEPS guard)
-local firstSeen = {}  -- cell key -> sweep# of first sighting in the current
-                      -- watch era (gap > cap restarts the era in trailAdd).
-                      -- Span (lastSeen - firstSeen) sizes the guard window.
+local hotCount = {}  -- cell key -> reblack count (repeat contention meter)
+local hot = {}  -- cell key -> sweep# of last engine re-open (reblack) of OUR
+                -- black cell, plus hotCount[key] = how many times it flipped.
+                -- WHY v0.9.23: a SINGLE re-open (return trip over our black)
+                -- must NOT buy 150 sweeps of protection - it froze open
+                -- diamonds for ~50s (live 2026-09-29: return path persists
+                -- after stop, while outbound filled fast). LONG protection
+                -- only from REPEAT contention (hotCount >= 2: commuter
+                -- corridors flipping every cycle). Single-flip cells expire
+                -- in HISTORY_MIN and the gate refills them BLACK in ~3s.
+                -- Contested converges OPEN (chronic), one-off converges BLACK.
 local prevPts = {}    -- previous sweep positions for velocity ({x,y} list)
 local fastSweep = 0   -- diagnostic: writes via the fast cone this sweep
 local censusTotal, censusMine, censusPosOk, censusSightLive = 0, 0, 0, 0
@@ -275,6 +279,13 @@ local orphanSweep = 0 -- diagnostic: open cells nobody manages (not in trail,
 local orphanSample = {} -- no streak, outside all sights). Persistent orphans
                       -- = coverage hole (dotted trails): visited by no box
                       -- and never stamped. Sampled on a coarse grid.
+local NATIVE_RESHROUD  = true  -- v0.9.25: drive MapClass::Reshroud on a frame
+local NATIVE_INTERVAL  = 150  -- timer (frames) instead of per-cell Lua writes.
+                             -- Proven live 2026-09-29 (probe: far 0->1, under
+                             -- 0->0, fault 0, persists). Per-cell machinery
+                             -- below stays as fallback + diagnostics (set false
+                             -- to restore Lua writes). Meters keep validating.
+local prevHyst = 0    -- maturing backlog last sweep: sizes the adaptive drain
 local blackWatchSweep = 0  -- diagnostic: cells black-in-data inside live sight
                            -- (engine reveal-path skipping them? v0.3 mechanism)
 local blackWatchSample = {}  -- up to 8 coords of stuck cells per sweep
@@ -351,7 +362,9 @@ local function playerObjects()
                     end
                 end
                 n = n + 1
-                pts[n] = { x = p.x, y = p.y, sight = math.max(sight, PROTECT) }
+                local okTn, tname = pcall(function() return u:GetTypeName() end)
+                pts[n] = { x = p.x, y = p.y, sight = math.max(sight, PROTECT),
+                           tn = (okTn and tname) or "?" }
             else
                 -- position unreadable: guard-hole candidate, record the type
                 if #censusPosFail < 4 then
@@ -369,6 +382,44 @@ local function centroid(pts, n)
     local sx, sy = 0, 0
     for i = 1, n do sx = sx + pts[i].x; sy = sy + pts[i].y end
     return math.floor(sx / n), math.floor(sy / n)
+end
+
+-- v0.9.20 contiguity gate (second coming): a +2 cell is written ONLY into
+-- a ready neighbourhood - black (growth), shrouded (dark-edge growth), or
+-- co-maturing (>=3 neighbours streak>=1, pocket fills together). Rationale
+-- from live 2026-09-29: with storms absent (reblack frozen whole sessions)
+-- the remaining artifact is FROZEN-MIXED zones - sight wobble desyncs guard
+-- windows, cells expire one by one and freeze interleaved (wide dotted
+-- bands that no meter flags: orphan 0, hyst 0). Contiguity forbids isolated
+-- writes by construction, so mixed zones cannot form. v0.9.3 had this gate
+-- and it backfired MID-STORM (throttled throughput while the engine opened);
+-- storms are now structurally prevented (watch-duration history), the harm
+-- case is gone. Neighbour engine reads only for +2 candidates (tens/sweep).
+local function neighbourhoodReady(x, y)
+    local maturing = 0
+    for dy = -1, 1 do
+        local ny = y + dy
+        if ny >= 0 and ny <= 511 then
+            for dx = -1, 1 do
+                if dx ~= 0 or dy ~= 0 then
+                    local nx = x + dx
+                    if nx >= 0 and nx <= 511 then
+                        local nkey = ny * 512 + nx
+                        if clearedMemory[nkey] then return true end
+                        local st = streakV[nkey]
+                        if st ~= nil and st >= 1 then
+                            maturing = maturing + 1
+                            if maturing >= 3 then return true end
+                        else
+                            local s = World.GetFogState(nx, ny)
+                            if s and s.shrouded then return true end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return false
 end
 
 -- One cell decision. Returns "reshrouded" | "watched" | "protected" | "grace"
@@ -471,17 +522,25 @@ local function decideCell(x, y, pts, n)
         do
             local s = World.GetFogState(x, y)
             if s and s.shrouded then
+                local bestI, bestD2 = nil, nil
                 for i = 1, n do
                     local dx = x - pts[i].x
                     local dy = y - pts[i].y
                     local r = pts[i].baseSight or pts[i].sight or PROTECT
-                    if dx * dx + dy * dy <= r * r then
-                        blackWatchSweep = (blackWatchSweep or 0) + 1
-                        if #blackWatchSample < 8 then
-                            blackWatchSample[#blackWatchSample + 1] =
-                                x .. "," .. y
+                    local d2 = dx * dx + dy * dy
+                    if d2 <= r * r then
+                        if bestD2 == nil or d2 < bestD2 then
+                            bestI, bestD2 = i, d2
                         end
-                        break
+                    end
+                end
+                if bestI ~= nil then
+                    blackWatchSweep = (blackWatchSweep or 0) + 1
+                    if #blackWatchSample < 8 then
+                        blackWatchSample[#blackWatchSample + 1] =
+                            string.format("%d,%d:%s@%d", x, y,
+                                pts[bestI].tn or "?",
+                                math.floor(math.sqrt(bestD2) + 0.5))
                     end
                 end
             end
@@ -507,17 +566,21 @@ local function decideCell(x, y, pts, n)
             end
         end
     end
-    -- adaptive sight history (v0.9.16): protection window = watch duration
-    -- (lastSeen - firstSeen) clamped [HISTORY_MIN, HISTORY_SWEEPS]. Same
-    -- handling as live sight: decay, unmark at 0, no blackening.
-    -- Fast-cone cells bypass it (they are being left, not paced).
+    -- contention protection (v0.9.21/23): recently seen cells hold
+    -- HISTORY_MIN; REPEAT-contested cells (hotCount >= 2 with a re-open
+    -- within HISTORY_SWEEPS) hold HISTORY_SWEEPS. A single re-open (return
+    -- trip) expires fast so the gate refills the diamonds BLACK. Same
+    -- handling as live sight otherwise: decay, unmark at 0, no blackening.
+    -- Fast-cone cells bypass both.
     do
         local seen = trailSeen[key]
         if not fast and seen ~= nil then
-            local first = firstSeen[key] or seen
-            local window = seen - first
-            if window < HISTORY_MIN then window = HISTORY_MIN end
-            if window > HISTORY_SWEEPS then window = HISTORY_SWEEPS end
+            local window = HISTORY_MIN
+            local h = hot[key]
+            if h ~= nil and sweeps - h < HISTORY_SWEEPS
+               and (hotCount[key] or 0) >= 2 then
+                window = HISTORY_SWEEPS
+            end
             if sweeps - seen < window then
                 if clearedMemory[key] or streakV[key] ~= nil then
                     if touch(key, -1, true) <= 0 then
@@ -540,6 +603,8 @@ local function decideCell(x, y, pts, n)
     -- hysteresis below decides, not this count.
     if clearedMemory[key] then
         reblackSweep = (reblackSweep or 0) + 1
+        hot[key] = sweeps  -- contention proof: the engine wants this cell
+        hotCount[key] = (hotCount[key] or 0) + 1
         if touch(key, -1, true) <= 0 then markOff(x, y, key) end
         return "hyst"
     end
@@ -558,6 +623,24 @@ local function decideCell(x, y, pts, n)
     -- (prune-exempt below), but a single blip either way still changes nothing
     -- on the normal path - that is the whole point.
     if touch(key, 1, false) < (fast and 1 or 2) then
+        hystSweep = (hystSweep or 0) + 1
+        return "hyst"
+    end
+    -- contiguity gate (v0.9.20): hold at streak (kept, no progress lost)
+    -- until the neighbourhood is ready. Isolated cells never write alone.
+    -- Fast-cone cells are EXEMPT (v0.9.24): a marcher's wake is contiguous
+    -- by motion, so the gate only stalls its leading edge into steps while
+    -- adding zero speckle protection. Gating only the normal path.
+    if not fast and not neighbourhoodReady(x, y) then
+        hystSweep = (hystSweep or 0) + 1
+        return "hyst"
+    end
+    -- native mode (v0.9.25): the driver (whole-map Reshroud on a timer)
+    -- owns all writes; per-cell Lua writes stay OFF but every meter above
+    -- keeps observing (guard/hysteresis/trail/diagnostics keep running, so
+    -- blackWatch/orphan/reblack validate the native path from outside).
+    -- Flip NATIVE_RESHROUD=false to restore Lua writes.
+    if NATIVE_RESHROUD and type(World.NativeReshroud) == "function" then
         hystSweep = (hystSweep or 0) + 1
         return "hyst"
     end
@@ -585,6 +668,10 @@ local function decideCell(x, y, pts, n)
             trailKeys[#trailKeys + 1] = key
         end
         if fast then fastSweep = (fastSweep or 0) + 1 end
+        -- fast writes bypass the pacing budgets below (same reason: the wake
+        -- is contiguous by motion; throttling it paints steps). The global
+        -- MAX_PER_SWEEP backstop still applies via did.
+        if fast then return "reshrouded_fast" end
         return "reshrouded"
     end
     streakV[key] = 1  -- write failed: retry next sweep, not stuck at 2
@@ -609,12 +696,6 @@ local function trailAdd(pts, n)
                             -- sight-history refresh: every sight cell, every
                             -- sweep (not just new trail entries). lastSeenAge
                             -- feeds the shroud logger (never window-pruned).
-                            -- firstSeen starts a new watch era after a long
-                            -- gap (capped), otherwise the span persists.
-                            if trailSeen[key] == nil
-                               or sweeps - trailSeen[key] > HISTORY_SWEEPS then
-                                firstSeen[key] = sweeps
-                            end
                             trailSeen[key] = sweeps
                             lastSeenAge[key] = sweeps
                             if not trailHas[key] then
@@ -714,6 +795,12 @@ local function sweep(frame)
     -- Each box reaches past that object's sight (sight+2) so the reshroud
     -- frontier always extends beyond live vision.
     trailAdd(pts, n)
+    -- adaptive drain (v0.9.24): frozen-then-flood was the fixed budget
+    -- queueing matured cells faster than it drained (march wakes backlog,
+    -- stand still, then flood). Drain scales with the backlog: quiet stays
+    -- smooth (floor 30), bursts drain proportionally (cap 400). Measured in
+    -- the same units as hyst (maturing cells last sweep).
+    local boxBudget = math.max(BOX_WRITE_BUDGET, math.min(400, prevHyst or 0))
     local seen = {}
     local stopped = false
     local step = math.max(1, math.ceil(n / SCAN_OBJECTS))
@@ -725,13 +812,25 @@ local function sweep(frame)
         local y0 = math.max(0, py - half)
         local x1 = math.min(511, px + half)
         local y1 = math.min(511, py + half)
+        -- v0.9.22 rotated scan: a fixed y0->y1/x0->x1 order plus a per-box
+        -- write budget paints the same leading ~2 rows every sweep = regular
+        -- parallel ROWS (live 2026-09-29: ladder bands across the whole
+        -- frontier). Rotating the start row/column per sweep (deterministic:
+        -- sweep number, no RNG) spreads budget slices uniformly over time -
+        -- no persistent bands, same throughput, same determinism.
         local boxDid = 0
         local boxDone = false
-        for y = y0, y1 do
+        local hgt = y1 - y0 + 1
+        local wid = x1 - x0 + 1
+        local yStart = hgt > 0 and (sweeps % hgt) or 0
+        local xStart = wid > 0 and ((sweeps * 7) % wid) or 0
+        for ky = 0, hgt - 1 do
             if stopped or boxDone then break end
-            for x = x0, x1 do
+            local y = y0 + ((yStart + ky) % hgt)
+            for kx = 0, wid - 1 do
+                local x = x0 + ((xStart + kx) % wid)
                 if did >= MAX_PER_SWEEP then stopped = true break end
-                if boxDid >= BOX_WRITE_BUDGET then boxDone = true break end
+                if boxDid >= boxBudget then boxDone = true break end
                 local key = y * 512 + x
                 if not seen[key] then
                     seen[key] = true
@@ -739,6 +838,8 @@ local function sweep(frame)
                     if r == "reshrouded" then
                         did = did + 1
                         boxDid = boxDid + 1
+                    elseif r == "reshrouded_fast" then
+                        did = did + 1
                     elseif r == "watched" then skip = skip + 1
                     elseif r == "protected" then prot = prot + 1
                     elseif r == "hyst" then hyst = (hyst or 0) + 1
@@ -783,6 +884,8 @@ local function sweep(frame)
                 if r == "reshrouded" then
                     did = did + 1
                     trailDid = trailDid + 1
+                elseif r == "reshrouded_fast" then
+                    did = did + 1
                 elseif r == "watched" then skip = skip + 1
                 elseif r == "protected" then prot = prot + 1
                 elseif r == "hyst" then hyst = hyst + 1
@@ -850,6 +953,7 @@ local function sweep(frame)
     scPosTotal = scPosTotal + scPosObserved
     reblackTotal = reblackTotal + (reblackSweep or 0)
     hystTotal = hystTotal + (hystSweep or 0)
+    prevHyst = hyst or 0
 
     -- periodic prune: streak entries older than 3 sweeps that are not backing
     -- a live mark are dead weight (cells that left the boxes). Marked cells
@@ -870,10 +974,11 @@ local function sweep(frame)
                 trailSeen[k] = nil
             end
         end
-        -- firstSeen follows trail membership (left the trail = era over).
-        for k, _ in pairs(firstSeen) do
-            if not trailHas[k] then
-                firstSeen[k] = nil
+        -- hot follows contention: entries older than the window are cold.
+        for k, h in pairs(hot) do
+            if sweeps - h > HISTORY_SWEEPS then
+                hot[k] = nil
+                hotCount[k] = nil
             end
         end
         -- lastSeenAge lazy prune (stale only): 600 sweeps ~ several minutes.
@@ -956,6 +1061,15 @@ function Mod.Update(frame)
             frame, sweeps, total, skipped, protectedN, hystTotal, failures, scPosTotal, reblackTotal, clearedCount))
     end
 
+    -- Native driver (v0.9.25): periodic whole-map Reshroud + vanilla reveal.
+    -- Nil-safe: without the binding the mod runs per-cell Lua writes.
+    if NATIVE_RESHROUD and type(World.NativeReshroud) == "function"
+       and frame % NATIVE_INTERVAL == 0 then
+        local ok, res = pcall(World.NativeReshroud)
+        print(string.format("[DFOW] NATIVE f=%d reshroud=%s",
+            frame, tostring(res)))
+    end
+
     if frame % SWEEP_INTERVAL ~= 0 then return end
     sweep(frame)
 end
@@ -976,7 +1090,8 @@ function Mod.OnScenarioStart()
     hystSweep, hystTotal = 0, 0
     trailKeys, trailHas, trailCursor = {}, {}, 1
     trailSeen = {}
-    firstSeen = {}
+    hot = {}
+    hotCount = {}
     prevPts = {}
     censusTotal, censusMine, censusPosOk, censusSightLive = 0, 0, 0, 0
     censusPosFail = {}
@@ -986,6 +1101,7 @@ function Mod.OnScenarioStart()
     shroudPrevTotal, shroudPrevFrame = 0, nil
     blackWatchSweep = 0
     blackWatchSample = {}
+    prevHyst = 0
     stillPrev = {}
     baseX, baseY = nil, nil
 end
