@@ -432,16 +432,17 @@ unit:AttachParticleSystem("DamageSmokeSys")
 
 ---
 
-## `unit:MarkBounty([color [, durationFrames]])`
+## `unit:MarkBounty([color [, durationFrames [, label]]])`
 
-Registers a draw-only bounty overlay (rectangle + `BOUNTY` label) for the
-unit, drawn in the `DrawAsVXL` detour after the original draw call. Keyed by
+Registers a draw-only bounty overlay (rectangle + label) for the unit,
+drawn in the `DrawAsVXL` detour after the original draw call. Keyed by
 `UniqueID`, never by pointer; expires by logical frame, explicit clear, or
 session reset. Simulation state is untouched (CnCNet-safe).
 
 ```lua
-unit:MarkBounty()            -- green (money), until cleared
+unit:MarkBounty()                          -- green "BOUNTY", until cleared
 unit:MarkBounty(0x00FF00, 4500)
+unit:MarkBounty(0xFFD700, 300, "+$1800")   -- gold "+$1800" for 5 seconds
 ```
 
 **Parameters:**
@@ -449,9 +450,17 @@ unit:MarkBounty(0x00FF00, 4500)
 - `color` — `COLORREF` (default `0x00FF00`, green); converted internally to
   raw 5-6-5 for the rectangle, passed as-is to the label text
 - `durationFrames` — `0`/omitted = until cleared
+- `label` — caption text (default `"BOUNTY"`); ASCII, capped at 23
+  characters, longer input is clipped. Non-printable bytes end the caption.
+  Captions starting with `"BOUNTY"` render on a solid black background box
+  (BEFORE style); all other captions render with a 1px black outline
+  (AFTER style, e.g. `"+$1800"`). No style flag on the API by design
 
 **Returns:** `boolean` (`false` for non-`Unit` kinds — the detour covers
 vehicles/ships only — and invalid objects).
+
+> Live consumer: `bounty_hunter` v2.1+ marks the killer unit with a gold
+> `"+$<reward>"` caption so the earner sees the exact payout.
 
 ---
 
@@ -464,6 +473,25 @@ unit:ClearBountyMark()
 ```
 
 **Returns:** no value.
+
+---
+
+## `unit:Sell()`
+
+Sells a building through the native `ObjectClass::Sell` path (virtual
+dispatch, no hardcoded address — the same call the engine makes for the
+player sell action). Buildings only; the engine honors per-type
+`Unsellable` and settles occupants/repair state itself.
+
+```lua
+local sold = base:Sell()
+```
+
+**Returns:** `boolean` (`false` for non-buildings and invalid objects).
+
+> ⚠️ Live consumer: SmartAI surrender liquidation (sells the surrendered
+> house's base so the surrender is visible). Refund follows standard
+> engine rules.
 
 ---
 
@@ -603,6 +631,27 @@ local name = house:GetName()
 
 ---
 
+## `house:GetAIDifficulty()`
+
+Returns this house's AI difficulty level as selected in the game lobby
+(read-only). One of `"easy"`, `"normal"`, or `"hard"`. The engine stores the
+value reversed (`HouseClass::AIDifficulty`: hard = 0, normal = 1, easy = 2);
+this binding normalizes it, so Lua code never sees the raw enum.
+
+```lua
+local level = house:GetAIDifficulty()
+if level == "hard" then
+    -- pick aggressive runtime decisions
+end
+```
+
+**Returns:** `string` (`"easy" | "normal" | "hard"`), or `nil` when the read
+fails (callers should fall back to a default instead of treating a failure as
+a difficulty). Read-only: Lua cannot change the engine difficulty through this
+binding.
+
+---
+
 ## `house:IsHuman()`
 
 Checks whether the house is controlled by a human.
@@ -702,6 +751,39 @@ local objects = World.GetAllUnits()
 > 💡 Use this for global scans. It does not depend on an arbitrary spatial radius.
 
 ---
+
+## `World.GetAITeams()`
+
+Returns vanilla AI attack-wave teams (`TeamClass::Array`) as plain data
+tables — read-only visibility, no userdata, no engine writes (SmartAI M1-A).
+Each entry:
+
+```lua
+local teams = World.GetAITeams()
+-- teams[1] = {
+--   index = 0,               -- scan-local TeamClass::Array position (NOT
+--                             -- stable across scans: TeamClass instances are
+--                             -- never assigned engine UniqueIDs — live-verified
+--                             -- 2026-09-23. Track via teamtype + creationFrame
+--                             -- + member set instead)
+--   teamtype = "0A8B4CAX",   -- TeamType id (skirmish AI uses generated ids)
+--   owner = "Russians",      -- house id (same space as house:GetName())
+--   targetHouse = "Germans", -- or nil (nil until the engine assigns one)
+--   scriptMission = 2,       -- current script step index; -1/nil = no mission
+--   totalObjects = 3,
+--   isFullStrength = true, isUnderStrength = false, isHasBeen = true,
+--   creationFrame = 5400,
+--   members = { 101, 102 },  -- member UniqueIDs (cross-reference with
+--                             -- World.GetUnits() snapshot ids)
+-- }
+```
+
+**Returns:** Lua table (possibly empty, e.g. no teams yet built).
+
+> Read-only team *visibility* only: Lua cannot create, recruit, retarget,
+> or disband vanilla teams through this API. Orders to members use the
+> regular `MoveTo`/`Attack` primitives (vanilla may re-task them — no
+> order lease, see CnCNet/Multiplayer notes).
 
 ## `World.GetWaypoint(id)`
 
@@ -865,6 +947,73 @@ if Engine.WeaponExists("ZeusTrail") then
 end
 ```
 
+### `World.SetCellRadLevel(x, y, delta)` → `boolean`
+### `World.GetCellRadLevel(x, y)` → `number` \| `nil`
+### `World.IsCellRadiated(x, y)` → `boolean` \| `nil`
+
+Raise, lower or read the **engine's own per-cell radiation level**
+(`CellClass::RadLevel`, `third_party/YRpp/CellClass.h:444`). The accessors are
+the game's: `RadLevel_Increase` / `RadLevel_Decrease` (`CellClass.h:249,252`)
+and `IsRadiated` (`CellClass.h:243`). `delta > 0` raises, `delta < 0` lowers.
+`nil` from the getters means off-map or an unresolved cell; `false` from the
+setter means the same, or `delta == 0`.
+
+This is **not** a rendering hook, and that is the point. The green irradiated
+ground in RA2/YR is drawn by the engine from this scalar, and the engine decays
+it on its own. The Radiation Control Center and the Prism Tower raise it
+through these same accessors, so a scripted hazard stays consistent with a real
+Rad Site instead of drifting from it. A weather effect that greens the ground
+costs two engine calls per cell and touches no draw path — which matters,
+because a render detour in this codebase has already produced visible
+artefacts (`src/dynamic_fow_poc.cpp`).
+
+```lua
+-- Desolator-style irradiated patch, 10x10 cells
+for y = 50, 60 do
+    for x = 50, 60 do
+        World.SetCellRadLevel(x, y, 0.35)
+    end
+end
+if World.IsCellRadiated(55, 55) then ... end
+```
+
+> **Gameplay caveat.** A cell with a high `RadLevel` also makes the **engine**
+> damage infantry standing on it. Raising it therefore adds damage that no
+> Lua-side accounting attributes to anyone, and a mod that refunds "damage it
+> dealt" will under-refund. Treat the level as a tunable and read
+> `GetCellRadLevel` to observe what the engine actually holds rather than
+> assuming. To clear ground, subtract exactly the level the engine reports
+> (`SetCellRadLevel(x, y, -GetCellRadLevel(x, y))`) — a fixed delta cannot
+> cancel a level accumulated over many ticks.
+
+### `Engine.WarheadExists(id)` → `boolean`
+
+Checks whether a warhead ID exists in the loaded rules
+(`WarheadTypeClass::Find`). SEH-wrapped; returns `false` on error or empty id.
+Mirrors `Engine.WeaponExists` — note that `WeaponExists` only looks up
+**weapons** and cannot answer this question.
+
+Added because `obj:TakeDamage(amount, warheadName)` resolves the name through a
+**silent** fallback chain (named → `TerrorBombWH` → `DemobombWH` →
+`Rules->C4Warhead`). A name that is not in the loaded rules therefore does not
+error — it quietly becomes `TerrorBombWH`, whose `InfDeath=4` is *Flames*. A mod
+that wants a radiation death animation and misspells the warhead gets infantry
+burning to death with nothing in its own output to indicate the name was wrong.
+
+```lua
+if Engine.WarheadExists("RadBeamWarhead") then
+    unit:TakeDamage(40, "RadBeamWarhead")   -- InfDeath=7, Nuked
+end
+```
+
+Related: the infantry death animation is selected by the **warhead's**
+`InfDeath` field, not by the caller. Values are
+`0 None, 1 Die1, 2 Die2, 3 Explode, 4 Flames, 5 Electro, 6 HeadPop, 7 Nuked,
+8 Virus, 9 Mutate, 10 Brute`. Warheads observed carrying `InfDeath=7` (the
+radiation/nuke look) include `NUKE`, `RadSite`, `RadBeamWarhead` and
+`RadEruptionWarhead`; which of them exist depends on the loaded ruleset, hence
+the existence check.
+
 ### `Engine.SetHudMuted(bool)` / `Engine.IsHudMuted()` → `nil` / `boolean`
 
 Mutes/unmutes LuaAPI HUD output globally (affects `Engine.PrintMessage`
@@ -925,13 +1074,15 @@ local vet  = unit:GetVeterancy() -- "rookie" | "veteran" | "elite" (pcall-guarde
 local cost = unit:GetCost()       -- rules price, number (reward math base)
 ```
 
-#### `Techno` ammo / speed (no live consumer on record)
+#### `Techno` ammo / speed / sight (sight has a live consumer: `dynamic_fow` v0.4)
 
 ```lua
 local ammo = unit:GetAmmo()
 unit:SetAmmo(n)
 local speed = unit:GetBaseSpeed()
 unit:SetSpeedPercent(pct)
+local sight = unit:GetSight() -- INI Sight= in cells (0 on failure); == final
+                              -- See radius for ground units (SHROUD_RCA §2.4)
 ```
 
 #### `Techno` orders beyond `MoveTo/Attack/Hunt` (no `Stop` section existed before)
@@ -1258,6 +1409,258 @@ end
 - [`PROJECT/ENGINEERING_LESSONS.md`](PROJECT/ENGINEERING_LESSONS.md) — Engineering lessons and debugging history
 - [`PROJECT/ROADMAP.md`](PROJECT/ROADMAP.md) — Architecture roadmap
 - [`PROJECT/CHANGELOG.md`](PROJECT/CHANGELOG.md) — Project history
+
+---
+
+## `World` — Fog of War / Shroud (read + re-shroud, 2026-09-26 → 2026-09-28)
+
+These functions expose the engine's **own** fog-of-war state. Reads are
+observation; the single write (`SetCellShrouded`) only *removes* information
+(re-shroud), never grants vision — so it is not the "fake vision" that
+`FSM/FEASIBILITY_TRIAGE.md:268` puts out of scope (that clause is about
+revealing). Live consumer: `dynamic_fow` (v0.5+).
+
+Ground truth was established by static reverse engineering of `gamemd.exe` and is
+written up in [`docs/research/SHROUD_RCA.md`](docs/research/SHROUD_RCA.md) §§2–§6 (grade: STATIC VERIFIED) plus the
+OpenTS cross-reference (§9: `Cell_Shadow`, `Encroach_Shadow`, sight formula).
+In short: the engine decides "is this cell shrouded?"
+with a single test on one bit of one field, and these bindings read exactly that.
+
+> **Write path: re-shroud only, by project decision (2026-09-28).** The
+> original "no setter" stance below is preserved as history, but superseded:
+> a proven live consumer (`dynamic_fow`) needed explored ground to grow back,
+> and OpenTS showed the lineage engine has its own regrow (`Encroach_Shadow`;
+> disconnected in the YR fork — `SHROUD_RCA.md` §9.1 row 10). The reverse
+> direction (revealing) is intentionally NOT exposed: revealing is free
+> (units do it every frame) and exposing it would be a vision-granting
+> write path.
+>
+> > **Original stance (2026-09-26, superseded):** granting vision, or writing
+> > shroud so that explored ground grows back, is the "fake vision" that
+> > `FSM/FEASIBILITY_TRIAGE.md:268` puts out of scope. A *read* is observation
+> > and is fine; manufacturing vision is not. — Kept because the *reveal*
+> > half is still out of scope; only re-shroud was approved, via the
+> > consumer + capability above.
+
+> **Not owner-aware, and not able to be.** The shroud bitfield is **one per cell**:
+> `TechnoClass::See` writes the cell's `AltFlags` regardless of which house asked.
+> So on a two-human MP map these functions report the **shared** cell state, and
+> you must not present them as "what house X currently sees".
+>
+> That said, this is a limit of *these bindings*, not proof that the engine has
+> no per-house concept. YRpp documents house-scoped fog entry points that are
+> simply not exposed here — `DisplayClass::RevealFogShroud(CellStruct*,
+> HouseClass*, bool)`, `DisplayClass::MapCellFoggedness(CellStruct*, HouseClass*)`,
+> `MapClass::Reveal(HouseClass*)`, `MapClass::Reshroud(HouseClass*)`,
+> `HouseClass::ReshroudMap()`, and a per-cell `CellClass::FoggedObjects` list.
+> `World.GetFogState` takes **no** `HouseClass` argument, so none of that is
+> observable from Lua today. See `docs/research/SHROUD_RCA.md` §8.
+
+### `World.GetFogState(x, y)` → table | `nil`
+
+> **Status: experimental / raw state inspection.** These three functions are a
+> direct read of `CellClass` fields, not a curated "fog of war" API. They were
+> built to *measure* the engine, and measurement produced results that
+> invalidated part of their own original documentation (notably `visible`, below).
+> Use `shrouded` and `shroudFrame` — those two are solid. Treat the rest as
+> unverified.
+
+Raw per-cell state, one cell per call.
+
+```lua
+local s = World.GetFogState(60, 80)
+if s then
+    print(s.shrouded, s.shroudFrame)
+end
+```
+
+**Returns** a table, or `nil` when `(x, y)` is outside the map:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `shrouded` | boolean | `true` = `AltFlags & 0x8` is clear. This is the authoritative "never explored" bit the whole game tests. |
+| `visible` | boolean | `true` when `AltFlags & 0x10` is set. **This bit was originally documented as "currently inside some unit's sight radius". That reading is withdrawn — see the caveat below.** |
+| `centerRevealed` | boolean | `Flags & 0x01` |
+| `edgeRevealed` | boolean | `Flags & 0x02` |
+| `flagToShroud` | boolean | `Flags & 0x20`. **Offset disputed — see below.** |
+| `fogged` | boolean | `Flags & 0x40`. **Offset disputed — see below.** |
+| `shroudFrame` | integer | `CellClass+0x120` as a signed byte: `-2` fully occluded, `-1` fully visible, `0..48` a `shroud.shp` / `fog.shp` frame |
+| `fogFrame` | integer | `CellClass+0x121`, same encoding |
+| `shroudCounter` | integer | `CellClass+0x130`: engine sight-source count. The ONLY authoritative "is anybody watching this cell" signal — use it, not `visible`/`shroudFrame`. Proven DEAD as a live signal (never `> 0` across 50+ sweeps / 750 frames, 2026-09-28): YR's only `IncreaseShroudCounter` caller besides the never-taken `bIncrease=1` branch sits in dead code (`0x577C88`, zero callers). TS lineage has no counters at all (`SHROUD_RCA.md` §9.1 row 11). Kept as a canary. |
+| `gapsCovering` | integer | `CellClass+0x134`: counter clamp bound. Informational. |
+
+#### Caveat: `visible` is **not** a reliable "visible now"
+
+`AltFlags & 0x10` was interpreted as current visibility. Reverse engineering
+found no instruction anywhere that clears **only** that bit: every writer in
+`CellClass+0x12C` does `or al, 0x18` (setting `0x8` and `0x10` together) and
+every clearer does `and …, ~0x18` (clearing both). On the paths examined, the
+bit is therefore **sticky**, not per-frame.
+
+Runtime agrees: across 9 380 probe calls in three matches, the combination
+`shrouded == false` **and** `visible == false` was observed **zero** times. So
+`visible` cannot currently be used to answer "is this cell lit right now", and
+the classic three-state model `UNEXPLORED → REMEMBERED → VISIBLE` is **not
+confirmed** by this binding.
+
+> `shrouded == true` implies the cell has never been seen by anyone, **or
+> was re-shrouded** (by `World.SetCellShrouded`, e.g. the `dynamic_fow` mod —
+> which clears exactly the explored bit, so the bit reads identically to
+> never-explored). Once `shrouded` flips to `false` it never flips back
+> during a match unless something re-shrouds: the engine's own regrow path
+> is disconnected in this fork (dead `0x577C88`, `SHROUD_RCA.md` §9.1 row 10),
+> so in vanilla play expect 0 re-shrouds (0 in 213 fixed-origin consecutive
+> scans, twice).
+
+#### Unresolved discrepancy: `flagToShroud` / `fogged` offsets
+
+Do **not** treat these two fields as established:
+
+| Field | This binding reads | YRpp declares |
+|---|---|---|
+| `flagToShroud` | `Flags` (`+0x140`) bit `0x20` | `AltFlags` (`+0x12C`) `FlagToShroud = 0x20` |
+| `fogged` | `Flags` (`+0x140`) bit `0x40` | `AltFlags` (`+0x12C`) `Fogged = 0x400000` |
+
+The offsets were **not** changed, because no runtime or disassembly evidence
+gathered so far decides between the two readings — in particular, both fields
+were `false` in 100% of live observations, so neither has been exercised. The
+names may also be swapped between the two structures. Treat both as
+**unverified** and re-derive from disassembly before relying on them.
+
+#### `shroudFrame` / `fogFrame`: a live gradient, and the two bytes can differ
+
+Observed behaviour across three matches:
+
+- All three of `-2`, `0..48` and `-1` occur.
+- `0..48` values appeared **only** on cells that were also `visible`, with
+  `centerRevealed == false` and `edgeRevealed == true` — i.e. at the **edge of
+  the current sight radius**. The partial frames behave as a live
+  fog/visibility gradient, not as a per-cell "remembered" memory.
+- Highest value ever observed was **34**; `35..48` were never produced.
+- `+0x120` and `+0x121` matched in 773/773 calls across two matches, then
+  **diverged by one cell** from frame 5100 in the third match and stayed
+  diverged. They are computed by different code paths
+  (`GetOcclusion(fog=0)` vs `GetOcclusion(fog=1)`), so they are not guaranteed
+  equal.
+
+**None of this lets you tell "remembered" from "currently on the boundary"** —
+that needs owner-aware or renderer-side information this binding does not carry.
+See `docs/research/SHROUD_RCA.md` §8.
+
+### `World.IsLocationShrouded(x, y)` → boolean | `nil`
+
+Boolean-only form of `GetFogState`, named after the engine function it mirrors.
+
+```lua
+if World.IsLocationShrouded(60, 80) then
+    -- nobody has ever been here
+end
+```
+
+### `World.GetFogRegion(x, y, width, height)` → string | `nil`
+
+Bulk read: **one byte per cell**, row-major from `(x, y)`. This is the path an
+overlay actually wants — a viewport is roughly 100×100 cells and 10 000 separate
+Lua calls per redraw is not viable, so the result is a single string rather than
+a table of 10 000 numbers.
+
+```lua
+local raw = World.GetFogRegion(50, 60, 33, 17)
+if raw then
+    for i = 1, #raw do
+        local b = raw:byte(i)
+        local shrouded = (b & 0x01) ~= 0
+        local visible  = (b & 0x02) ~= 0
+    end
+end
+```
+
+**Packed bits per byte:**
+
+| Mask | Constant | Meaning |
+|---|---|---|
+| `0x01` | shrouded | never explored (`AltFlags & 0x8` clear) |
+| `0x02` | visible | `AltFlags & 0x10` set — **not** a reliable "visible now", see the caveat above |
+| `0x04` | `centerRevealed` | |
+| `0x08` | `edgeRevealed` | |
+| `0x10` | `flagToShroud` | offset disputed, see above |
+| `0x20` | `fogged` | offset disputed, see above |
+
+**Returns** `nil` for a region that leaves the map or exceeds 0x40000 cells, and
+an empty string for a zero-sized region.
+
+**Determinism:** every function here is a pure read of map state the engine
+already uses for its own visibility decisions, so it adds no nondeterminism and
+is safe in multiplayer.
+
+### `World.SetCellShrouded(x, y)` → `boolean`
+
+Re-shrouds one explored cell: clears `AltFlags 0x18` + `Flags 0x01|0x02`
+(exactly the vanilla `Reshroud` combination), so the cell reads and renders
+as genuinely-unexplored ground, and the engine re-reveals it by its own
+`See` path when a unit returns. Never touches `ShroudCounter`/`GapsCovering`
+or vision-granting state. SEH-wrapped; `false` off-map or on engine fault.
+
+```lua
+if World.SetCellShrouded(60, 80) then
+    -- explored ground grows back; a returning scout re-opens it
+end
+```
+
+**Returns** `true` on success. Live consumer: `dynamic_fow` v0.5+
+(sight-geometry guard + combat grace; `SHROUD_RCA.md` §9 for the lineage).
+
+> Multiplayer: the write itself is deterministic, but mods that guard it by
+> *their own* player's sight (like `dynamic_fow`) diverge per client —
+> single-player oriented, do not assume MP safety for guarded callers.
+
+### `World.FlushShroudRedraw()` → `boolean`
+
+Posts one tactical dirty area covering the viewport if any
+`SetCellShrouded` write happened since the last flush (otherwise no-op).
+Westwood's own regrow (`DisplayClass::Encroach_Shadow`) ends with a full
+tactical redraw; this is the YR-verified equivalent
+(`TacticalClass::RegisterDirtyArea`, YRpp `0x6D2790`). Call once per sweep
+when writes occurred so fresh bits show without scrolling. SEH-wrapped.
+
+```lua
+if did > 0 and World.FlushShroudRedraw then
+    pcall(World.FlushShroudRedraw)
+end
+```
+
+### `unit:GetSight()` → `number`
+
+Base sight radius in cells (`TechnoTypeClass::Sight`, INI `Sight=`). For
+ground units this equals the final `See` radius
+(`radius = Sight * (0.01 * height + 1.0)` — `SHROUD_RCA.md` §2.4, second-source
+confirmed via OpenTS `TechnoClass::Look`, §9.1 row 7). Aircraft see farther
+with height; Lua sees the base value. SEH-wrapped; `0` on validation failure.
+
+```lua
+local r = unit:GetSight()  -- e.g. 7 for a Grizzly
+```
+
+### Global `DynamicFow` table — visual shroud marks (draw-only)
+
+Drives the pixel-source substitution at `0x69E740`: a marked cell draws
+SHP frame 15 (fully-occluded black diamond, proven live via
+`pixelPtrDiffered`) regardless of the engine's occlusion computation — no
+neighbour math, no partials. Simulation untouched (CnCNet-safe, same class
+as bounty marks). Marks MUST be kept in sync with engine state by the
+caller (unmark on rewatch); a stale mark is a permanent black square.
+
+```lua
+DynamicFow.SetOverrideFrame(15)  -- runtime opt-in, no env needed -> true
+DynamicFow.SetCell(x, y, true)   -- mark one cell -> boolean
+DynamicFow.SetCell(x, y, false)  -- unmark
+DynamicFow.ClearCells()          -- drop all marks -> integer removed
+DynamicFow.GetMarkCount()        -- -> integer
+```
+
+`SetOverrideFrame(frame)`: `frame < 0` disables back to passthrough;
+`> 48` rejected (`false`). Live consumer: `dynamic_fow` v0.7+ (marks only
+deeper than sight+margin, instant unmark, 4-sweep combat grace).
 
 ---
 

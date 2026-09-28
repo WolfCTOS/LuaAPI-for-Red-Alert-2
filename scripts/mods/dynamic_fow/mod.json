@@ -1,0 +1,9 @@
+{
+  "id": "dynamic_fow",
+  "name": "Dynamic FOW (shroud returns)",
+  "version": "0.1.0",
+  "author": "LuaAPI Research",
+  "description": "Shroud that comes back when you walk away. Vanilla RA2/YR only ever REMOVES shroud: TechnoClass::See reaches DisplayClass::MapCellVisibility @ 0x4A9CA0 with bIncrease hard-coded to 0, so CellClass::ReduceShroudCounter is the only direction that ever runs and explored ground stays visible for the whole match. This mod re-shrouds explored-but-unlit cells around your units, so the explored area is only as big as your current vision. Implementation writes the same cell fields MapClass::Reshroud's own loop writes (0x577D26-0x577D47); no renderer hook, because the shroud sprite is derived by TacticalClass::GetOcclusion purely from AltFlags&8. It HIDES ground and never reveals any. OFF by default - press F4. F5 forces a sweep, F6 readout. Requires the 2026-09-26 LuaAPI build for World.SetCellShrouded / World.IsCellLit.",
+  "description_ru": "Туман, который возвращается, когда ты уходишь. Ванильный RA2/YR только СНИМАЕТ туман: TechnoClass::See доходит до DisplayClass::MapCellVisibility @ 0x4A9CA0 с bIncrease жёстко зашитым в 0, поэтому работает только CellClass::ReduceShroudCounter и разведанная земля остаётся видна весь матч. Мод снова затягивает туман на разведанные но не освещённые клетки вокруг твоих юнитов, чтобы исследованная область была размером с текущим зрением. Реализация пишет те же поля клетки, что пишет собственный цикл MapClass::Reshroud (0x577D26-0x577D47); хук рендера не нужен, потому что спрайт тумана выводится TacticalClass::GetOcclusion только из AltFlags&8. Мод СКРЫВАЕТ землю и никогда ничего не открывает. По умолчанию ВЫКЛЮЧЕН - жми F4. F5 - разовый проход, F6 - отчёт. Нужна сборка LuaAPI от 26.09.2026 для World.SetCellShrouded / World.IsCellLit.",
+  "conflicts": []
+}

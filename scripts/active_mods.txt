@@ -2,3 +2,5 @@
 target_reselect
 bounty_hunter
 smart_ai
+radiation
+dynamic_fow
