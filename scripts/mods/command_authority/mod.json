@@ -1,8 +1,9 @@
 {
   "id": "command_authority",
   "name": "Command Authority (Command Points Duel)",
-  "version": "0.3.0",
-  "description": "Command Points duel on top of the RTS (iteration 3): earn CP from kills (nearest-hostile attribution), damage dealt (1 CP / 400 hp, fractional bank) and alternating DIRECTIVES (HUNT the enemy's priciest unit / DEFEND yours, +8 CP each). Spend on Z Reinforce (front-line) / X Repair / C Blitz / V Sabotage. DOCTRINE: the AI Director NEVER EMPs unasked - it repairs its wounded, reinforces at its own last kill site, and answers your Sabotage with one announced retaliation (5 s warning). Multiplayer gate: with 2+ human houses the simulation-writing powers lock; deterministic systems only.",
+  "version": "0.3.1",
+  "description": "Command Points duel: earn CP, spend on powers. Persistent CP scoreboard HUD line with affordability (R*/X*/C*/V*); H shows the powers menu; Reinforce is on R (Z is the engine waypoint key).",
+  "description_ru": "Дуэль очков командования: заработай и потрать. Счёт CP постоянно виден на HUD; Reinforce на R (Z занята вейпоинтами движка).",
   "author": "LuaAPI Research",
   "dependencies": []
 }

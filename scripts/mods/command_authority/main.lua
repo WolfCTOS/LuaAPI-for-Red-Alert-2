@@ -27,7 +27,7 @@
 -- CORE LOOP (unchanged economics)
 --   Earn CP: +5 per kill (nearest-hostile attribution), +1 per 400 damage
 --   dealt (fractional bank), +1 per 6 s survival streak, +8 per directive.
---   Spend (skirmish/vs-AI): Z Reinforce 10 | X Repair 6 | C Blitz 4 |
+--   Spend (skirmish/vs-AI): R Reinforce 10 | X Repair 6 | C Blitz 4 |
 --   V Sabotage 8. The AI Director earns CP by the SAME rules and spends it
 --   on repair/reinforce - and on retaliation, only.
 --   T: status ping (works in every mode; local read-out only).
@@ -67,7 +67,9 @@ local TUNING = {
 AUTH.TUNING = TUNING
 
 local SCAN_FRAMES       = 15     -- combat scan 4x per second
-local POWER_KEYS        = { 0x5A, 0x58, 0x43, 0x56 } -- Z X C V
+local POWER_KEYS        = { 0x52, 0x58, 0x43, 0x56 } -- R X C V (Z is the
+                              -- engine's own rally/waypoint-set hotkey, so
+                              -- Reinforce moved off it to avoid the clash)
 local BLITZ_FRAMES      = 8 * 60
 local BLITZ_DISCOUNT    = 0.5
 local SABOTAGE_FRAMES   = 6 * 60
@@ -122,15 +124,72 @@ end
 
 -- Every earned/spent point of the LOCAL player is announced, so the meter
 -- is felt. Other houses' points stay silent (read them via T).
+-- refreshHud (below) keeps the green scoreboard line in sync on every
+-- economy event, so the log stays a diagnostic, not the only meter.
+local refreshHud -- forward declaration (defined after the house gates)
+
 local function earnCp(name, amount, tag)
     if not name then return end
     addCp(name, amount)
-    if amount ~= 0 and name == S.playerHouseName then
+    -- Quiet feed (anti-spam, 2026-09-29): spends always announce (rare,
+    -- matter); earns announce only at >= 2 CP (kills/directives). The +1
+    -- damage trickle accrues silently - the HUD line refreshes on EVERY
+    -- economy event, so it stays the live meter without banner floods.
+    if amount ~= 0 and name == S.playerHouseName
+       and (amount < 0 or amount >= 2) then
         say(string.format("CP %+d [%s] = %d", amount, tag or "?", cpOf(name)))
     end
+    refreshHud()
 end
 
 local function playerHouse() return House.GetPlayer() end
+
+-- HUD scoreboard (Game.SetModHudText): persistent green line showing the
+-- running CP score, so reading the log is never required during a match.
+-- isCombatHouseName/isHumanHouse are forward-declared locals; assigning the
+-- functions to the SAME locals at their natural definitions keeps the
+-- file's single-definition discipline (no globals).
+local isCombatHouseName, isHumanHouse -- (also used by refreshHud)
+
+local function refreshHudImpl()
+    if not Game or not Game.SetModHudText then return end
+    local you = cpOf(S.playerHouseName or "")
+    local foeName, foeCp = "-", 0
+    if S.mpMode then
+        for name in pairs(S.cp) do
+            if isHumanHouse(name) and name ~= S.playerHouseName then
+                foeName, foeCp = name, cpOf(name)
+                break
+            end
+        end
+    else
+        for name in pairs(S.cp) do
+            if isCombatHouseName(name) and name ~= S.playerHouseName
+                and not isHumanHouse(name) then
+                foeName, foeCp = name, cpOf(name)
+                break
+            end
+        end
+    end
+    local d = S.playerHouseName and S.directive[S.playerHouseName] or nil
+    local dirText = d and ("directive: " .. d.kind) or "directive: -"
+    local retText = S.retaliation and "  RETALIATION!" or ""
+    -- Affordability suffix: '*' = affordable now (blitz discount applied),
+    -- else the effective cost. Compact ASCII by design (game font coverage).
+    local function effMark(key)
+        local c = TUNING.POWER_COST[key] or 99
+        if (S.blitz[S.playerHouseName] or 0) > S.lastFrame then
+            c = math.max(1, math.floor(c * BLITZ_DISCOUNT))
+        end
+        if you >= c then return "*" end
+        return tostring(c)
+    end
+    Game.SetModHudText(string.format("CP: you %d | %s %d | %s%s | R%s X%s C%s V%s",
+        you, foeName, foeCp, dirText, retText,
+        effMark("reinforce"), effMark("repair"),
+        effMark("blitz"), effMark("sabotage")))
+end
+refreshHud = refreshHudImpl
 
 local function aiNames()
     local out = {}
@@ -154,7 +213,7 @@ local function refreshHouseObjects()
     end
 end
 
-local function isHumanHouse(name)
+isHumanHouse = function(name)
     local h = houseObj[name]
     if not h then return false end
     local ok, res = pcall(h.IsHuman, h)
@@ -179,7 +238,7 @@ local NON_COMBATANT = {
     Special = true,
 }
 
-local function isCombatHouseName(name)
+isCombatHouseName = function(name)
     return name ~= nil and not NON_COMBATANT[name]
 end
 
@@ -268,6 +327,15 @@ local function directiveStart(name)
         ttype = bestType,
         endsAt = S.lastFrame + TUNING.DIRECTIVE_FRAMES,
     }
+    -- Bounty-style target marker (rectangle + label in the tactical view).
+    -- Duration == directive lifetime, so it expires by itself; destroyed
+    -- units stop drawing on their own (keyed by UniqueID). No cleanup pass.
+    if best and best.MarkBounty then
+        local color = (kind == "hunt") and 0xFF0000 or 0x00FF00
+        local label = ((kind == "hunt") and "HUNT " or "DEFEND ")
+            .. "+" .. TUNING.DIRECTIVE_PAY .. "CP"
+        pcall(best.MarkBounty, best, color, TUNING.DIRECTIVE_FRAMES, label)
+    end
     if kind == "hunt" then
         say(string.format("DIRECTIVE: HUNT - destroy the enemy %s within %d s for +%d CP.",
             bestType, TUNING.DIRECTIVE_FRAMES / 60, TUNING.DIRECTIVE_PAY))
@@ -305,9 +373,11 @@ end
 
 -- Resolution when the timer runs out.
 local function directiveTick()
+    local changed = false
     for name, dir in pairs(S.directive) do
         if S.lastFrame >= dir.endsAt then
             S.directive[name] = nil
+            changed = true
             S.nextDirective[name] = S.lastFrame + TUNING.DIRECTIVE_GAP
             if dir.kind == "defend" then
                 earnCp(name, TUNING.DIRECTIVE_PAY, "directive")
@@ -318,6 +388,7 @@ local function directiveTick()
             end
         end
     end
+    if changed then refreshHud() end
 end
 
 local function directiveLoop()
@@ -654,6 +725,7 @@ local function powerSabotage(houseName)
     if houseName == S.playerHouseName and not S.mpMode
         and isCombatHouseName(bestOwner) then
         S.retaliation = { from = bestOwner, due = S.lastFrame + TUNING.RETALIATE_WARN }
+        refreshHud()
         say(string.format("DIRECTOR: retaliation incoming - impact in %d s. Cover your armor!",
             TUNING.RETALIATE_WARN / 60))
     end
@@ -688,16 +760,40 @@ local function tryPower(houseName, key, quietOnFail)
         if houseName == S.playerHouseName then
             say(string.format("CP -%d [%s] = %d", cost, key, cpOf(houseName)))
         end
+        refreshHud()
         return true
     end
     return false
 end
 
 -- ---------------------------------------------------------------------------
--- Player input: Z/X/C/V powers, T = status
+-- Player input: R/X/C/V powers, T = status
 -- ---------------------------------------------------------------------------
 
+-- Powers menu (H): on-demand reference, zero spam by construction.
+local POWER_MENU = {
+    { key = "reinforce", letter = "R", desc = "2x HTNK land at the front" },
+    { key = "repair",    letter = "X", desc = "heal 5 most wounded to full" },
+    { key = "blitz",     letter = "C", desc = "powers half cost for 8s" },
+    { key = "sabotage",  letter = "V", desc = "disable enemy priciest for 6s" },
+}
+
 local function playerInput()
+    if Input.WasKeyPressed(0x48) then -- H: powers menu (player only)
+        local you = cpOf(S.playerHouseName or "")
+        say(string.format("COMMAND POWERS (CP %d) - press key to fire:", you))
+        for _, p in ipairs(POWER_MENU) do
+            local c = TUNING.POWER_COST[p.key] or 99
+            if (S.blitz[S.playerHouseName] or 0) > S.lastFrame then
+                c = math.max(1, math.floor(c * BLITZ_DISCOUNT))
+            end
+            local mark = (you >= c) and "*" or "-"
+            say(string.format("  %s %s (%dCP) %s %s", p.letter, p.key, c,
+                p.desc, mark))
+        end
+        say("  * = affordable now. Powers locked in human-vs-human.")
+        return
+    end
     if Input.WasKeyPressed(0x54) then -- T: local read-out, safe in every mode
         local ai = aiNames()[1]
         local d = S.directive[S.playerHouseName]
@@ -768,6 +864,7 @@ local function retaliationLoop()
         return
     end
     say("DIRECTOR RETALIATION!")
+    refreshHud() -- retaliation flag just cleared: drop it from the HUD line
     if not POWERS.sabotage(r.from) then
         say("Director retaliation fizzled - no ground target.")
     end
@@ -806,12 +903,13 @@ function AUTH.Update(frame)
                 say("COMMAND AUTHORITY (alliance mode): 2+ commanders detected - powers locked, deterministic systems only. Directives and economy run; T = status.")
             else
                 say(string.format(
-                    "COMMAND AUTHORITY v3 (you: %s). Earn CP: kill +%d | damage +1/%d | streak +%d | directives +%d. Spend: Z Reinforce %d | X Repair %d | C Blitz %d | V Sabotage %d. Sabotage invites Director retaliation. T = status.",
+                    "COMMAND AUTHORITY v3 (you: %s). Earn CP: kill +%d | damage +1/%d | streak +%d | directives +%d. Spend: R Reinforce %d | X Repair %d | C Blitz %d | V Sabotage %d. Sabotage invites Director retaliation. T = status.",
                     pname, TUNING.CP_KILL, TUNING.CP_DAMAGE_PER,
                     TUNING.CP_SURVIVE_PAY, TUNING.DIRECTIVE_PAY,
                     TUNING.POWER_COST.reinforce, TUNING.POWER_COST.repair,
                     TUNING.POWER_COST.blitz, TUNING.POWER_COST.sabotage))
             end
+            refreshHud()
         end
         if not S.announced then return end
     end
@@ -831,6 +929,7 @@ function AUTH.Update(frame)
         S.nextDirective = {}
         S.retaliation = nil
         S.nextSurvive = TUNING.CP_SURVIVE_EVERY
+        if Game and Game.SetModHudText then Game.SetModHudText("") end
     end
     S.lastFrame = frame
 
