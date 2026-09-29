@@ -1141,6 +1141,11 @@ int Techno_GetTarget(lua_State* L) {
 
 // techno:SetHealthRatio(ratio) -> nil
 // Sets the unit's health to ratio * maxHealth (0.0 - 1.0).
+// HARDENED 2026-09-29 (silent engine AV minutes after repair verbs):
+// every engine contact inside __try (C2712: POD-only frame), skip limbo
+// objects (off-map/transit/paradrop - the engine does not expect HP writes
+// there and desyncs), null-check the type (unguarded GetType()->Strength
+// deref used to sit on the hot path).
 int Techno_SetHealthRatio(lua_State* L) {
     auto* pTechno = CheckTechno(L, 1);
     if (!ValidateTechno(pTechno))
@@ -1150,8 +1155,17 @@ int Techno_SetHealthRatio(lua_State* L) {
     double r = static_cast<double>(ratio) / 100.0; // accept 0-100 or 0.0-1.0
     if (r < 0.0) r = 0.0;
     if (r > 1.0) r = 1.0;
-    pTechno->Health = static_cast<int>(r * static_cast<double>(pTechno->GetType()->Strength));
-    LUA_LOG_INFO("[Combat] {} health set to {:.1%} ({} HP)", pTechno->GetType()->get_ID(), r, pTechno->Health);
+    __try {
+        if (pTechno->InLimbo)
+            return 0;
+        auto* pType = pTechno->GetType();
+        if (!pType)
+            return 0;
+        pTechno->Health = static_cast<int>(r * static_cast<double>(pType->Strength));
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return 0;
+    }
+    LUA_LOG_INFO("[Combat] health set to {:.1%}", r);
     return 0;
 }
 
