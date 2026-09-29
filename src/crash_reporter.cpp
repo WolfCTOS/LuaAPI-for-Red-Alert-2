@@ -170,5 +170,11 @@ void Note(const char* tag) {
     g_ring[i].tick = GetTickCount();
 }
 
+void Reassert() {
+    LPTOP_LEVEL_EXCEPTION_FILTER cur = SetUnhandledExceptionFilter(&CrashFilter);
+    if (cur && cur != &CrashFilter)
+        g_prevFilter = cur;
+}
+
 } // namespace CrashReporter
 } // namespace LuaAPI

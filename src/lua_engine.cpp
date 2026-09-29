@@ -212,6 +212,11 @@ const wchar_t* __fastcall Hooked_LoadString(
 
 void __cdecl Hooked_MainLoop()
 {
+    // Crash-reporter UEF gets replaced after init (spawner/ddraw/engine) -
+    // re-assert every iteration so the next fatal fault is logged with
+    // address + module + recent call notes. Chain-preserving, negligible.
+    LuaAPI::CrashReporter::Reassert();
+
     // 1. Profile frame start
     HookProfilerBeginFrame();
 
