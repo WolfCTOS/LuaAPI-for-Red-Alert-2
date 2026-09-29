@@ -779,7 +779,9 @@ local POWER_MENU = {
 }
 
 local function playerInput()
-    if Input.WasKeyPressed(0x48) then -- H: powers menu (player only)
+    -- J: powers menu (player only). Was H (0x48) - vanilla H jumps the camera
+    -- home (MCV), so H is unusable. J has no vanilla binding.
+    if Input.WasKeyPressed(0x4A) then -- J: powers menu (player only)
         local you = cpOf(S.playerHouseName or "")
         say(string.format("COMMAND POWERS (CP %d) - press key to fire:", you))
         for _, p in ipairs(POWER_MENU) do

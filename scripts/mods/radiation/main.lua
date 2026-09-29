@@ -263,7 +263,11 @@ local function sweep(frame, level)
             frame, scanned, passed, inRadius, hits, #S.targets, CFG.blastRadius,
             table.concat(tc, " ")))
     end
-    if hits > 0 and hits <= 3 then
+    -- Anti-spam 2026-09-29: this runs every sweep (1/s) for the whole ACTIVE
+    -- phase, and the engine stacks banners + beeps each one. Announce once
+    -- per event (flag reset at impact); damage keeps applying silently.
+    if hits > 0 and hits <= 3 and not S.burnSaid then
+        S.burnSaid = true
         say(string.format("Radiation is burning %d exposed infantry. Get them "
             .. "into a structure.", hits))
     end
@@ -445,6 +449,7 @@ local function tick(frame)
         local secs = math.ceil(left / 60)
         if left <= 0 then
             enter(ST_ACTIVE, frame + CFG.activeFrames)
+            S.burnSaid = false
             S.ramp = CFG.groundLevel
             say(string.format("RADIATION DETECTED - %d infantry cluster(s) hot. "
                 .. "Infantry in the open will take attrition damage. "
