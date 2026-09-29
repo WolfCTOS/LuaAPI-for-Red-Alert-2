@@ -279,7 +279,13 @@ local orphanSweep = 0 -- diagnostic: open cells nobody manages (not in trail,
 local orphanSample = {} -- no streak, outside all sights). Persistent orphans
                       -- = coverage hole (dotted trails): visited by no box
                       -- and never stamped. Sampled on a coarse grid.
-local NATIVE_RESHROUD  = true  -- v0.9.25: drive MapClass::Reshroud on a frame
+local NATIVE_RESHROUD  = false -- v0.9.25 ROLLED BACK 2026-09-29: single probe call
+                             -- was clean, but the first production call crashed
+                             -- the game ~2.5s later (f=150 -> dead 17:26:38, no
+                             -- exception logged). Native path UNSAFE for now;
+                             -- per-cell Lua writes drive again. Binding kept
+                             -- (World.NativeReshroud) for future experiments.
+                             -- v0.9.25: drive MapClass::Reshroud on a frame
 local NATIVE_INTERVAL  = 150  -- timer (frames) instead of per-cell Lua writes.
                              -- Proven live 2026-09-29 (probe: far 0->1, under
                              -- 0->0, fault 0, persists). Per-cell machinery

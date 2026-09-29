@@ -154,22 +154,24 @@ local isCombatHouseName, isHumanHouse -- (also used by refreshHud)
 local function refreshHudImpl()
     if not Game or not Game.SetModHudText then return end
     local you = cpOf(S.playerHouseName or "")
+    -- Deterministic foe pick (anti-flicker 2026-09-29): pairs() order is
+    -- unspecified, so "first match" flipped between houses on every refresh
+    -- and the scoreboard flickered. Collect candidates, sort, take first.
     local foeName, foeCp = "-", 0
-    if S.mpMode then
+    do
+        local cand = {}
         for name in pairs(S.cp) do
-            if isHumanHouse(name) and name ~= S.playerHouseName then
-                foeName, foeCp = name, cpOf(name)
-                break
+            if name ~= S.playerHouseName then
+                if S.mpMode and isHumanHouse(name) then
+                    cand[#cand + 1] = name
+                elseif not S.mpMode and isCombatHouseName(name)
+                    and not isHumanHouse(name) then
+                    cand[#cand + 1] = name
+                end
             end
         end
-    else
-        for name in pairs(S.cp) do
-            if isCombatHouseName(name) and name ~= S.playerHouseName
-                and not isHumanHouse(name) then
-                foeName, foeCp = name, cpOf(name)
-                break
-            end
-        end
+        table.sort(cand)
+        if cand[1] then foeName, foeCp = cand[1], cpOf(cand[1]) end
     end
     local d = S.playerHouseName and S.directive[S.playerHouseName] or nil
     local dirText = d and ("directive: " .. d.kind) or "directive: -"
