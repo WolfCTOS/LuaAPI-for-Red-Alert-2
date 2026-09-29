@@ -1,4 +1,5 @@
 ﻿#include <LuaAPI/lua_engine.hpp>
+#include <LuaAPI/crash_reporter.hpp>
 #include <LuaAPI/logger.hpp>
 #include <LuaAPI/bindings_house.hpp>
 #include <LuaAPI/bindings_techno.hpp>
@@ -9,6 +10,8 @@
 #include "hook_profiler.h"
 #include "weapon_override.h"
 #include "barrel_pitch.h"
+#include "dynamic_fow_poc.h"
+#include "fog_gap_probe.h"
 
 extern "C" {
 #include <lua.h>
@@ -26,6 +29,7 @@ extern "C" {
 #include <cstdio>
 
 namespace LuaAPI {
+
 
 bool IsInGameMatch();
 void ResetSession();
@@ -378,6 +382,95 @@ void PollHudMuteToggle() {
 }
 
 // Engine.SetHudMuted(bool) -> nil
+// Engine.WarheadExists(id) -> boolean
+//
+// Mirrors Engine.WeaponExists for WarheadTypeClass. Added because
+// Techno_TakeDamage takes a warhead NAME and resolves it through a SILENT
+// fallback chain (named -> TerrorBombWH -> DemobombWH -> Rules->C4Warhead).
+// A mod that names a warhead which does not exist in the loaded rules gets
+// TerrorBombWH, which carries InfDeath=4 (Flames) -- so a radiation effect
+// silently renders as infantry ON FIRE, with nothing in the mod's own output
+// to say the name was wrong. The only other signal is the INFO line
+// Techno_TakeDamage emits, which requires reading C++ logs to notice.
+//
+// With this, a mod can verify the name BEFORE using it and log which one
+// actually resolved. Read-only lookup, SEH-wrapped, same shape as
+// Engine.WeaponExists.
+int Engine_WarheadExists(lua_State* L) {
+    const char* id = luaL_checkstring(L, 1);
+
+    if (!id || !*id) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+
+    bool exists = false;
+
+    __try {
+        exists = WarheadTypeClass::Find(id) != nullptr;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        exists = false;
+    }
+
+    lua_pushboolean(L, exists ? 1 : 0);
+    return 1;
+}
+
+// ---------------------------------------------------------------------------
+// Engine.ListOverlayTypes() -> string
+//
+// Read-only census of OverlayTypeClass::Array: "index=Name|img=0|1" per line.
+// Added to answer one question with evidence instead of a guess: the stock
+// rules define overlays declaratively (gifts, crates, cliff edges, Tiberium),
+// and a cell's OverlayTypeIndex is "what overlay lies on this cell". If any of
+// them is a green toxic pool, then a Desolator-style ground effect is a plain
+// index write with no allocation, no lifetime and no engine object to own.
+//
+// Deliberately READ-ONLY. It enumerates and reports; it does not place
+// anything. Writing a cell overlay is a separate decision that should be made
+// once this has shown what is actually available in the loaded rules.
+//
+// Deliberately POD-ONLY inside __try (C2712: a frame with __try may not hold
+// objects with destructors, so no std::string here).
+static int FillOverlayList(char* buf, int cap) {
+    int used = 0;
+    __try {
+        const int n = OverlayTypeClass::Array.Count;
+        for (int i = 0; i < n && i < 4096; ++i) {
+            OverlayTypeClass* pType = OverlayTypeClass::Array.GetItem(i);
+            if (!pType)
+                continue;
+            const char* id = pType->get_ID();
+            // ImageLoaded is the honest "will this draw anything" flag. A type
+            // can exist in the rules and have no raster, in which case indexing
+            // a cell with it would be a silent no-op -- exactly the class of bug
+            // this census exists to prevent.
+            const int w = snprintf(buf + used, cap - used, "%d=%s|img=%d|ai=%d\n",
+                                   i, id ? id : "?",
+                                   pType->ImageLoaded ? 1 : 0,
+                                   pType->ArrayIndex);
+            if (w <= 0 || w >= cap - used)
+                break;
+            used += w;
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        used = 0;
+    }
+    return used;
+}
+
+int Engine_ListOverlayTypes(lua_State* L) {
+    static char buf[16384];
+    const int n = FillOverlayList(buf, static_cast<int>(sizeof(buf)));
+    if (n <= 0) {
+        lua_pushstring(L, "");
+        return 1;
+    }
+    lua_pushlstring(L, buf, n);
+    return 1;
+}
+
 int Engine_SetHudMuted(lua_State* L) {
     g_hudMuted = lua_toboolean(L, 1) != 0;
 
@@ -410,6 +503,36 @@ int Engine_GetDebugHudText(lua_State* L) {
         L,
         g_debugHudText.c_str(),
         g_debugHudText.size());
+
+    return 1;
+}
+
+// Lua-side persistent HUD line (mod scoreboards etc). Drawn by DrawDebugHud
+// under the debug-console indicator; empty string hides it. Engine writes
+// happen on the game thread only (this cfunction runs there), so the string
+// swap is a plain assignment - no locking needed. Client-local display only:
+// never enters the simulation, MP-safe by construction.
+std::string g_modHudText;
+
+// Game.SetModHudText(text) -> nil  (empty string clears the line)
+int Engine_SetModHudText(lua_State* L) {
+    size_t len = 0;
+    const char* msg = luaL_optlstring(L, 1, "", &len);
+
+    g_modHudText.assign(msg ? msg : "", msg ? len : 0);
+
+    if (g_modHudText.size() > 120)
+        g_modHudText.resize(120); // keep the corner line one row
+
+    return 0;
+}
+
+// Game.GetModHudText() -> string (symmetric read-back, diagnostics)
+int Engine_GetModHudText(lua_State* L) {
+    lua_pushlstring(
+        L,
+        g_modHudText.c_str(),
+        g_modHudText.size());
 
     return 1;
 }
@@ -464,19 +587,31 @@ lua_State* CreateEngine() {
     lua_pushcfunction(L, Engine_WeaponExists);
     lua_setfield(L, -2, "WeaponExists");
 
+    lua_pushcfunction(L, Engine_WarheadExists);
+    lua_setfield(L, -2, "WarheadExists");
+
+    lua_pushcfunction(L, Engine_ListOverlayTypes);
+    lua_setfield(L, -2, "ListOverlayTypes");
+
     lua_pushcfunction(L, Engine_SetHudMuted);
     lua_setfield(L, -2, "SetHudMuted");
 
     lua_pushcfunction(L, Engine_IsHudMuted);
     lua_setfield(L, -2, "IsHudMuted");
 
+
+
     lua_setglobal(L, "Engine");
 
-    // Global "Game" table: Game.GetDebugHudText() -> string
+    // Global "Game" table: Game.GetDebugHudText() / SetModHudText / GetModHudText
     lua_newtable(L);
 
     lua_pushcfunction(L, Engine_GetDebugHudText);
     lua_setfield(L, -2, "GetDebugHudText");
+    lua_pushcfunction(L, Engine_SetModHudText);
+    lua_setfield(L, -2, "SetModHudText");
+    lua_pushcfunction(L, Engine_GetModHudText);
+    lua_setfield(L, -2, "GetModHudText");
 
     lua_setglobal(L, "Game");
 
@@ -487,6 +622,11 @@ lua_State* CreateEngine() {
     WeaponOverride::RegisterBindings(L);
 
     BarrelPitch::RegisterBindings(L);
+
+    // TEMPORARY diagnostic PoC bridge: lets a Lua mod steer the existing
+    // pixel-source override via DynamicFow.SetCell(x, y, true). Never writes
+    // engine shroud state. Remove with dynamic_fow_poc.cpp.
+    DynamicFowPoc::RegisterDynamicFowBindings(L);
 
     return L;
 }
@@ -615,9 +755,35 @@ static void DrawHudText(const wchar_t* wtext) {
     }
 }
 
+// Модовая HUD-строка (счётчики модов). Тот же SEH-паттерн: leaf-функция без
+// C++-объектов, иначе C2712. Координаты/цвет фиксированы: вторая строка под
+// дебаг-индикатором, зелёная.
+static void DrawModHudText(const wchar_t* wtext) {
+    __try {
+        DSurface* pSurface = DSurface::Primary;
+
+        if (pSurface)
+            pSurface->DrawText(
+                wtext,
+                12,
+                62,
+                0x00FF00);
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        // Not fatal for a scoreboard; silently skip.
+    }
+}
+
 // Рисует g_debugHudText на видимом кадре каждый логический кадр
 // (TextPrint-механизм через DSurface::DrawText).
 static void DrawDebugHud() {
+    // Модовая строка HUD (счётчики модов) под дебаг-индикатором.
+    if (!g_modHudText.empty()) {
+        std::wstring wmod = ToWide(g_modHudText);
+        if (!wmod.empty())
+            DrawModHudText(wmod.c_str());
+    }
+
     if (g_debugHudText.empty())
         return;
 
@@ -938,11 +1104,25 @@ void InstallGameHook() {
         }
     }
 
+    // Crash reporter first: any later death logs fault address + module +
+    // recent engine-contact notes to LuaAPI.crash.log (chains UEF).
+    LuaAPI::CrashReporter::Init();
+
     // TechnoClass::GetPrimaryWeapon (weapon override) hook
     LuaAPI::WeaponOverride::Install();
 
     // UnitClass::DrawAsVXL (M16 path B: barrel pitch probe, draw-only)
     LuaAPI::BarrelPitch::Install();
+
+    // TEMPORARY diagnostic PoC: DrawFog cell capture + frame-index substitution
+    // at the shape-frame resolver. Opt-in since 2026-09-29 (crash bisection):
+    // Install() attaches hooks only with LUAAPI_DFOW_HOOKS=1, otherwise it
+    // logs a skip and returns false. Remove together with dynamic_fow_poc.cpp.
+    LuaAPI::DynamicFowPoc::Install();
+
+    // RUNTIME DIAGNOSTIC PROBE (read-only): Gap create/destroy entry hooks plus
+    // a polling cell inspector. Creates no hooks unless LUAAPI_FOG_GAP_PROBE=1.
+    LuaAPI::FogGapProbe::Install();
 }
 
 // True only while an actual match is running. Prevents OnTick, HUD messages
@@ -1243,6 +1423,10 @@ void ResetSession() {
 
     // Clear per-unit barrel pitch overrides (M16 path B).
     LuaAPI::BarrelPitch::ClearAll();
+
+    // TEMPORARY diagnostic PoC: a new match starts with vanilla frames and no
+    // captured cell, so nothing carries over from the previous session.
+    LuaAPI::DynamicFowPoc::Disable();
 
     // Gate 1.3: drop timed-disable entries (raw TechnoClass* + stale expiry
     // frames from the previous match) and key edge-detect state. Neither

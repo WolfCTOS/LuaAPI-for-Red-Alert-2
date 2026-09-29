@@ -7,6 +7,7 @@ using byte = unsigned char;
 
 #include <MinHook.h>
 
+#include <LuaAPI/crash_reporter.hpp>
 #include <LuaAPI/logger.hpp>
 
 #include <cmath>
@@ -60,6 +61,12 @@ std::unordered_map<unsigned int, float> g_lastAutoPitch;
 struct BountyMark {
     unsigned int color = 0x00FF00;
     unsigned int untilFrame = 0xFFFFFFFFu;
+    // Custom overlay caption (ASCII, NUL-terminated, borne from the Lua
+    // label arg). POD char array: no destructors, C2712-safe. Empty means
+    // the default "BOUNTY" caption. Kept short: it renders above a ~72px
+    // marker, so long strings would clip against the viewport anyway.
+    static constexpr int kLabelCap = 24;
+    char label[kLabelCap] = {};
 };
 std::unordered_map<unsigned int, BountyMark> g_bountyMarks;
 
@@ -244,8 +251,9 @@ static bool BountyIdPresentSafe(unsigned int unitId) {
 // ghost pixels. Fix: intersect the marker with DSurface::ViewBounds (the
 // engine's own convention, cf. DrawDashed) and skip paint/text outside it.
 static void DrawBountyOverlaySafe(unsigned int unitId, unsigned int color,
-                                  Point2D Coords, RectangleStruct BoundingRect,
-                                  int mode, unsigned* pPaintedMask) {
+                                   const wchar_t* caption,
+                                   Point2D Coords, RectangleStruct BoundingRect,
+                                   int mode, unsigned* pPaintedMask) {
     (void)unitId;
     (void)BoundingRect;
     constexpr int kHalfW = 36;
@@ -298,8 +306,65 @@ static void DrawBountyOverlaySafe(unsigned int unitId, unsigned int color,
         if (pS) {
             if (doRect)
                 pS->DrawRect(&r, rectColor);
-            if (doText && textInView)
-                pS->DrawText(L"BOUNTY", tx, ty, static_cast<COLORREF>(color));
+            if (doText && textInView) {
+                const wchar_t* text = (caption && caption[0] != L'\0')
+                    ? caption : L"BOUNTY";
+                // Style split WITHOUT any API change: BEFORE captions use
+                // the mod convention "BOUNTY ..." and get a solid black
+                // background box; every other caption (e.g. "+$...") keeps
+                // the 1px outline style. The binding carries no style flag.
+                bool boxed = false;
+                if (text[0] == L'B' && text[1] == L'O' && text[2] == L'U'
+                    && text[3] == L'N' && text[4] == L'T' && text[5] == L'Y') {
+                    boxed = true;
+                }
+                if (boxed) {
+                    // Black background box behind the whole caption. The
+                    // engine font exposes no text metrics; live observation
+                    // shows the glyphs narrower than first estimated, so the
+                    // width uses ~6px per glyph + padding (better slightly
+                    // too wide than clipping the text). Height covers one
+                    // text row.
+                    int len = 0;
+                    while (len < 23 && text[len] != L'\0')
+                        ++len;
+                    constexpr int kCharW = 6;
+                    constexpr int kPadX = 6;
+                    constexpr int kPadTop = 3;
+                    constexpr int kBoxH = 20;
+                    int bx1 = tx - kPadX;
+                    int by1 = ty - kPadTop;
+                    int bx2 = tx + len * kCharW + kPadX;
+                    int by2 = ty - kPadTop + kBoxH;
+                    if (bx1 < v.X) bx1 = v.X;
+                    if (by1 < v.Y) by1 = v.Y;
+                    if (bx2 > v.X + v.Width) bx2 = v.X + v.Width;
+                    if (by2 > v.Y + v.Height) by2 = v.Y + v.Height;
+                    if (bx2 > bx1 && by2 > by1) {
+                        RectangleStruct bg;
+                        bg.X = bx1;
+                        bg.Y = by1;
+                        bg.Width = bx2 - bx1;
+                        bg.Height = by2 - by1;
+                        pS->FillRect(&bg, RGB(0, 0, 0));
+                        pS->DrawText(text, tx, ty, static_cast<COLORREF>(color));
+                    }
+                } else {
+                    // Black 1px outline: four 1px-offset black passes + the
+                    // colored pass. Same clip gate (expanded by the offsets).
+                    const bool outlineInView =
+                        (tx - 1 >= v.X && tx + 1 < v.X + v.Width
+                            && ty - 1 >= v.Y && ty + 1 < v.Y + v.Height);
+                    if (outlineInView) {
+                        const COLORREF black = RGB(0, 0, 0);
+                        pS->DrawText(text, tx - 1, ty, black);
+                        pS->DrawText(text, tx + 1, ty, black);
+                        pS->DrawText(text, tx, ty - 1, black);
+                        pS->DrawText(text, tx, ty + 1, black);
+                    }
+                    pS->DrawText(text, tx, ty, static_cast<COLORREF>(color));
+                }
+            }
             painted |= (onPrimary ? 1u : 2u);
         }
         if (pPaintedMask)
@@ -386,9 +451,20 @@ static void DrawBountyIfMarked(unsigned int unitId, bool pitched,
         return; // double-draw ghost: one paint per unit per logical frame
     s_paintedFrame[unitId] = curFrame;
     const size_t regSize = g_bountyMarks.size();
+    // ASCII registry caption -> wide text for DrawText (stack buffer, POD).
+    // Non-printable bytes terminate the caption; never read past the cap.
+    wchar_t wcaption[BountyMark::kLabelCap] = {};
+    for (int i = 0; i < BountyMark::kLabelCap - 1; ++i) {
+        char c = it->second.label[i];
+        if (c == '\0')
+            break;
+        if (c < 32 || c > 126)
+            break;
+        wcaption[i] = static_cast<wchar_t>(c);
+    }
     unsigned painted = 0;
     if (g_bountyDrawMode != 0) {
-        DrawBountyOverlaySafe(unitId, color, Coords, BoundingRect,
+        DrawBountyOverlaySafe(unitId, color, wcaption, Coords, BoundingRect,
                               g_bountyDrawMode, &painted);
     }
     LogBountyFrameProbe(unitId, pitched, Coords, BoundingRect, regSize, painted);
@@ -642,13 +718,32 @@ void SetAutoAll(bool enabled) {
 // Bounty marks (Gate 2A): UniqueID-keyed overlay registry
 // ---------------------------------------------------------------------------
 
-void MarkBounty(unsigned int unitId, unsigned int color, unsigned int durationFrames) {
-    if (unitId == 0)
-        return;    BountyMark m;
+void MarkBounty(unsigned int unitId, unsigned int color, unsigned int durationFrames,
+const char* labelOrNull) {
+LuaAPI::CrashReporter::Note("MarkBounty");
+if (unitId == 0)
+return;
+    BountyMark m;
     m.color = color;
     m.untilFrame = (durationFrames == 0)
         ? 0xFFFFFFFFu
         : CurrentFrameSafe() + durationFrames;
+    // Bounded, NUL-safe caption copy (POD loop, no C++ objects harmed).
+    // nullptr/empty keeps the default "BOUNTY" caption at draw time.
+    if (labelOrNull) {
+        for (int i = 0; i < BountyMark::kLabelCap - 1; ++i) {
+            char c = '\0';
+            __try {
+                c = labelOrNull[i];
+            } __except (EXCEPTION_EXECUTE_HANDLER) {
+                break;
+            }
+            m.label[i] = c;
+            if (c == '\0')
+                break;
+        }
+        m.label[BountyMark::kLabelCap - 1] = '\0';
+    }
     g_bountyMarks[unitId] = m;
 
     // Opportunistic purge (rare call, tiny map): drop marks whose unit already

@@ -1,5 +1,6 @@
 #include <LuaAPI/bindings_techno.hpp>
 #include <LuaAPI/bindings_house.hpp>
+#include <LuaAPI/crash_reporter.hpp>
 #include <LuaAPI/logger.hpp>
 #include "barrel_pitch.h"
 
@@ -400,7 +401,8 @@ int Techno_TakeDamage(lua_State* L) {
 //   AND set Deactivated.
 // All state is restored automatically when the timer expires.
 int Techno_Disable(lua_State* L) {
-    auto* pTechno = CheckTechno(L, 1);
+LuaAPI::CrashReporter::Note("Techno_Disable");
+auto* pTechno = CheckTechno(L, 1);
     if (!ValidateTechno(pTechno))
         return 0;
 
@@ -1147,6 +1149,7 @@ int Techno_GetTarget(lua_State* L) {
 // there and desyncs), null-check the type (unguarded GetType()->Strength
 // deref used to sit on the hot path).
 int Techno_SetHealthRatio(lua_State* L) {
+    LuaAPI::CrashReporter::Note("Techno_SetHealthRatio");
     auto* pTechno = CheckTechno(L, 1);
     if (!ValidateTechno(pTechno))
         return 0;
@@ -2219,6 +2222,7 @@ static bool WriteCellShrouded(int x, int y) {
 // (units do it every frame) and exposing it would be a vision-granting
 // write path.
 static int World_SetCellShrouded(lua_State* L) {
+    LuaAPI::CrashReporter::Note("World_SetCellShrouded");
     const int x = static_cast<int>(luaL_checkinteger(L, 1));
     const int y = static_cast<int>(luaL_checkinteger(L, 2));
     lua_pushboolean(L, WriteCellShrouded(x, y) ? 1 : 0);
@@ -2236,6 +2240,7 @@ static int World_SetCellShrouded(lua_State* L) {
 // like blackWatch/orphan keep validating from outside).
 // Single-player oriented like the rest of the write path. POD-only frame.
 static int World_NativeReshroud(lua_State* L) {
+    LuaAPI::CrashReporter::Note("World_NativeReshroud");
     __try {
         HouseClass* player = HouseClass::CurrentPlayer;
         if (!player) {
@@ -2262,6 +2267,7 @@ static int World_NativeReshroud(lua_State* L) {
 // over-dirtying the sidebar strip is harmless. All engine contact inside
 // __try, POD-only frame (C2712-safe).
 static int World_FlushShroudRedraw(lua_State* L) {
+    LuaAPI::CrashReporter::Note("World_FlushShroudRedraw");
     if (!g_shroudDirty) {
         lua_pushboolean(L, 0);
         return 1;
@@ -2605,6 +2611,7 @@ static bool SehRadSiteHasZone(CellStruct cs) {
 // Creates a real radiation zone anchored at (x,y), or retunes the live one if
 // the cell already carries a RadSite.
 static int World_RadSiteCreate(lua_State* L) {
+    LuaAPI::CrashReporter::Note("World_RadSiteCreate");
     const int x = static_cast<int>(luaL_checkinteger(L, 1));
     const int y = static_cast<int>(luaL_checkinteger(L, 2));
     const int spread = static_cast<int>(luaL_checkinteger(L, 3));
@@ -2621,6 +2628,7 @@ static int World_RadSiteCreate(lua_State* L) {
 
 // World.RadSiteSetLevel(x, y, level) -> boolean
 static int World_RadSiteSetLevel(lua_State* L) {
+    LuaAPI::CrashReporter::Note("World_RadSiteSetLevel");
     const int x = static_cast<int>(luaL_checkinteger(L, 1));
     const int y = static_cast<int>(luaL_checkinteger(L, 2));
     const int level = static_cast<int>(luaL_checkinteger(L, 3));
@@ -2635,6 +2643,7 @@ static int World_RadSiteSetLevel(lua_State* L) {
 
 // World.RadSiteSetEnabled(x, y, on) -> boolean
 static int World_RadSiteSetEnabled(lua_State* L) {
+    LuaAPI::CrashReporter::Note("World_RadSiteSetEnabled");
     const int x = static_cast<int>(luaL_checkinteger(L, 1));
     const int y = static_cast<int>(luaL_checkinteger(L, 2));
     const bool on = lua_toboolean(L, 3) != 0;
