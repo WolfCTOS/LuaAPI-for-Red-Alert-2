@@ -6,6 +6,168 @@ The changelog follows the project's verified milestone history. Features are lis
 
 ---
 
+## [Unreleased] - `World.DetonateAt` added: a radiation bullet detonation binding (2026-09-30)
+
+### Added - the engine can now be asked to build a radiation site
+
+- `World.DetonateAt(weaponId, x, y, ownerUnit?) -> boolean, message`
+  (`Bullet_DetonateAt`, `src/bindings_techno.cpp`). Creates the weapon's
+  projectile through the engine's own `BulletTypeClass::CreateBullet`, sets the
+  weapon, places the bullet at the cell's coords and calls `Explode(true)`. The
+  engine - and Phobos - then build a complete, correctly initialised
+  `RadSiteClass`, which is the only thing that ever draws the vanilla green.
+- This is deliberately **not** a reinstated `FireProjectile`. It has no
+  per-detonation hook, no bullet array, no missile decoupling and no
+  multi-projectile behaviour. One call, one detonation, at one cell.
+
+### Why this is a re-add, and why that is legitimate
+
+`FireProjectile` was deleted on 2026-09-21 with Milestone 10, on the
+"no consumer + no unique capability + existing engine alternative" test
+(`PROJECT/ROADMAP.md`, `AGENTS.md` API surface discipline). The first criterion
+no longer holds: the `radiation` mod is a live consumer, and it has no other way
+to reach a real `RadSiteClass` - the engine builds one only on a radiation
+bullet detonation, and nothing in the remaining API can cause one. Criteria 2
+and 3 are deliberately preserved by keeping the binding as narrow as possible.
+
+### The four conditions, all enforced rather than assumed
+
+Phobos `v0.4.0.2` routes the effect through
+`DEFINE_HOOK(0x469150, BulletClass_Detonate_ApplyRadiation)`. Missing any one of
+these makes the call a silent no-op, which is precisely how every previous
+attempt failed:
+
+1. `GetWeaponType()` must be set - hence the explicit `SetWeaponType`.
+2. `RadLevel > 0` on that weapon - checked, and a `RadLevel=0` weapon is
+   reported in the log instead of doing nothing.
+3. Coordinates inside the usable map area - checked.
+4. The bullet needs its Phobos `BulletExt`; the real engine ctor allocates it.
+
+### Lifecycle: `Explode(true)`, not a bare `Detonate`
+
+Disassembled in gamemd 1.001: `Explode` (0x468D80) contains `call 0x4690B0`
+(`Detonate`) at 0x469033 and then continues into the removal path. So `Explode`
+is the wrapper that detonates and destroys. A bare `Detonate` would leave the
+bullet in the engine's array - one leak per call. There is no double-detonation
+risk, because the call order is `Explode` -> `Detonate` and never the reverse.
+`SetLocation` before `Explode` is required, because `Explode` detonates at the
+bullet's own coords.
+
+Status: **IMPLEMENTED and COMPILED** (`729EF1B8`, 13:41:14). Not yet
+**RUNTIME VERIFIED** - no match has been played against it.
+
+## [Unreleased] — Forced `HouseClass::Lose()` leaves the game loop (2026-09-26)
+
+### Changed — consumer no longer calls the internal defeat bridge
+
+- `smart_ai` no longer calls `Engine.__SmartAILose` on a house that
+  satisfies its surrender condition. New mod flag
+  `SmartAI.SURRENDER_ENGINE_CALL`, default **false**; the call is gated,
+  not deleted. The C++ bridge (`House_SmartAILose`,
+  `src/bindings_house.cpp`) is **unchanged and still compiles** — it is
+  simply no longer invoked. It was never public API and has no `API.md`
+  entry.
+- Rationale: forcing `Lose(false)` on a non-player house made the engine
+  leave the game main loop ~90 frames later, at `BorrowedTime` expiry,
+  ending the whole match and the process (exit code 0, no crash) with
+  every other house alive and undefeated. Reproduced 3/3 in 1-human +
+  3-AI matches. `ShortGame` excluded by a separate `shortgame=0` run that
+  terminated identically.
+
+### Added — engine finding, recorded for reuse
+
+- `FSM/HOUSE_LOSE_FORCED.md` (new): full record, including what is
+  explicitly NOT proven. Evidence row in `FSM/VERIFICATION.md`.
+- Reusable conclusion: **`HouseClass::Lose()` (and by extension
+  `FlagToDie` / `Win` / `AcceptDefeat` / `ForceEnd`) must not be called
+  from Lua.** These are engine-internal defeat transitions that expect the
+  engine's own evaluator to drive them. Forcing one externally duplicates
+  the transition with the wrong calling context. This is a standing
+  caution for anyone extending the bridge, and it is consistent with the
+  pre-existing note in `SURRENDER_PHASE2_SAFETY_SPIKE.md` §2 about
+  `DestroyAll*()` producing a "zombie house".
+- Control-flow evidence (stronger than correlation, still not a mechanism):
+  PRE/POST detour-invocation counters show `max(pre - post) = 1`, final
+  `pre == post == 3630`, no PRE heartbeat at 3660, and `POST_STALLED`
+  never firing — therefore `g_originalMainLoop()` **returned every time it
+  was called**, and the detour was then never entered again
+  (classification `HOOK_NOT_ENTERED`).
+
+### Not changed / still open
+
+- No production C++ behaviour changed. The temporary
+  `LOSE-PROBE-REMOVE-ME` diagnostic is **still installed** in
+  `src/bindings_house.cpp`, `src/lua_engine.cpp` and
+  `include/LuaAPI/bindings_house.hpp`; it costs one increment and one
+  branch per `MainLoop` invocation and must be removed.
+- **Engine mechanism UNKNOWN.** The repository contains no engine
+  disassembly and no xref data (YRpp is header-only: 336 `.h` + 1 `.cpp`;
+  `HouseClass` exposes no `Update`/`Think`). `CountOtherUndefeatedHumanHouses`
+  (`0x5E2BA0`), `ForceEnd` (`0x4FCDC0`), `AcceptDefeat` (`0x4FC0B0`),
+  `FlagToDie` (`0x4FC980`) and `Win` (`0x4FC9E0`) have **zero** callers in
+  this repository; absence here is not absence in the executable. Naming
+  the responsible function requires external analysis of `gamemd.exe`.
+- **No new LuaAPI milestone.** Per `AGENTS.md` Milestone Architecture this
+  is a mod-side defect; it does not prove an API/framework gap, and the
+  affected surface was never a public API.
+- Separate open SmartAI bug, unrelated to surrender: the `econSeen`
+  belief store is not namespaced per house, so any 2+ AI match logs false
+  "killed" events for intact economy and saturates `grudge` to its cap.
+
+---
+
+## [Unreleased] — Beta M1: `house:GetAIDifficulty()` (2026-09-25)
+
+### Added — first Beta-namespace milestone (API only)
+
+- `house:GetAIDifficulty()` (read-only, `src/bindings_house.cpp`):
+  returns the house's lobby AI difficulty as `"easy"|"normal"|"hard"`.
+  Engine ground truth is reversed (`HouseClass::AIDifficulty`:
+  hard=0/normal=1/easy=2) — the binding normalizes it. Returns `nil` on
+  read failure so callers fall back. SEH-wrapped; documented in
+  `API.md`. Decision record: `PROJECT/DECISIONS.md` (2026-09-25).
+- Evidence: IMPLEMENTED + BUILT (Release build deploys
+  `LuaAPI.dll`). Live verification pending (needs a fresh match on
+  the rebuilt DLL).
+
+---
+
+## [Unreleased] — dynamic_fow v0.9.25 native Reshroud driver (2026-09-29)
+
+### Added — mod + binding (shipped in commit `1f38812`)
+
+- New binding `World.NativeReshroud() -> boolean`
+  (`src/bindings_techno.cpp`): SEH-wrapped call of the engine's own
+  `MapClass::Reshroud(CurrentPlayer)` (YRpp 0x577AB0). POD-only frame;
+  returns `false` when the player house is absent or the call faults.
+- `dynamic_fow` native driver mode (`NATIVE_RESHROUD=true`,
+  `NATIVE_INTERVAL=150`): whole-map `Reshroud` on a frame timer instead
+  of per-cell Lua writes; vanilla reveal restores sighted ground.
+  Guard/hysteresis/trail machinery keeps running as observation
+  (meters still validate); without the binding the mod falls back to
+  the per-cell path (`World.SetCellShrouded` +
+  `World.FlushShroudRedraw`) unchanged.
+
+### Verification status — headless only; live match PENDING
+
+- Headless (fresh, 2026-09-29): `dynamic_fow_test.lua` 39/39 —
+  driver fires on its frame timer, per-cell writes stay OFF while the
+  driver is bound, mock `Reshroud` blackens unseen ground, failure
+  re-arms next interval, fallback intact; evidence line
+  `[DFOW] NATIVE f=1200 reshroud=true`. Harness pins updated from the
+  pre-v0.9.14 crisp-default behavior to shipped semantics (6 stale
+  failures fixed).
+- Docs aligned to the shipped feature: `mod.json` 0.9.14 → 0.9.25
+  (+ RU description), mod README (native-driver section, knob row,
+  `NATIVE` meter, pending-live note), `API.md` reference entry for
+  `World.NativeReshroud` (extras-style verification disclosure).
+- Probe run (pre-commit, 2026-09-29 01:49): `NATIVE-PROBE mode=1
+  under=(54,85):0->0 far=(64,82):0->1 fault=0` — binding works in
+  engine, effect persists, no fault.
+- **Live match on the committed driver mode: NOT RUN → INCONCLUSIVE.**
+  The only available `LuaAPI.log` predates the final v0.9.25 edit and
+  contains no `NATIVE f=` driver lines.
+
 ## [Unreleased] — Project version 2.0.0 Beta (2026-09-22)
 
 ### Changed — version references only (no behavior change)
@@ -693,3 +855,100 @@ The changelog follows the project's verified milestone history. Features are lis
 - Milestone 11 is engineering-complete, but full two-client online multiplayer validation is not claimed.
 - Milestone 12 is development work and must not be described as production-complete until separately verified.
 - `PROJECT/ROADMAP.md`, `PROJECT/CAPABILITIES.md`, and `API.md` should be updated alongside significant API or milestone changes to keep documentation synchronized.
+
+## 2026-09-26 — read-only fog-of-war readout (LIVE VERIFIED) + `OnScenarioStart` defect confirmed
+
+**Added**
+- Three **read-only** fog bindings in `src/bindings_techno.cpp`, registered on
+  `World`: `GetFogState(x,y)`, `IsLocationShrouded(x,y)`,
+  `GetFogRegion(x,y,w,h)` (packed byte-per-cell string; 512×512 cap).
+  Ground truth is `MapClass::IsLocationShrouded` @ `0x00586360`, i.e. the exact
+  bit the engine itself tests. No setter, by design — granting vision is
+  "fake vision" and is out of scope per `FSM/FEASIBILITY_TRIAGE.md:268`.
+- New mod `scripts/mods/fow_overlay/` — character-map HUD, per-region
+  ever-seen memory, hotspot estimate. HUD off by default (`V` toggles) because
+  a 19-line block at the scan cadence would flood the message list.
+- `API.md` § "World — Fog of War / Shroud"; `docs/research/SHROUD_RCA.md`;
+  `scripts/mods/README.md` §9; `scripts/active_mods.txt` entry.
+
+**Verified**
+- Harness `tools/tmp/fow_overlay_test.lua` 44/44; no regression across the other
+  21 harnesses.
+- **Live 2026-09-26 15:31–15:38**: 390 scans, 0 errors, 0 warnings. Shroud/visibility
+  read is LIVE VERIFIED, including that a cell never re-shrouds (0/213 at fixed
+  origin). `fog%`/fog-layer fields remain INCONCLUSIVE.
+
+**Fixed**
+- `fow_overlay` no longer depends on the `OnScenarioStart` global (v0.1.1). It
+  initialises lazily from the first `Update`.
+
+**Found, NOT fixed — needs a decision**
+- `OnScenarioStart` is **never dispatched**: `src/lua_engine.cpp:1046-1048` requires
+  `g_scriptReady && Unsorted::CurrentFrame == 1`, and scripts become ready a
+  frame or two later, with no retry and no `ResetSession` caller. Live-confirmed
+  (0 START lines in a 7.5 min session). `scripts/init.lua:67` additionally
+  installs an empty global stub before the `require` loop. No milestone created
+  — reporting only.
+
+### Follow-up, second live session (2026-09-26 16:06–16:12)
+
+- **Reproduced** the shroud read independently: 352 scans, 0 errors, 0 warnings;
+  shroud rose **0/189** times at a fixed origin. Live status confirmed twice.
+- **`[FOW] START` now prints** — the v0.1.1 lazy-init fix works in a real match.
+- **`V` toggle exercised live** (`[FOW] TOGGLE on`).
+- **Fixed a defect of mine:** `F5` force-scan was documented in `HOW_TO_USE.txt`
+  and `mod.json` since v0.1.0 but never implemented (only the `V` handler
+  existed). Implemented in **v0.1.2** and covered by 5 new harness tests
+  (44/44 → **49/49**).
+- **Refined a finding:** `fog% = 0` in both matches is *expected* — no shipped map
+  INI contains a `Fog` key, so the persistent fog layer those fields describe is
+  not configured. The fog-layer fields are therefore **untested, not suspect**.
+- **Cannot be closed from logs:** whether the HUD block is legible on screen.
+  HUD output goes to the in-game message list, not `LuaAPI.log`. Needs a
+  screenshot or a human report.
+
+### Follow-up, the player's "###" question (2026-09-26)
+
+- **The behaviour the player spotted is correct.** `#` is shroud (never explored),
+  and it shrinking as the camera moves is the readout working. Measured on the HUD
+  art itself: **`#` grew 0/188 times at a fixed origin**, and all 56 times it did
+  grow the region had just moved onto fresh ground. Geometry clean: 351 blocks, all
+  9-of-17 rows x 33 cells. The dot share matches the scan's `visible%` in 266/351
+  blocks exactly, which is what proves `.` is rendered for *currently visible*.
+- **Second defect of mine, found via that observation - the HUD legend lied.** It
+  printed `#shroud +fog .seen` while the renderer uses `.` for **visible** and `+`
+  for seen-but-not-visible. `HOW_TO_USE.txt` was worse: a five-symbol alphabet
+  including a non-existent `o` and `a`. Fixed in **v0.1.3**; legend now reads
+  `#shroud  .visible  +seen-not-visible`.
+- **New harness guard for this defect class:** build a known 11/11/11 region, read
+  the legend back, and assert the legend's character per state is the character the
+  renderer used. 49/49 -> **58/58**.
+- **Corrected a false claim I had made:** the HUD block *is* in `LuaAPI.log`
+  (3 159 art rows this session). It is one `PrintMessage` containing newlines, so
+  only the first line carries the `[HUD]` tag. Log analysis can verify the rendered
+  characters, but still not on-screen legibility.
+- `+` was rendered **0** times all session, consistent with no shipped map
+  configuring a fog layer.
+
+### Community research on fog of war (2026-09-26)
+
+- Asked the community instead of re-deriving. **A real per-observer fog of war
+  does not exist in RA2/YR and is not coming from INI.** Ares' "Fog of War
+  logic" blueprint has sat at *Not started* since 2013; CnCNet consensus is
+  "FoW was completely removed as of Tiberian Sun"; `FogOfWar`, `ShroudGrow`,
+  `ShroudRate`, `FogRate` in `rulesmd.ini` are all dead TibSun/RA1 leftovers.
+- **Corrected my own reasoning:** I had attributed `fog% = 0` to map INIs lacking
+  a `Fog` key. The real reason is structural - there is no working fog layer to
+  configure. Those API fields are permanently dead weight in RA2/YR.
+- **Ares 3.0p1 and Phobos 0.4.0.2 are installed in the game folder** (with
+  Syringe and a live `[Phobos]` section in `RA2MD.INI`). The only
+  community-sanctioned shroud manipulation is Phobos' one-shot warhead pair:
+  `SpySat` (reveal whole map, **owner only**) and `BigGap` (shroud whole map,
+  owner's enemies). Note Phobos can already do per-house reveal even though the
+  fog layer cannot.
+- **No "Dynamic FOW" mod exists by that or any similar name.** The closest
+  community substitutes are a semi-transparent `shroud.shp` (see terrain, not
+  units), Phobos `SpySat` on a periodic weapon, and a spy-uplink re-shroud hack.
+- Noted `Ritanlisa/RA2YR_ReSource` (full decompiled gamemd.exe, 19 059
+  functions) as a better RE reference than further manual byte-pattern work.
+- Full write-up: `docs/research/SHROUD_RCA.md` section 7.

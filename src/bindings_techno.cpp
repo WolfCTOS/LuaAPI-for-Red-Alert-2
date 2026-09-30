@@ -2489,11 +2489,39 @@ static int RadSiteSafeLevel(int requested) {
 // native path is opt-in and can be turned off without a rebuild.
 static bool g_radSiteNativeOn = false;
 
-static void RadSiteNativeFromEnv() {
-    if (g_radSiteNativeOn) return;
-    const char* const e = std::getenv("LUAAPI_RADSITE_NATIVE");
-    g_radSiteNativeOn = (e && e[0] == '1' && e[1] == '\0');
-}
+  static void RadSiteNativeFromEnv() {
+      if (g_radSiteNativeOn) return;
+      // 1) Environment variable, kept for scripted and CI use.
+      const char* const e = std::getenv("LUAAPI_RADSITE_NATIVE");
+      if (e && e[0] == '1' && e[1] == '\0') {
+          g_radSiteNativeOn = true;
+          LUA_LOG_INFO("radsite native gate: ARMED via LUAAPI_RADSITE_NATIVE");
+          return;
+      }
+      // 2) Marker file next to the game binary.
+      //
+      // The environment variable proved unreliable here: it only reaches the
+      // game if the process that launched it already had the variable, and
+      // Explorer caches its environment block, so a User-scope change is not
+      // picked up until Explorer restarts. Two runs were lost to this
+      // ("GREEN path DISARMED" with the variable set in the registry). A file
+      // next to the DLL depends on nothing but the file existing.
+      wchar_t self[MAX_PATH] = {};
+      if (GetModuleFileNameW(nullptr, self, MAX_PATH)) {
+          std::wstring p(self);
+          const size_t slash = p.find_last_of(L"\\/");
+          if (slash != std::wstring::npos) {
+              p = p.substr(0, slash + 1) + L"radsite_native.flag";
+              if (GetFileAttributesW(p.c_str()) != INVALID_FILE_ATTRIBUTES) {
+                  g_radSiteNativeOn = true;
+                  LUA_LOG_INFO("radsite native gate: ARMED via marker file radsite_native.flag");
+                  return;
+              }
+          }
+      }
+      g_radSiteNativeOn = false;
+  }
+
 
 // OpenTS: "This is the point the light shines from, fixed when the source is
 // created." The audited consumer of the light (CellClass::Init_Light
@@ -2533,22 +2561,28 @@ static bool SehRadSiteCreate(CellStruct cs, int spread, int level) {
                 // one; Add() is that reuse path (Deactivate, retune, Activate).
                 reinterpret_cast<FnInt>(kRadSiteAddAddr)(existing, safe);
             } else {
-                void* const p = reinterpret_cast<FnNew>(kOperatorNewAddr)(kRadSiteBytes);
-                if (p) {
-                    reinterpret_cast<FnVoid>(kRadSiteCtorAddr)(p);
-                    reinterpret_cast<FnBase>(kRadSiteBaseAddr)(p, &cs);
-                    reinterpret_cast<FnInt>(kRadSiteSpreadAddr)(p, spread);
-                    reinterpret_cast<FnInt>(kRadSiteLevelAddr)(p, safe);
-                    reinterpret_cast<FnVoid>(kRadSiteActivateAd)(p);
-                    // The light object only exists after Activate.
-                    void* const fx = *reinterpret_cast<void**>(
-                        reinterpret_cast<unsigned char*>(p) + 0x24);
-                    if (fx) {
-                        SehSetLightPos(fx, static_cast<int>(cs.X),
-                                            static_cast<int>(cs.Y));
-                    }
-                    reinterpret_cast<FnCellSet>(kCellSetRadSiteAd)(cell, p);
-                }
+                  void* const p = reinterpret_cast<FnNew>(kOperatorNewAddr)(kRadSiteBytes);
+                  if (p) {
+                      // The engine's own sequence, verified against the callers
+                      // of Activate (0x4691F4 and 0x46AE3F):
+                      //     ctor -> SetBaseCell -> SetSpread -> SetRadLevel -> Activate
+                      // with no Add in between. The light object only exists after
+                      // Activate, and the cell owner link is what lets a later
+                      // lookup find this site by coordinate, so both stay.
+                      reinterpret_cast<FnVoid>(kRadSiteCtorAddr)(p);
+                      reinterpret_cast<FnBase>(kRadSiteBaseAddr)(p, &cs);
+                      reinterpret_cast<FnInt>(kRadSiteSpreadAddr)(p, spread);
+                      reinterpret_cast<FnInt>(kRadSiteLevelAddr)(p, safe);
+                      reinterpret_cast<FnVoid>(kRadSiteActivateAd)(p);
+                      // The light object only exists after Activate.
+                      void* const fx = *reinterpret_cast<void**>(
+                          reinterpret_cast<unsigned char*>(p) + 0x24);
+                      if (fx) {
+                          SehSetLightPos(fx, static_cast<int>(cs.X),
+                                              static_cast<int>(cs.Y));
+                      }
+                      reinterpret_cast<FnCellSet>(kCellSetRadSiteAd)(cell, p);
+                  }
             }
             ok = true;
         }
@@ -2683,16 +2717,68 @@ constexpr int kFxBlueTint  = 0x2C;
 constexpr int kFxVis       = 0x44;
 } // namespace
 
-static bool SehRadSiteLight(CellStruct cs, int vis, int r, int g, int b) {
-    RadSiteNativeFromEnv();
-    if (!g_radSiteNativeOn) return false;
-    bool ok = false;
-    __try {
-        CellClass* const cell = MapClass::Instance.GetCellAt(cs);
-        void* const zone = cell ? reinterpret_cast<FnCellGet>(kCellGetRadSiteAd)(cell) : nullptr;
-        if (zone) {
-            auto* const fx = *reinterpret_cast<unsigned char**>(
-                reinterpret_cast<unsigned char*>(zone) + 0x24);
+  // The engine's global RadSite registry. World.RadSiteList already walks this
+  // successfully, so the addresses are proven; the pair is declared here
+  // because SehRadSiteLight needs it too.
+  constexpr uintptr_t kRadVecBufAd    = 0xB04BD4;  // RadSite vector buffer
+  constexpr uintptr_t kRadVecCountAd  = 0xB04BE0;  // RadSite vector count
+
+  // Find a RadSite by its base cell by walking the engine's own registry.
+  //
+  // The previous version looked the zone up through the cell's owner pointer
+  // (kCellGetRadSiteAd), which is what failed: a live run reported "light not
+  // set" even though a site had just been created on that exact cell. A site is
+  // only reachable by owner while the engine holds it there, so the binding was
+  // asking a question with a false premise. The registry is authoritative - it
+  // is what the renderer iterates.
+  static void* SehFindRadSiteByBase(CellStruct cs) {
+      void* found = nullptr;
+      __try {
+          auto* const rc = reinterpret_cast<const int*>(kRadVecCountAd);
+          auto* const vb = reinterpret_cast<unsigned char**>(kRadVecBufAd);
+          int count = rc ? *rc : 0;
+          if (count < 0) count = 0;
+          if (count > 64) count = 64;          // bound the walk hard
+          for (int i = 0; i < count; ++i) {
+              unsigned char* const site = vb[i];
+              if (!site) continue;
+              if (*reinterpret_cast<short*>(site + 0x40) == cs.X &&
+                  *reinterpret_cast<short*>(site + 0x42) == cs.Y) {
+                  found = site;
+                  break;
+              }
+          }
+      } __except (EXCEPTION_EXECUTE_HANDLER) {
+          found = nullptr;
+      }
+      return found;
+  }
+
+  static bool SehRadSiteLight(CellStruct cs, int vis, int r, int g, int b) {
+      RadSiteNativeFromEnv();
+      if (!g_radSiteNativeOn) return false;
+      bool ok = false;
+      __try {
+          void* const zone = SehFindRadSiteByBase(cs);
+          if (zone) {
+            // Locate the light by its vtable rather than by a fixed offset.
+            // A live site dump put the light pointer at +0x54, while the decoded
+            // SetBaseCell store (mov [ecx+0x40], edx) implies the property block
+            // starts at +0x40 and YRpp's member order would put LightSource at
+            // +0x30. Those disagree, and a third guess has already cost this
+            // project two false claims. A candidate is accepted only if it
+            // really is a LightSourceClass.
+            constexpr uintptr_t kLightSourceVtable = 0x007ED028;
+            auto* const zs = reinterpret_cast<unsigned char*>(zone);
+            void* fx = nullptr;
+            for (int off = 0x08; off + 4 <= 0x74; off += 4) {
+                void* const cand = *reinterpret_cast<void**>(zs + off);
+                if (!cand) continue;
+                if (*reinterpret_cast<uintptr_t*>(cand) == kLightSourceVtable) {
+                    fx = cand;
+                    break;
+                }
+            }
             if (fx) {
                 auto* const e = reinterpret_cast<int*>(fx);
                 e[kFxRedTint / 4]   = r;
@@ -2731,7 +2817,211 @@ static int World_RadSiteSetLight(lua_State* L) {
     return 1;
 }
 
-// World.RadSiteNativeEnabled() -> boolean
+  // Bullet.DetonateAt(weaponId, x, y, ownerUnit) -> boolean, message
+  //
+  // The one capability this API was missing. Every attempt to lay green tiles
+  // in the radiation mod failed because nothing could make the engine build a
+  // RadSiteClass - and the engine builds a correct, fully initialised, green one
+  // on ANY radiation-bullet detonation. Phobos routes it here:
+  //
+  //   DEFINE_HOOK(0x469150, BulletClass_Detonate_ApplyRadiation) {
+  //       const auto pWeapon = pThis->GetWeaponType();
+  //       if (pWeapon && pWeapon->RadLevel > 0 && IsWithinUsableArea(*pCoords)) {
+  //           const auto pExt = BulletExt::ExtMap.Find(pThis);
+  //           const auto pWH  = pThis->WH;
+  //           pExt->ApplyRadiationToCell(Coord2Cell(*pCoords),
+  //                                       Game::F2I(pWH->CellSpread),
+  //                                       pWeapon->RadLevel);
+  //       }
+  //   }
+  //
+  // Four conditions, all of which this binding must satisfy or the call is a
+  // silent no-op - which is exactly how the previous attempts failed:
+  //   1. GetWeaponType() must return a weapon, so SetWeaponType is mandatory.
+  //      CreateBullet takes a warhead, not a weapon, so without this the hook
+  //      sees nullptr and does nothing.
+  //   2. RadLevel > 0 on that weapon. Checked and reported, never assumed.
+  //   3. The coords must be inside the usable map area.
+  //   4. The bullet needs its Phobos BulletExt, which the ctor hook allocates.
+  //      CreateBullet runs the real engine ctor, so this comes for free - the
+  //      same argument that proved RadSiteClass_CTOR at 0x65B28D is not skipped.
+  //
+  // Lifecycle: Explode(true), NOT a bare Detonate. Disassembled in gamemd 1.001,
+  // Explode (0x468D80) contains `call 0x4690B0` (Detonate) at 0x469033 and then
+  // continues into the removal path, so Explode IS the wrapper that detonates and
+  // destroys. A bare Detonate would leave the bullet in the engine's array, one
+  // leak per call. There is no double-detonation risk: the call order is
+  // Explode -> Detonate, never the reverse.
+  //
+  // Location must be set before Explode, because Explode detonates "with the
+  // appropriate coords" - the bullet's own. This is the same sequence Ares and
+  // Phobos use for manual detonation: Limbo, SetLocation, Explode(true).
+  static bool SehDetonateRadiationWith(WeaponTypeClass* pWeapon, CellStruct cs,
+                                       TechnoClass* pOwner, int spreadOverride) {
+      bool ok = false;
+      __try {
+          if (!pWeapon) {
+              LUA_LOG_WARN("[Bullet] DetonateAt: null weapon");
+              return false;
+          }
+          const char* const wname = pWeapon->ID;
+          if (pWeapon->RadLevel <= 0) {
+              LUA_LOG_WARN("[Bullet] DetonateAt: weapon '{}' has RadLevel={}."
+                  " Phobos only builds a site when RadLevel > 0, so this would"
+                  " do nothing. Use a radiation weapon.",
+                  wname, pWeapon->RadLevel);
+              return false;
+          }
+          BulletTypeClass* const pProj = pWeapon->Projectile;
+          if (!pProj) {
+              LUA_LOG_WARN("[Bullet] DetonateAt: weapon '{}' has no Projectile", wname);
+              return false;
+          }
+          WarheadTypeClass* const pWH = pWeapon->Warhead;
+          if (!pWH) {
+              LUA_LOG_WARN("[Bullet] DetonateAt: weapon '{}' has no Warhead", wname);
+              return false;
+          }
+          CellClass* const cell = MapClass::Instance.GetCellAt(cs);
+          if (!cell) {
+              LUA_LOG_WARN("[Bullet] DetonateAt: no cell at ({},{})", cs.X, cs.Y);
+              return false;
+          }
+          // Z matters: the cell carries the terrain height and the engine's own
+          // blasts use the cell's coords. A zero Z detonates under the ground.
+          const CoordStruct coords = cell->GetCoords();
+          if (!MapClass::Instance.IsWithinUsableArea(coords)) {
+              LUA_LOG_WARN("[Bullet] DetonateAt: ({},{}) is outside the usable area",
+                  cs.X, cs.Y);
+              return false;
+          }
+          BulletClass* const pBullet =
+              pProj->CreateBullet(nullptr, pOwner, 0, pWH, -1, true);
+          if (!pBullet) {
+              LUA_LOG_WARN("[Bullet] DetonateAt: CreateBullet returned null for '{}'", wname);
+              return false;
+          }
+          // Condition 1 of Phobos' hook. CreateBullet takes a warhead, not a
+          // weapon, so without this the hook sees nullptr and does nothing.
+          pBullet->SetWeaponType(pWeapon);
+          pBullet->Limbo();
+          pBullet->SetLocation(coords);
+          // CellSpread is what sizes the site Phobos builds, and it is read
+          // straight off the warhead: `Game::F2I(pWH->CellSpread)`. The
+          // Desolator's is 10, i.e. about a 7 cell radius - one small patch.
+          // Overriding it for the duration of this one detonation sizes the site
+          // instead, which is how a single blast can cover the map. Restored
+          // immediately afterwards, because this is a shared rules object and
+          // every weapon using this warhead must see it unchanged.
+          const float savedSpread = pWH->CellSpread;
+          const bool widened = (spreadOverride > 0)
+              && (static_cast<float>(spreadOverride) != pWH->CellSpread);
+          if (widened) {
+              pWH->CellSpread = static_cast<float>(spreadOverride);
+          }
+          pBullet->Explode(true);
+          if (widened) {
+              pWH->CellSpread = savedSpread;
+          }
+          ok = true;
+          LUA_LOG_INFO("[Bullet] DetonateAt: '{}' rad={} spread={} at ({},{}) z={}",
+              wname, pWeapon->RadLevel, pWH->CellSpread, cs.X, cs.Y, coords.Z);
+          if (widened) {
+              LUA_LOG_INFO("[Bullet] DetonateAt: CellSpread temporarily set {} -> {}"
+                  " and restored to {}", savedSpread, pWH->CellSpread, savedSpread);
+          }
+      } __except (EXCEPTION_EXECUTE_HANDLER) {
+          LUA_LOG_WARN("[Bullet] DetonateAt: SEH (error {})", GetLastError());
+          ok = false;
+      }
+      return ok;
+  }
+
+  static bool SehDetonateRadiation(const char* weaponId, CellStruct cs, TechnoClass* pOwner) {
+      __try {
+          WeaponTypeClass* const pWeapon = WeaponTypeClass::Find(weaponId);
+          if (!pWeapon) {
+              LUA_LOG_WARN("[Bullet] DetonateAt: unknown weaponId '{}'", weaponId);
+              return false;
+          }
+          return SehDetonateRadiationWith(pWeapon, cs, pOwner, 0);
+      } __except (EXCEPTION_EXECUTE_HANDLER) {
+          LUA_LOG_WARN("[Bullet] DetonateAt: lookup SEH (error {})", GetLastError());
+          return false;
+      }
+  }
+
+  // World.DetonateAtFromUnit(unit, x, y) -> boolean, message
+  //
+  // Same effect, but the weapon is taken from a live unit's DEPLOY weapon
+  // instead of being looked up by id. This exists because every type lookup in
+  // this YRpp is unreliable: WeaponTypeClass::Find("Desolator") returned null,
+  // and House:SpawnUnit had never resolved a single typeId in this project's
+  // history either, not even plain ones like "E1". Reading the weapon off a unit
+  // the player actually owns sidesteps the lookup entirely, and a Desolator's
+  // deploy weapon is by definition the radiation weapon.
+  static bool SehDetonateRadiationFromUnit(TechnoClass* pTech, CellStruct cs,
+                                                int spreadOverride) {
+      if (!pTech) {
+          LUA_LOG_WARN("[Bullet] DetonateAtFromUnit: null unit");
+          return false;
+      }
+      WeaponStruct* ws = nullptr;
+      __try {
+          ws = pTech->GetDeployWeapon();
+      } __except (EXCEPTION_EXECUTE_HANDLER) {
+          LUA_LOG_WARN("[Bullet] DetonateAtFromUnit: GetDeployWeapon SEH");
+          return false;
+      }
+      if (!ws) {
+          LUA_LOG_WARN("[Bullet] DetonateAtFromUnit: unit has no deploy weapon");
+          return false;
+      }
+      return SehDetonateRadiationWith(ws->WeaponType, cs, pTech, spreadOverride);
+  }
+
+  static int Bullet_DetonateAtFromUnit(lua_State* L) {
+      TechnoClass* const pTech = CheckTechno(L, 1);
+      const int x = static_cast<int>(luaL_checkinteger(L, 2));
+      const int y = static_cast<int>(luaL_checkinteger(L, 3));
+      const int spread = static_cast<int>(luaL_optinteger(L, 4, 0));
+      if (x < 0 || y < 0 || x >= kFogMapSide || y >= kFogMapSide) {
+          lua_pushboolean(L, 0);
+          lua_pushstring(L, "out of bounds");
+          return 2;
+      }
+      CellStruct cs{ static_cast<short>(x), static_cast<short>(y) };
+      const bool ok = SehDetonateRadiationFromUnit(pTech, cs, spread);
+      lua_pushboolean(L, ok ? 1 : 0);
+      lua_pushstring(L, ok ? "" : "see LuaAPI.log for the reason");
+      return 2;
+  }
+
+  static int Bullet_DetonateAt(lua_State* L) {
+      const char* const weaponId = luaL_checkstring(L, 1);
+      const int x = static_cast<int>(luaL_checkinteger(L, 2));
+      const int y = static_cast<int>(luaL_checkinteger(L, 3));
+      if (x < 0 || y < 0 || x >= kFogMapSide || y >= kFogMapSide) {
+          lua_pushboolean(L, 0);
+          lua_pushstring(L, "out of bounds");
+          return 2;
+      }
+      // Owner is optional but should be a real unit: Phobos attributes the
+      // site to the invoker and to the invoker's house, so a null owner costs
+      // attribution, not the effect.
+      TechnoClass* pOwner = nullptr;
+      if (!lua_isnoneornil(L, 4)) {
+          pOwner = CheckTechno(L, 4);
+      }
+      CellStruct cs{ static_cast<short>(x), static_cast<short>(y) };
+      const bool ok = SehDetonateRadiation(weaponId, cs, pOwner);
+      lua_pushboolean(L, ok ? 1 : 0);
+      lua_pushstring(L, ok ? "" : "see LuaAPI.log for the reason");
+      return 2;
+  }
+
+  // World.RadSiteNativeEnabled() -> boolean
+
 // Reports whether the native light path is actually armed. The gate is
 // invisible from Lua otherwise: a disabled path just returns false, the mod
 // caches that and never retries, so the log shows ground=0 with no explanation.
@@ -2773,8 +3063,6 @@ constexpr uintptr_t kMapInstanceAd  = 0x8871E0;  // MapClass::Instance
 constexpr uintptr_t kRulesObjAddr   = 0xA8B230;  // rules owner
 constexpr uintptr_t kInternCountAd  = 0x87F6A8;  // colour intern table
 constexpr uintptr_t kInternBufAd    = 0x87F69C;
-constexpr uintptr_t kRadVecBufAd    = 0xB04BD4;  // RadSite vector buffer
-constexpr uintptr_t kRadVecCountAd  = 0xB04BE0;  // RadSite vector count
 
 // World.RadSiteList() -> string
 //
@@ -2784,91 +3072,76 @@ constexpr uintptr_t kRadVecCountAd  = 0xB04BE0;  // RadSite vector count
 // This is the reference dump: for a site the ENGINE built, print the base cell,
 // the spread, and the light source that tints the ground, so the mod can be
 // built against measured values instead of guesses.
-static int World_RadSiteList(lua_State* L) {
-    char buf[1024];
-    size_t used = 0;
-    buf[0] = '\0';
-    int n = 0;
-    __try {
-        auto* const rc = reinterpret_cast<const int*>(kRadVecCountAd);
-        auto* const vb = reinterpret_cast<unsigned char**>(kRadVecBufAd);
-        int count = rc ? *rc : 0;
-        if (count < 0) count = 0;
-        if (count > 8) count = 8;            // never walk past what exists
-        for (int i = 0; i < count; ++i) {
-            unsigned char* const site = vb[i];
-            if (!site) continue;
-            const int lvl = *reinterpret_cast<const int*>(site + 0x70);
-            const int spr = *reinterpret_cast<const int*>(site + 0x08);
-            void* const fx = *reinterpret_cast<void**>(site + 0x54);
-            if (fx) {
-                // Layout UNVERIFIED. Nothing here is asserted: this is the raw
-                // object so a single run identifies the fields by value. The
-                // prior is only the documented member set (Intensity, R/G/B
-                // Tint, Visibility, Position, IsEnabled); every offset guess so
-                // far in this project was wrong, so none is encoded here.
-                auto* const e = reinterpret_cast<unsigned char*>(fx);
-                char raw[512];
-                raw[0] = '\0';
-                for (int off = 0; off < 0x60; off += 4) {
-                    int w = 0;
-                    _snprintf_s(raw + strlen(raw), sizeof(raw) - strlen(raw),
-                        _TRUNCATE, "%02X:%08X ", off,
-                        *reinterpret_cast<const int*>(e + off));
-                }
-                const size_t room = (used < sizeof(buf)) ? (sizeof(buf) - used) : 0;
-                if (room > 0) {
-                    used += static_cast<size_t>(_snprintf_s(buf + used, room, _TRUNCATE,
-                        " LIGHTSRC[%s]", raw));
-                }
-            }
-            n = _snprintf_s(buf + used, sizeof(buf) - used, _TRUNCATE,
-                " [%d] site=%p fx=%p", i, (void*)site, fx);
-            if (n < 0) break;
-            used += static_cast<size_t>(n);
-            if (fx) {
-                auto* const e = reinterpret_cast<int*>(fx);
-                n = _snprintf_s(buf + used, sizeof(buf) - used, _TRUNCATE,
-                    " tint=%d/%d/%d vis=%d pos=(%d,%d) en=%d",
-                    e[kFxRedTint / 4], e[0x28 / 4], e[0x2C / 4],
-                    e[kFxVis / 4], e[0x38 / 4], e[0x3C / 4],
-                    (unsigned)((unsigned char*)fx)[0x48]);
-                if (n > 0) used += static_cast<size_t>(n);
-            }
-            // The field NAMES are still unproven: reading the object head as
-            // base cell returned 0x1C7B47D0, which is the object's own address
-            // - byte order, not a layout. So print the raw words and let a run
-            // settle which offset is which, instead of guessing again.
-            {
-                // Dump the WHOLE object and let the values identify the fields.
-                // The exact header size is not known (the property block is 76
-                // bytes, so the header is 0x74-0x4C), and every offset guess so
-                // far was wrong. The values are self-identifying though:
-                // Spread is small, SpreadInLeptons == Spread*256, RadLevel is
-                // <= 500, and Tint is the RadColor triple with green dominant.
-                char raw[512];
-                raw[0] = '\0';
-                for (int off = 0; off < 0x74; off += 4) {
-                    const int w = *reinterpret_cast<const int*>(site + off);
-                    int m = _snprintf_s(raw + strlen(raw), sizeof(raw) - strlen(raw),
-                        _TRUNCATE, "%02X:%08X ", off, w);
-                    if (m <= 0) break;
-                }
-                const size_t room = (used < sizeof(buf)) ? (sizeof(buf) - used) : 0;
-                if (room > 0) {
-                    used += static_cast<size_t>(_snprintf_s(buf + used, room, _TRUNCATE,
-                        " raw[%s]", raw));
-                }
-            }
-            if (n < 0) break;
-            if (used >= sizeof(buf) - 1) break;
-        }
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        strncat_s(buf, sizeof(buf), " [SEH]", _TRUNCATE);
-    }
-    lua_pushstring(L, buf);
-    return 1;
-}
+  // Strictly bounded appender. The previous version of this dump computed a
+  // remaining count as `sizeof(buf) - used` and fed that to _snprintf_s, and it
+  // produced 735 characters of hex for a single site. It faulted inside
+  // LuaAPI.dll at RVA 0x1FA09 - the same function, confirmed by the " LIGHTSRC[%s]"
+  // format string being referenced at 0x1FA4B - with a read of a garbage
+  // address, i.e. the remaining count had wrapped. A diagnostic that can crash
+  // the game is worse than no diagnostic, so every write now goes through this
+  // and can never be asked to trust a computed remainder.
+  struct RadListBuf {
+      char* p;
+      size_t cap;
+      size_t used;
+  };
+  static void RadListAppend(RadListBuf& b, const char* fmt, ...) {
+      if (b.used + 1 >= b.cap) return;
+      va_list ap;
+      va_start(ap, fmt);
+      const int n = _vsnprintf_s(b.p + b.used, b.cap - b.used, _TRUNCATE, fmt, ap);
+      va_end(ap);
+      if (n < 0) {
+          b.used = b.cap - 1;                 // truncated: stop writing entirely
+          b.p[b.cap - 1] = '\0';
+      } else {
+          b.used += static_cast<size_t>(n);
+          if (b.used > b.cap - 1) b.used = b.cap - 1;
+      }
+  }
+
+  // World.RadSiteList() -> string
+  //
+  // Walks the engine's own RadSite registry (0xB04BE0 count / 0xB04BD4 buffer -
+  // the same two globals the RadSiteClass constructor writes, which is what
+  // makes the addresses trustworthy). An empty result means the registry is
+  // empty, because no header is written: radVecCount == 0.
+  //
+  // Output is deliberately small. The full hex dump this used to produce was for
+  // one-time reverse engineering; now that the fields are known, the useful part
+  // is the site position, the light position, the tint and the visibility.
+  static int World_RadSiteList(lua_State* L) {
+      char buf[768];
+      RadListBuf b{ buf, sizeof(buf), 0 };
+      buf[0] = '\0';
+      int sites = 0;
+      __try {
+          auto* const rc = reinterpret_cast<const int*>(kRadVecCountAd);
+          auto* const vb = reinterpret_cast<unsigned char**>(kRadVecBufAd);
+          int count = rc ? *rc : 0;
+          if (count < 0) count = 0;
+          if (count > 4) count = 4;
+          for (int i = 0; i < count; ++i) {
+              unsigned char* const site = vb[i];
+              if (!site) continue;
+              auto* const fx = *reinterpret_cast<void**>(site + 0x54);
+              RadListAppend(b, " [%d] site=%p fx=%p", i, (void*)site, fx);
+              if (fx) {
+                  auto* const e = reinterpret_cast<int*>(fx);
+                  RadListAppend(b, " tint=%d/%d/%d vis=%d pos=(%d,%d) en=%d",
+                      e[kFxRedTint / 4], e[0x28 / 4], e[0x2C / 4],
+                      e[kFxVis / 4], e[0x38 / 4], e[0x3C / 4],
+                      (unsigned)((unsigned char*)fx)[0x48]);
+              }
+              if (++sites >= 2) break;
+          }
+      } __except (EXCEPTION_EXECUTE_HANDLER) {
+          RadListAppend(b, " [SEH]");
+      }
+      lua_pushstring(L, buf);
+      return 1;
+  }
+
 using FnRaw = void* (__thiscall*)(CellClass*);
 } // namespace
 
@@ -3212,8 +3485,16 @@ void RegisterTechnoBindings(lua_State* L) {
     lua_setfield(L, -2, "RadSiteSetEnabled");
     lua_pushcfunction(L, World_RadSiteHasZone);
     lua_setfield(L, -2, "RadSiteHasZone");
-    lua_pushcfunction(L, World_RadSiteSetLight);
-    lua_setfield(L, -2, "RadSiteSetLight");
+      lua_pushcfunction(L, World_RadSiteSetLight);
+      lua_setfield(L, -2, "RadSiteSetLight");
+      // Bullet.DetonateAt: the only way to make the engine build a RadSiteClass
+      // without a Desolator. Registered on World for convenience (it affects a
+      // map cell) even though it belongs to a bullet.
+      lua_pushcfunction(L, Bullet_DetonateAt);
+      lua_setfield(L, -2, "DetonateAt");
+      lua_pushcfunction(L, Bullet_DetonateAtFromUnit);
+      lua_setfield(L, -2, "DetonateAtFromUnit");
+
     lua_pushcfunction(L, World_RadSiteNativeEnabled);
     lua_setfield(L, -2, "RadSiteNativeEnabled");
     lua_pushcfunction(L, World_RadSiteProbe);
