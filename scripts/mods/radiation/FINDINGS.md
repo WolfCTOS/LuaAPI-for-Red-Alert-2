@@ -1611,3 +1611,1268 @@ prints only what is actually useful (position, tint, visibility, light position)
 Map-wide green is still open: `CellSpread=10` means each detonation covers about
 a 7-cell radius, and the mod detonates at the hazard cells, so a full map takes
 many sites over time.
+
+---
+
+## 2026-09-30 16:47-17:00 - Thunderstorm: two dead ends, then the real door
+
+### Dead end 1: eleven of the twelve superweapons have no bullet
+
+`World.DetonateSuperWeaponAt` works by taking the superweapon type's
+`WeaponType`, making its projectile and exploding it - the same delegation that
+made the green tiles work. A live dump of every registered superweapon shows
+why that cannot reach Thunderstorm:
+
+```
+NukeSpecial[wtype=yes,  type=0]
+IronCurtainSpecial[wtype=NULL,  type=1]
+LightningStormSpecial[wtype=NULL, type=2]   <-- Thunderstorm
+ChronoSphereSpecial[wtype=NULL, type=3]
+... eight more, all NULL
+```
+
+Only `NukeSpecial` carries a `WeaponType`. Everything else is delivered by a
+flying `SuperClass` object, so there is no projectile to detonate. The id also
+had to be discovered rather than guessed: the interface name `Thunderstorm` is
+not an id, and the real one is `LightningStormSpecial`. `World.ListSuperWeapons`
+was added so ids are read from the game instead of guessed - the INI is inside a
+`.mmx` and cannot be read from disk.
+
+### Dead end 2: GameCreate<SuperClass> + Launch() crashes the game
+
+```
+[F7 pressed] lightning rules as shipped: spread=10 duration=180 hitDelay=10
+             damage=250 separation=3
+[Bullet] lightning rules set: spread=150 ...
+Exception (0xC0000005 at 0x006CAFA4)
+```
+
+The crash is **inside gamemd**, and the `launched at` line never appears, so it
+dies in `GameCreate<SuperClass>` or `Launch`. The lightning rules were read and
+written correctly first, so `Rules` is not implicated. `SuperClass` is a
+Phobos-extended class and needs allocation and initialisation that `GameCreate`
+does not perform. Two wrong assumptions in one task, both shipped before being
+checked - the lesson from the radiation phase repeated, and the rule is now: do
+not enable a path that has not been observed to work.
+
+### The way that is actually supported
+
+`Ion` in YRpp is an empty stub - the LightningStorm/PsychicDominator comments
+are the only content - so there is no static storm to call. But the engine
+already owns these objects:
+
+```cpp
+HouseClass:  DECLARE_PROPERTY(DynamicVectorClass<SuperClass*>, Supers);
+             SuperClass* FindSuperWeapon(SuperWeaponType type) const;
+SuperClass:  void Launch(const CellStruct& cell, bool isPlayer);
+RulesClass:  LightningDamage, LightningStormDuration, LightningHitDelay,
+             LightningCellSpread, LightningSeparation
+```
+
+`SuperWeaponType::LightningStorm = 2` in the enum, which matches the live dump's
+`type=2` - an independent cross-check that the enum and the type object agree.
+
+`World.ListHouseSupers()` reports `Supers.Count` and each entry's type **without
+launching anything**, so it is safe to run against a real save. Only when it
+shows a non-NULL lightning entry does `World.LaunchHouseSuperWeapon(type, x, y)`
+become meaningful, and it calls `Launch` on an object the engine built.
+
+### Size of the storm
+
+`RulesClass::LightningCellSpread` is the area knob, the storm equivalent of the
+`CellSpread` override that covered the map for radiation. It lives on the shared
+`Rules` object and the storm runs for many frames, so it has to be
+save/widen/restore rather than a one-shot change. As shipped the value is
+`spread=10`, `duration=180`, `hitDelay=10`, `damage=250`, `separation=3`.
+
+### F7 state
+
+`CFG.thunderstorm = false` and stays that way until the log shows a usable
+lightning entry. F7 currently only prints the inventory.
+
+### Still missing
+
+The civilian-building filter. Nothing is protected yet.
+
+---
+
+## 2026-09-30 17:00-17:55 - Thunderstorm works; three plans were wrong on the way
+
+### Working path, in full
+
+```
+HouseClass::Supers -> find the entry whose Type->Type == SuperWeaponType::LightningStorm
+                   -> CanFire() == 0 ? SetReadiness(true) : nothing
+                   -> Launch(cell, isPlayer)
+```
+
+`SuperWeaponType::LightningStorm = 2` in the enum, and the live registry agrees
+(`LightningStormSpecial[type=2]`). Types are matched by enum, never by name.
+Verified: the storm fires, the game does not crash, and the rules are untouched.
+
+### The two ids and both were wrong first time
+
+| tried | result |
+|---|---|
+| `Thunderstorm` | unknown - that is the UI name, not an id |
+| `LightningStormSpecial` | correct, found via `World.ListSuperWeapons()` |
+
+`World.ListSuperWeapons()` and `World.ListHouseSupers()` were added for this
+project specifically so ids and inventory stop being guessed. The live inventory
+read `count=12`, exactly one entry of type 2, pointer non-NULL.
+
+### Root cause of "the whole map ends the match" - NOT too much damage
+
+`CellSpread` is **not a free-form radius**. ModEnc:
+
+> **Values: Limited to 0-11**
+> **Warning: setting this to values over 11 will cause an Internal Error when the
+> warhead is supposed to detonate.**
+> *It then finds all cells associated with that value in the CellSpread lookup
+> table.*
+
+Passing 150 did not mean "a 150 cell radius" - it indexed far past the end of a
+twelve entry table. The resulting cell list swept essentially the whole map, both
+bases died, and the match ended. The order the player reported confirms it: the
+bases were destroyed and Game Over appeared **before** the storm was even drawn.
+Damage is applied when the warhead fires; the visuals render over the storm's
+duration.
+
+Ares replaces that table specifically to allow larger values, and Ares IS loaded
+here, but 150 is far past any sane table.
+
+**Consequence: one wide strike can never cover a map. The ceiling is 11 cells.
+Coverage has to come from many strikes, not a wide one.**
+
+Both bindings now clamp to 11 and say why, so this cannot recur:
+
+```
+[Bullet] CellSpread 150 is out of range: the engine indexes a fixed 12 entry
+table, valid 0-11. Clamping to 11. ...
+```
+
+This also invalidates part of the radiation work: `CFG.blastSpread` was 150 for
+`RadEruptionWeapon`. It is now 11, and the green tile per detonation is a legal
+11 cell radius.
+
+### Two more wrong plans, and what actually established the truth
+
+1. **"A superweapon has a bullet to detonate."** A live dump of every registered
+   superweapon shows `wtype=yes` for `NukeSpecial` only; `LightningStormSpecial`
+   and ten others are `wtype=NULL`. The rest are delivered by a flying
+   `SuperClass`, so there is no projectile. `Ion` in YRpp is an empty stub, so
+   there is no static storm to call either.
+2. **"`GameCreate<SuperClass>` + `Launch()` is enough."** It faults inside gamemd
+   at `0x006CAFA4` - a Phobos-extended class needs allocation and initialisation
+   `GameCreate` does not do. Never enabled again without being observed to work.
+3. **"A house can run two storms at once."** It cannot. One house owns one
+   `LightningStorm` object and `Launch()` re-targets it, so the second launch
+   replaced the first even 0.7s later. Only the enemy base was ever struck.
+   Firing again **after** it finishes does work - the pair is sequential, spaced
+   by `CFG.thunderGap = 260` against a 180 frame duration.
+
+### LightningCellSpread: semantics unknown, and that is the blocker
+
+Widening it from 10 to 40 was confirmed in the log (`launched ... spread=40`) with
+the two bases 25 and 26 cells from the aim point, and it did **not** reach both.
+So it does not mean "strikes within N cells", and its real meaning is not
+documented. Three plans in a row were built on guessing it. It is now left at the
+stock value and nothing depends on it.
+
+### Still open
+
+- Civilian building protection. Nothing is protected; a stock storm damages every
+  structure in its radius.
+- Reliable map-wide coverage. The only levers whose semantics are actually known
+  are `LightningHitDelay` (strike frequency) and `LightningStormDuration`, both
+  plain integers with no table limit, plus the 11 cell strike radius.
+
+## 2026-09-30 18:00 - the storm parameters are documented; the sweep is the answer
+
+### The official rulesmd.ini comments (all of them)
+
+Found in the shipped `rulesmd.ini` `[General]`, verbatim:
+
+```
+LightningDeferment=250      ; frames between announcement of strike and commencement
+LightningDamage=250         ; Damage done by lightning strike
+LightningStormDuration=180  ; Default ion storm duration in frames
+LightningWarhead=IonWH      ; Warhead used by ion storm strike
+LightningHitDelay=10        ; How often the direct target gets hit in frames
+LightningScatterDelay=5     ; Frame delay between random bolts - DO NOT DECREASE
+                             ;   - PERFORMANCE HIT
+LightningCellSpread=10      ; and how far away random bolts can go (n by n square)
+LightningSeparation=3       ; city-block distance in cells between clouds/bolts
+```
+
+`LightningScatterDelay` is a lever that was not previously known to exist.
+
+### Why every earlier coverage attempt failed - CellSpread is a SQUARE
+
+The comment is unambiguous: `LightningCellSpread` is an **n by n square** centred
+on the aim cell, not a radius.
+
+- Stock `10` is a 10x10 block. The two bases were 25 and 26 cells from the aim
+  point, so it could not reach them. That is the whole reason "the storm only hit
+  one base".
+- Raising it to `40` was verified in the log (`spread=40`) and still missed,
+  because a 40x40 square centred on (83,82) does not contain (78,102) or
+  (88,61). The arithmetic was wrong, not the mechanism.
+
+### Also confirmed: CellSpread is genuinely capped, by documentation
+
+ModEnc, independently of the run:
+
+> **Values:** Signed integers ... **(Limited to: 0-11)**
+> **Warning:** setting this to values over 11 will cause an Internal Error when
+> the warhead is supposed to detonate.
+
+and the damage test is a real radius test:
+
+> If the final distance is less or equal to exact CellSpread * 256, the object
+> gets damaged. (256 is the number of leptons per cell...)
+
+The internal affected-cells table holds 322 entries - the full disc for radius
+11. Index 150 reads past the end. This matches the observed instant map wipe
+exactly, so the clamp at 11 is documentation-backed, not a guess.
+
+### Design decided: sweep, with the map read from the engine
+
+One house owns one storm object, so map coverage cannot be parallel storms. The
+storm is instead walked across the map one aim cell at a time, serpentine, with
+the stock square around each cell so consecutive cells overlap.
+
+- `World.GetMapSize()` added to `bindings_techno.cpp`, returning
+  `MapClass::Instance.MaxWidth/MaxHeight` (there are no `MapWidth`/`MapHeight`
+  members; the first build of this failed with C2039 and the header was checked
+  rather than guessed again). Needed because no documented value tells us how
+  wide a map's storm must cover.
+- `CFG.thunderStep = 10` matches `CFG.thunderStrikeSpread = 10`, so the squares
+  tile with no gaps.
+- Storm rules are overridden for the life of one aim cell and restored after,
+  because `Rules` is shared; leaving them set would silently change every later
+  storm in the match.
+- `CFG.thunderScatterDelay` is pinned at the stock 5, which the INI itself
+  warns must not be decreased.
+
+### Dead duplicates found and removed
+
+The config block contained a second, older set of the same keys further down:
+`thunderSpread=150`, `strikeSpread=150`, `thunderHitDelay=2`,
+`thunderSeparation=0`, `thunderDuration=600`. Lua assignment order meant the
+newer values won, but `strikeSpread=150` - the exact value that ended the match -
+was still sitting in the file and would have been used by any code path reading
+it. Removed. A grep for `150` now shows it only in comments and in
+`thunderDuration`.
+
+### Not yet runtime verified
+
+The sweep has not been run. Expected first log line:
+
+```
+[RAD] thunder sweep over 128x128, aim stride 10, square 10 -> 169 cells
+[RAD] THUNDERSTORM aim 1 at (0,0) square=10 ok=true
+```
+
+Civilian buildings are still unprotected, and each aim cell restores the stock
+rules before the next one fires, so nothing leaks into ordinary play.
+
+## 2026-09-30 18:07-18:19 - BOTH KEYS WERE BROKEN BY MY OWN EDIT, and the check missed it
+
+### Symptom
+
+F6 and F7 did nothing. Both at once, which should have been the clue: a single
+missing `end` swallowed the whole of `Mod.Update`.
+
+### Actual cause
+
+The sweep edits deleted the `end` that closed `if okT and f7`, and then a second
+one for `if not CFG.thunderstorm`. Four blocks were left open, so the `end` that
+was supposed to close `Mod.Update` was consumed four levels early. The key
+handlers, `thunderDrive(frame)` and `tick(frame)` all ended up inside an
+unreachable `if`, and the mod's own structural check reported
+`open=222 close=221` on the very first run - which I read and then ignored.
+
+This is the second time an `end` was eaten in this file. The failure was
+detectable and was not acted on.
+
+### Real fix, and a real gate
+
+Bracket counting cannot find this, because a missing `end` in an inner block is
+still a balanced-looking count once the outer `end` shifts up. Installed
+`luaparser` and `luacheck2.ps1` now runs a **real parse** and fails the build on
+it:
+
+```
+()   : 434 / 434
+{}  : 44 / 44
+[]   : 89 / 89
+  luaparser: OK
+STRUCTURE OK
+```
+
+Sanity-checked the parser against the committed HEAD version, which the game
+loads and runs, so the gate is not producing false positives.
+
+### The two real bugs the log exposed, both mine
+
+1. **`pcall(World.GetLightningRules)` was read from the wrong slot.** `pcall`
+   prepends its own boolean, so `local ok, a1..f1 = pcall(f)` puts the first
+   value in `a1`, not the first returned value. Passing `a1` onward fed `nil`
+   into `SetLightningRules`. Now read as `pcall(...)` -> `ok, s1, d1, h1, dm1,
+   sp1, wh1`.
+2. **The map is 512x512, not 128x128.** `World.GetMapSize()` reported
+   `thunder sweep over 512x512 ... -> 2704 cells`, i.e. hours of storm. The
+   128 figure was the YR default, assumed rather than read. `kFogMapSide` is 512
+   in this codebase, so bounds were never the problem - the sweep length was.
+
+### Wiring that was wrong in a way that would have failed anyway
+
+`thunderDrive` was originally written *inside* the F7 key handler. The handler
+runs once per press, so it could never advance past aim cell 1 no matter how
+correct the code was. It is now a top-level `local function` called from
+`Mod.Update` every frame, with the sweep merely armed by the key press.
+
+### Not yet runtime verified
+
+Only syntax and wiring are proven. The sweep has still never completed a run.
+
+## 2026-09-30 18:23-18:26 - sound but nothing on screen: the sweep walked the BUFFER
+
+### Symptom
+
+Storm sounds played, the screen tinted, shroud was lifted - and no lightning
+appeared anywhere on the map.
+
+### Log evidence
+
+```
+thunder sweep over 512x512, aim stride 10, square 10 -> 2704 cells
+THUNDERSTORM aim 1 at (0,0)
+THUNDERSTORM aim 2 at (0,10)
+THUNDERSTORM aim 3 at (0,20)
+THUNDERSTORM aim 4 at (0,30)
+THUNDERSTORM aim 5 at (0,40)
+```
+
+The bases are at (78,102) and (88,61). The sweep was walking down x=0 in
+10-cell steps, i.e. along the far left edge, in an empty region. 2704 aim cells
+at ~3s each is over two hours of storm. Sound and screen effects are produced by
+the superweapon regardless of where the strikes land, which is exactly why the
+run "looked like it was working".
+
+### Root cause: MaxWidth/MaxHeight is the cell BUFFER, not the map
+
+```cpp
+// WRONG - 512x512 allocated buffer
+w = map->MaxWidth;  h = map->MaxHeight;
+
+// RIGHT - the playable rectangle
+x0 = map->MapRect.X;         y0 = map->MapRect.Y;
+w  = map->MapRect.Width;     h  = map->MapRect.Height;
+```
+
+`MapClass` carries both: `MaxWidth/MaxHeight/MaxNumCells` size the allocation,
+`MapRect`/`VisibleRect` describe the actual map. `kFogMapSide = 512` in this
+codebase is likewise a buffer constant, which is why the bounds check never
+tripped and hid the mistake - a cell at (0,0) is perfectly legal in a 512x512
+buffer even when the playable map is much smaller.
+
+`World.GetMapSize()` now returns four values: `x, y, width, height`. The origin
+is returned too, because `MapRect` is not guaranteed to start at (0,0) and the
+sweep must walk the real rectangle rather than assume the origin.
+
+The sweep loop now runs `while x < mx + mw` / `while y < my + mh`, seeded from
+`mx, my`.
+
+### Guard added
+
+A map larger than 256x256 is now refused outright and the sweep does not start:
+
+```
+[RAD] refusing implausible map 512x512 - that is the cell buffer, not the map.
+```
+
+This is the fourth wrong assumption about map geometry in this file (128
+assumed, then 512 buffer, then a guess about MapRect). The size is now read from
+the engine and sanity-checked, rather than derived from memory.
+
+### Not yet runtime verified
+
+Syntax and wiring only. The storm has still never been seen on screen.
+
+## 2026-09-30 18:33-19:03 - 21 launches, ONE storm: Launch() is dropped while in progress
+
+### Symptom
+
+F7 spammed, the log filled with launches, no storm over the bases.
+
+### Log evidence - the count is the proof
+
+```
+thunder sweep over map rect (0,0) 77x87, stride 10 -> 72 cells
+THUNDERSTORM aim 1 at (0,0)
+THUNDERSTORM aim 2 at (0,10)   ... 21 launched
+LaunchHouseSuperWeapon: 'LightningStormSpecial' CanFire=1 before
+```
+
+```
+total launches : 21
+CanFire=1      : 20
+CanFire=0      : 1
+```
+
+**Only the first launch really fired.** The map rect is now correct (77x87, was
+the 512 buffer), and `Launch()` returns success, so the log looked healthy. But
+20 of 21 calls were dropped.
+
+### Root cause
+
+`CanFire() == 1` means **charged**, not **idle**. A storm already in progress
+also reports `CanFire() == 1`, and `SuperClass::Launch` on a busy superweapon is
+silently ignored - no error, no log, no storm. The sweep launched every
+`thunderGap = 20` frames while a storm runs for `duration = 150` frames, so
+almost every launch landed on top of a running storm.
+
+`SuperClass` in YRpp has **no in-progress predicate** - checked the header:
+`Launch`, `CanFire`, `SetReadiness`, `Reset`, `GetRechargeTime`, `RechargeTimer`,
+`IsPowered`, `AnimStage`. There is no `IsIdle`. An `IsIdle()` guard was written,
+found to not exist by checking the header rather than assuming, and replaced with
+a `GetRechargeTime()` log line.
+
+So the only correct approach is pacing: `thunderGap` must exceed
+`duration + deferment`.
+
+```
+CFG.thunderGap = 260   -- > duration(150) + deferment(60) + margin
+```
+
+### Second defect: the sweep started at the corner
+
+Aim cell 1 was `(0,0)` and the walk ran down `x=0`, i.e. the left edge. Both
+bases are at (78,102) and (88,61). The one storm that did fire was over empty
+ground, which is exactly why nothing was seen at the bases even though the log
+said `ok=true`.
+
+The census is now taken **before** the serpentine and the base centroids are
+queued first, each as a small grid around the centroid rather than a single
+cell, so a base footprint is actually covered:
+
+```
+[RAD] census ours=12 bld @ 78,102 enemy=21 bld @ 88,61 - struck first
+[RAD] base cells queued: 9
+```
+
+### Third defect: an edit corrupted a `string.format` call again
+
+A scripted edit left a blank line inside the argument list of
+`print(string.format(` at the sweep header. This is the same class of damage
+that broke both keys earlier. It is repaired, and the pattern to watch for is
+a blank line between `string.format(` and its format string.
+
+### Verification
+
+- `luaparser: OK`, `STRUCTURE OK` on the mod.
+- DLL rebuilt: `DB6E1531C208ECBF`.
+- Not runtime verified. The storm still has not been seen on screen.
+
+## 2026-09-30 19:18-19:22 - the real cause was in the log the whole time
+
+### Symptom
+
+"No storm clouds at all."
+
+### The line that answers it
+
+```
+[19:18:47.206] [script] [RAD] F7 pressed - thunderstorm=true id=LightningStormSpecial
+[19:18:47.206] [script] [LuaAPI] Mod 'radiation' Update error:
+    main.lua:1407: bad argument #7 to 'format' (number expected, got nil)
+```
+
+`Update` threw on the very frame F7 was pressed. Everything after the `print` in
+the F7 handler - the map size read, the serpentine build, `S.thunderActive = true`
+- never executed. The sweep was never armed. F6 and F7 both "did nothing" for the
+same reason: one Lua error aborts the rest of `Mod.Update` for that frame.
+
+### Cause
+
+Pruning the dead config keys removed `CFG.thunderStrikeSpread` but left the
+reference inside a `string.format` in the sweep banner. `string.format` with a
+nil argument throws, and the throw is inside the key handler.
+
+This is the same class of failure as the missing `end`: a hand edit that a
+syntax check cannot see, which kills a feature silently.
+
+### Two process failures worth recording
+
+1. I searched the log for my own success strings ("thunder sweep over", "aim")
+   and read "no results" as "the user did not press the key". The press was
+   logged twice. **Search for errors first, not only for the expected output.**
+2. I concluded the DLL was stale relative to `main.lua` and treated that as the
+   bug. The DLL was fine; Lua is loaded per process and the run at 19:18 had
+   picked up the 19:16 edit.
+
+### Guard added
+
+`luacheck2.ps1` now fails on any `CFG.<key>` that is referenced but not defined
+in either the `local CFG = {...}` table or by a direct assignment:
+
+```
+  CFG keys: all defined
+```
+
+Verified by reintroducing the exact bug on a copy:
+
+```
+undefined CFG keys: CFG.thunderStrikeSpread
+exit: 1
+```
+
+### Still unverified
+
+The stock storm with the sweep over the real map rect has still never been seen
+on screen. The previous visible run was 17:51, a single stock storm over a base.
+
+## 2026-09-30 19:27 - the engine is NOT holding stock lightning rules
+
+### The log line that matters
+
+```
+[RAD] stock lightning rules: scatter=10 duration=150 hitDelay=15 damage=200
+     separation=0 warheadSpread=2
+```
+
+A **fresh process** (bootstrap 19:26:59, single bootstrap in the file) reported
+these from `World.GetLightningRules`, and the binding reads the fields by name
+off `RulesClass::Instance`:
+
+| field | reported | official rulesmd.ini |
+|---|---|---|
+| LightningCellSpread | 10 | 10 |
+| LightningStormDuration | **150** | **180** |
+| LightningHitDelay | **15** | **10** |
+| LightningDamage | **200** | **250** |
+| LightningSeparation | **0** | **3** |
+| LightningWarhead->CellSpread | 2 | 2 |
+
+The four bold values are exactly the overrides this mod used to write. They are
+present in a process that never called `SetLightningRules` - all override calls
+were removed from the mod before this run. Where they came from is unexplained
+and is recorded as unexplained; nothing in `rulesmd.ini` (1049 bytes, comments
+only), `rulesmd.ini.radiation` or `rulesmd_ref.ini` carries them, and the rules
+live in `cncnet.mix` (last modified 09-11, before this work).
+
+### Why separation=0 fits the symptom exactly
+
+`LightningSeparation` is documented in the INI as:
+
+> LightningSeparation=3 ; SJM: city-block distance in cells between clouds/bolts
+
+It is the spacing of the bolt **clouds**. Zero collapses that placement. The
+storm still runs - sound plays, the screen tints - but the lightning is not
+drawn. That is precisely "sounds, blue screen, no clouds".
+
+This also explains the earlier contradiction. At 17:51 the same binding reported
+the correct stock `180 / 10 / 250 / 3` and the storm WAS visible. So the
+read offsets are right; the values changed between then and now.
+
+### Fix
+
+The documented stock values are now written explicitly, once per sweep, and read
+back so the log proves what is live rather than what was requested:
+
+```
+[RAD] lightning rules <before 5 values> -> wrote 10/180/10/250/3 -> now <after>
+```
+
+`S.stormApplied` guards it to a single write; `S.stormFrames` is then taken from
+the value the engine actually reports, not from a constant.
+
+### Indentation
+
+Every block this session's scripted edits inserted into `thunderDrive` and the
+F7 handler ended up with collapsed indentation. Valid Lua, but unreadable, and it
+made review harder than it needed to be. Normalised.
+
+### Not yet runtime verified
+
+Whether forcing separation back to 3 makes the storm visible is untested. This is
+the first change aimed at a value the log actually shows to be wrong.
+
+## 2026-09-30 19:39-19:42 - rules proven correct, so the cause is WHERE it aims
+
+### Rules are now demonstrably right, and it changed nothing
+
+```
+[19:39:19.528] [Bullet] lightning rules: scatter=10 duration=180 hitDelay=10
+              damage=250 separation=3 warheadSpread=2
+[19:39:19.529] [script] [RAD] lightning rules 10/150/15/200/0
+              -> wrote 10/180/10/250/3 -> now 10/180/10/250/3
+```
+
+The engine genuinely was holding `150/15/200/0` in a fresh process; writing the
+documented values changed them, and **the storm is still invisible**. So the
+non-stock rules were a real defect but not the cause of the missing clouds. My
+previous message attributed the symptom to `separation=0`; that was wrong, and the
+read-back is what disproved it.
+
+### MapCoordBounds is the real map, not MapRect
+
+```
+[RAD] thunder sweep over map rect (0,0) 77x87 -> 72 cells
+[M14.1][CENSUS] ... HARV@78,109 ... CAOILD@80,145 ... SCHP@120,102 ...
+```
+
+Buildings exist at y=145 and x=126. A 77x87 map cannot contain them, so
+`MapClass::MapRect` is **not** the whole map either - that is the second wrong
+extent after the 512x512 buffer. The correct member is right next to it, and
+YRpp even comments it:
+
+```cpp
+LTRBStruct MapCoordBounds; // the minimum and maximum cell struct values
+```
+
+with `LTRBStruct { int Left, Top, Right, Bottom; }`. `World.GetMapSize` now
+returns `Left, Top, Right-Left+1, Bottom-Top+1` from that.
+
+### The likely real cause: it was aiming where nobody was looking
+
+With a 77x87 extent the sweep started at (0,0) and walked (0,10), (0,20),
+(0,30) - a far corner, while the player's base sits near (75-90, 93-112). Sound
+and the screen tint are global and play regardless, so the log looks identical to
+a storm that does not render at all.
+
+The first aim cell is now forced to the player's **own base** centroid, computed
+from `World.GetBuildings` filtered by `util.is_ally(house, b)`. So the first storm
+lands where the camera is, which separates "not rendered" from "rendered
+off-screen" on the next run.
+
+```
+[RAD] sweep starts at our base (bx,by) from N buildings
+```
+
+### Process note
+
+Four consecutive fixes were aimed by reading a log line I expected rather than
+the one that existed, and one was justified by a hypothesis the log then
+contradicted. The read-back instrumentation above is what caught it; the earlier
+logs had no way to tell a correct write from a requested one.
+
+## 2026-09-30 19:42 - RUNTIME VERIFIED: storm visible, root cause was aim location
+
+### Confirmation
+
+Player report: the storm was visible and fired on their own base. Log:
+
+```
+[RAD] thunder sweep over map rect (1,1) 163x163, stride 10 -> 289 cells
+[RAD] sweep starts at our base (79,108) from 15 buildings
+[RAD] THUNDERSTORM aim 1 at (79,108) stock ok=true
+[RAD] THUNDERSTORM aim 2 at (1,1) stock ok=true
+```
+
+**RUNTIME VERIFIED.** The storm renders, and it renders where the camera is.
+
+### Root cause, stated correctly
+
+The storm was never failing to render. Every launch returned `ok=true`, sound
+played, and the screen tinted - all of that is global. The aim cell was simply
+somewhere the player was not looking.
+
+Three separate defects stacked up to produce "no storm at all":
+
+1. **Wrong map extent, twice.** First `MaxWidth/MaxHeight` (the 512x512 cell
+   buffer), then `MapRect` (reported 77x87 while buildings exist at y=145 and
+   x=126). The correct member is `MapCoordBounds`, which YRpp annotates as
+   "the minimum and maximum cell struct values". This map is **163x163**.
+2. **Wrong start point.** A serpentine over that rectangle began at the origin,
+   so the first ten storms landed in a far corner.
+3. **Non-stock rules.** A fresh process really did hold `150/15/200/0` instead
+   of the documented `180/10/250/3`. Real defect, now written and read back -
+   but **not** the cause of the invisibility. The read-back is what disproved
+   that theory; the earlier claim that `separation=0` explained the symptom was
+   wrong.
+
+The only change that made the storm visible was forcing the first aim cell onto
+the player's own base centroid.
+
+### Order fixed as well
+
+The base insert broke the serpentine, so aim 2 jumped from (79,108) to (1,1) - a
+teleport across the map. The sweep is now sorted by **Chebyshev distance from the
+base**, so coverage expands as an expanding square: the first cell is the base
+and every following cell is a neighbour of the last.
+
+### Cost, stated plainly
+
+163x163 at stride 10 needs 17x17 = **289 aim cells**. Measured 9.25s per cell
+(storm duration 180 frames + gap 200), so **one full pass is about 44 minutes**.
+
+That is inherent to covering a 163x163 map with a storm whose scatter is a 10x10
+square, not a bug. Options, none of them assumed here:
+
+- leave it - 44 min of storm, correct but long;
+- raise the stride and accept gaps;
+- raise `LightningCellSpread` so fewer aim cells tile the map (this is a plain
+  int with no 0-11 table, and coverage would then come partly from the storm's
+  own scatter) - one controlled change, verifiable by the existing read-back.
+
+### Not verified
+
+Only aim 1 and aim 2 ran. A complete pass, and the civilian building filter,
+remain unproven.
+
+## 2026-09-30 19:45 - decision: scatter == stride, 289 aim cells -> 36
+
+The goal is a storm across the whole map, so the pass length is the thing to
+fix, not the sweep.
+
+### The tiling identity
+
+`LightningCellSpread` is, per the INI, the "n by n square" over which the storm
+scatters its bolts around the aim cell. It is a plain int - the 0-11 limit is on
+the **warhead's** `CellSpread`, a different field. So:
+
+```
+stride == scatter   ->  each aim cell's square is exactly covered by the next
+```
+
+At the stock 10 on this 163x163 map: 17x17 = **289** cells, measured 9.25s each
+= **~44 minutes**.
+
+At 30: 6x6 = **36** cells, ~9.25s each = **~5.6 minutes**, and still gapless.
+
+Both numbers live in the config next to each other with the identity stated, so
+changing one without the other is visible:
+
+```lua
+CFG.thunderScatter     = 30   -- Rules.LightningCellSpread (stock 10)
+CFG.thunderStep        = 30   -- sweep stride; must equal the scatter
+```
+
+### Verified rather than assumed
+
+The applied scatter is read back from the engine, and a mismatch is logged
+loudly instead of being papered over - a silent clamp would invalidate the
+tiling and leave gaps:
+
+```
+[RAD] WARNING asked scatter=30 but engine reports N - stride must match the
+      real value or the sweep leaves gaps
+```
+
+`duration/hitDelay/damage/separation` stay at the documented stock
+`180/10/250/3`. Only the scatter changes, so the storm's own behaviour is
+otherwise untouched.
+
+### Not yet verified
+
+Only the two aim cells from the 19:42 run have ever executed. A full 36-cell
+pass with scatter=30 has not run, and the read-back for scatter=30 has not been
+seen in a log. The civilian building filter is still unimplemented, so a
+map-wide storm will damage every structure.
+
+## 2026-09-30 19:48-19:50 - gaps were bolt DENSITY, not geometry
+
+### Report
+
+"Storm on different areas each time, but there are gaps between them."
+
+### The geometry was already correct
+
+```
+[RAD] thunder sweep over map rect (1,1) 163x163, stride 30 -> 36 cells
+[RAD] lightning rules 10/150/15/200/0 -> wrote 30/180/10/250/3
+     -> now 30/180/10/250/3
+aim 1 (91,121)  aim 2 (91,91)  aim 3 (61,91)  aim 4 (61,121)
+```
+
+Aim cells are exactly 30 apart and the engine accepted `scatter=30` with no
+clamp warning, so `stride == scatter` did tile the map. The tiling hypothesis was
+right and it was not the cause of the gaps.
+
+### The real cause: 18 bolts into 900 cells
+
+Bolts are placed at RANDOM points inside the n-by-n square, so a square that
+tiles perfectly can still look patchy if it is too sparsely populated:
+
+```
+square         = 30 x 30            = 900 cells
+bolts per storm = duration/hitDelay = 180/10 = 18
+density        = 1 bolt per 50 cells
+warhead spread  = 2                  -> ~13 cells per bolt
+coverage       = 18 * 13 / 900      = 26%
+```
+
+A quarter of the cells struck, at random, reads as scattered patches with gaps
+between them. Geometry cannot fix that; only bolt count can.
+
+### Fix: hitDelay 10 -> 2
+
+```
+bolts   = 180 / 2 = 90
+cells   = 30^2   = 900
+strike  = warhead CellSpread 2 -> ~13 cells
+90 * 13 / 900 = 130%   -> every cell in the square is struck
+```
+
+`LightningScatterDelay` stays at the stock 5, which the INI explicitly warns must
+not be decreased, and `separation` stays at the stock 3, which at 90 bolts over
+900 cells is about the right spacing rather than a constraint.
+
+### All five parameters now come from config and are read back
+
+None of them is trusted to be stock, because a fresh process was observed holding
+`150/15/200/0` against the documented `180/10/250/3`. The banner also reports the
+bolt count, since "no gaps" depends on that ratio and not on the tiling:
+
+```
+[RAD] lightning rules <before> -> wrote <requested> -> now <live>
+     (90 bolts per 30x30 square)
+```
+
+### Not yet verified
+
+The 130% figure is arithmetic on documented parameters, not an observation. A run
+is needed to confirm the gaps are actually gone, and the civilian building filter
+is still unimplemented.
+
+## 2026-09-30 19:52-19:56 - the gap report was measured on a frame that threw
+
+### Report
+
+"Still gaps between them."
+
+### What the log actually said
+
+```
+[19:52:20.796] [Bullet] lightning rules: scatter=30 duration=180 hitDelay=2
+               damage=250 separation=3 warheadSpread=2
+[19:52:20.796] [script] [LuaAPI] Mod 'smart_ai' Update error:
+    main.lua:1135: attempt to perform arithmetic on a nil value (field 'stormFrames')
+```
+
+The C++ line proves `SetLightningRules` accepted the new values. The Lua banner
+that was supposed to follow was **absent**, and the reason is right there: the
+bolt count was computed from `S.stormFrames` on the line *before* that field was
+assigned, so it was nil.
+
+### Two consequences, both invisible in the UI
+
+1. **The first aim cell never fired.** The pending cell is cleared *before* the
+   rules block runs, so when the arithmetic threw, that aim cell was already
+   discarded. The base cell (79,108) is missing from the logged sequence - the
+   sweep began at (91,91) instead.
+2. **It was not a radiation-mod error.** It surfaced as `smart_ai`. A throw in one
+   mod's `Update` aborts the shared dispatch for that frame, so an unrelated mod
+   reported the failure. That is worth remembering before blaming the named mod.
+
+### So the gap measurement was invalid
+
+The run the user judged had the stock `hitDelay=10` **for the cells that actually
+fired**, because the write happened on a frame that then died. The 90-bolt
+density was in the engine but the first cell - the one over the base, and the
+one whose absence made the pass start in a corner - was lost. Conclusions about
+bolt density from that run do not hold.
+
+### Fixes
+
+- `S.stormFrames` is assigned before any use of it.
+- Rule application moved into `applyStormRules()`, called as
+  `pcall(applyStormRules)`. A throw there can no longer cost the launch, the aim
+  cell, or any other mod's update. **Logging must not be able to stop the storm.**
+- The banner now also prints the derived coverage percentage, so the density
+  claim is visible in the log rather than only argued in comments.
+
+### Not yet verified
+
+Gaps remain unconfirmed either way. The next run must show the banner with a
+`%d%% coverage` value and an aim sequence whose first entry is the base cell.
+
+## STATUS: gaps between storm areas - NOT FIXED
+
+Recorded 2026-09-30 as an open defect, per player instruction. Do not read the
+later sections as closing it.
+
+### What is known
+
+- The storm itself is **RUNTIME VERIFIED**: visible, fires on the player's base,
+  and every launch returns `ok=true`. Aim location, not rendering, was the cause
+  of the earlier "no storm at all".
+- The sweep tiles geometrically: `stride == scatter`, aim cells exactly N apart,
+  and the engine accepts the scatter value (read-back confirmed `scatter=30`,
+  no clamp warning).
+- The player still sees **gaps between storm areas** after the 30-cell
+  configuration, including after the bolt-density change.
+
+### What is NOT established
+
+- Whether `Rules.LightningCellSpread` actually enlarges the storm's **visual**
+  extent at all. It is documented as the "n by n square" over which bolts are
+  scattered, but that has never been confirmed against observed coverage. If the
+  engine does not widen the storm with it, then raising the stride to match it
+  can only ever produce gaps, and every "tiling" argument in this file is
+  built on an unverified premise.
+- The true spatial extent of one storm in cells, measured. **This is the missing
+  measurement, and everything else is downstream of it.** No run has ever logged
+  which cells a storm actually struck.
+- Whether the gaps come from bolt placement inside the square, from the square
+  being smaller than `LightningCellSpread`, or from the storm visual being
+  smaller than its damage area.
+
+### Why it was not closed
+
+Three runs were spent on it. The `hitDelay 10 -> 2` change was judged against a
+run whose first aim cell had been silently dropped by an unrelated nil-arithmetic
+throw, so that measurement was invalid (see the previous section). The
+`sStormFrames` ordering bug and the `pcall` wrapper are real fixes and are in
+place, but neither has been shown to remove the gaps.
+
+### What would actually settle it
+
+Instrument the struck cells rather than inferring the extent from parameters.
+`MapClass::DamageArea` at `0x489286` is the choke point the Ion warhead goes
+through; Phobos already hooks it, so MinHook cannot take it directly, and a
+per-strike cell log needs a safe interception point that does not exist yet.
+Without struck-cell data, tuning is guesswork, and three runs have now confirmed
+that guessing does not converge.
+
+Civilian building protection is likewise still unimplemented, so a map-scale
+storm damages every structure.
+
+## 2026-09-30 19:58 - scale up: the storm size is capped by ScatterDelay, not CellSpread
+
+Requested: make the storm big enough to cover the whole map. The gaps defect is
+recorded above as NOT FIXED and is not closed by this.
+
+### The real limit on storm size
+
+Not `CellSpread`. The INI pins it:
+
+```
+LightningScatterDelay=5   ; frame delay between random bolts
+                          ; -- DO NOT DECREASE -- PERFORMANCE HIT
+```
+
+So the number of random bolts is capped at `duration / 5`, and with the stock
+`separation=3` the storm can only span about `sqrt(bolts) * 3` cells:
+
+| duration | bolts <= | span |
+|---|---|---|
+| 180 (stock) | 36 | ~18 cells |
+| 600 | 120 | ~33 cells |
+| 900 | 180 | ~40 cells |
+| **1800** | **360** | **~57 cells** |
+
+This is also why raising `LightningCellSpread` alone did not visibly enlarge the
+storm: the scatter says where bolts may land, but the count of them is what
+decides how far they can spread, and that is capped by ScatterDelay.
+
+### Chosen configuration
+
+```lua
+CFG.thunderScatter  = 60    -- was 30
+CFG.thunderStep     = 60
+CFG.thunderHitDelay = 1     -- was 10; strike the direct target every frame
+CFG.thunderDuration = 1800  -- was 180; 30 seconds, the span driver
+CFG.thunderDamage   = 250
+CFG.thunderSeparation = 3
+CFG.thunderGap      = 1900  -- was 200; MUST exceed duration
+```
+
+At a ~57 cell span a 163x163 map needs **3x3 = 9** aim cells instead of 6x6 = 36.
+`ScatterDelay` is deliberately left at the stock 5.
+
+### Two invariants are now enforced by the build gate
+
+Both pairs have silently broken the sweep before - `gap < duration` drops aim
+cells without a word, and `scatter != step` guarantees gaps:
+
+```
+OK   thunderGap(1900) must exceed thunderDuration(1800) or aim cells are silently dropped
+OK   thunderScatter(60) must equal thunderStep(60) or the sweep leaves gaps
+storm invariants: all hold
+```
+
+Proven against deliberately broken copies: `gap=100` and `step=25` each fail the
+gate with exit 1.
+
+### Not yet verified
+
+No run has exercised `duration=1800`. Two things to read in the log when it
+happens: that the banner reports the requested values back, and how many aims
+actually fire. A longer storm is more likely to hit an engine limit, and
+`Launch` failing on a busy superweapon would again drop cells silently.
+
+## 2026-09-30 20:48-20:55 - "the field is not green": the green measurement was broken
+
+### The two real answers
+
+```
+[RAD] GREEN path ARMED (spread=60 cap=1) - zones will be created during ACTIVE
+[RAD] SITES probe: ... head= [0] site=1B541120 fx=00000000
+[RAD] SITES f=36900 engineBuilt=0 - the engine's RadSite registry is EMPTY
+[RAD] SITES f=39900 engineBuilt=1 at=(96862344)
+```
+
+**1. The mod's own green path is switched off.**
+
+```lua
+green = false,
+```
+
+Deliberately, and the reason is recorded next to it: `paintGreen()` hand-builds
+`RadSiteClass` objects, they render for a frame, and then Phobos faults at
+`+0x6E0AA` because `Intensity/Tint/Radiate` were never initialised. So the only
+green source in use is the engine-built path - the Desolator's strike going
+through the engine, which is the non-crashing route.
+
+**2. Every "registry is EMPTY" line was a false measurement.**
+
+The binding writes:
+
+```cpp
+RadListAppend(b, " [%d] site=%p fx=%p", i, (void*)site, fx);
+```
+
+The mod parsed it with:
+
+```lua
+string.gmatch(lst, "pos=%((%-?%d+)%,(%-?%d+)%)")
+```
+
+The binding has never emitted a `pos=(x,y)` field. **The pattern cannot ever
+match.** So `engineBuilt=0` was printed while the raw probe in the same run showed
+`[0] site=1B541120` - at least one site existed.
+
+The `at=(96862344)` line is the same parser failing: it is a site pointer, not a
+cell coordinate, printed as if it were a position.
+
+### Consequence
+
+Every conclusion drawn in this file about "the engine is not building radiation
+sites" was drawn from a measurement that was incapable of returning anything
+else. The engine may well be creating sites; there is simply never been valid
+evidence either way. That is now the single most important open question for the
+green path, ahead of the Phobos crash.
+
+### Fix
+
+The parser now counts what the binding actually emits, reports the `fx`
+brightness field verbatim, and prints the raw string when it finds no entries, so
+an empty result cannot again be mistaken for a broken parse:
+
+```
+[RAD] SITES f=NNN engineBuilt=<n> lit=<n>  [<site/fx> ...]
+[RAD] SITES f=NNN engineBuilt=0 - RadSiteList returned no entries (radVecCount == 0). Raw: []
+```
+
+`fx=00000000` in the observed probe is the other open question: a site that exists
+but reports zero brightness would explain "no green" while `engineBuilt > 0`.
+That is a fact to read from the next run, not to assume now.
+
+### Still not established
+
+- Whether the engine creates radiation sites at all for this weapon, measured.
+- Whether `fx` is the field that drives the green tiles and why it reads zero.
+- `greenCap = 1` remains: even a working site path is capped at one zone.
+
+## 2026-09-30 20:58 - why radiation does not cover the map: no enabled path can
+
+### The measurement, with the fixed parser
+
+```
+[RAD] SITES f=19800 engineBuilt=1 lit=0  [1ADA89A0/00000000]
+[RAD] SITES f=20100 engineBuilt=1 lit=0  [1ADA89A0/00000000]
+...  sites=1 lit=0   x16 probes
+```
+
+**`sites=1` in every single probe, never 2.** The engine's route works - it
+really does build a radiation site - but exactly one at a time.
+
+### Two reasons, and together they make map coverage structurally impossible
+
+1. **The mod's own spreading path is off.**
+
+   ```lua
+   green = false,
+   ```
+
+   `paintGreen()` was the only thing that placed sites in a grid across the map
+   (`greenStep = 2`). It is disabled because hand-built `RadSiteClass` objects
+   render for one frame and then fault in Phobos at `+0x6E0AA`
+   (`Intensity/Tint/Radiate` never initialised).
+
+2. **The only remaining source makes one site per detonation.** A Desolator
+   strike creates a single site where it lands, and sites expire - which is why
+   the probe alternates between `engineBuilt=1` and `radVecCount == 0`.
+
+With the grid disabled and one site per strike, a 163x163 map cannot be covered
+no matter how long the run lasts. That is the whole answer.
+
+`greenCap = 1` and `greenSpread = 60` describe the disabled path and are
+currently inert.
+
+### Fix: many detonations instead of one wide site
+
+Following the same rule the storm uses - orchestrate the engine, never hand-build
+- the storm's sweep shape is reused with the detonation in place of the
+superweapon:
+
+- serpentine over the real map extent, ordered by distance from the player's
+  base, so it starts where the camera is;
+- `World.DetonateAt(CFG.detonateWeapon, x, y, nil, CFG.blastSpread)` per aim
+  cell, `blastSpread = 11` (the legal warhead CellSpread ceiling);
+- `radStep = 40` gives 5x5 = 25 detonations on a 163x163 map;
+- the whole driver is pcall-wrapped, so a throw cannot abort `Update` and take
+  other mods down with it, as the `stormFrames` nil did.
+
+Armed by **F6**, which now starts the green sweep alongside the instant
+radiation event. Log line to look for:
+
+```
+[RAD] GREEN sweep armed: N detonations over WxH map, starting at our base (x,y), stride 40
+[RAD] GREEN aim 1 at (x,y) detonate=true spread=11
+[RAD] GREEN sweep complete: 25 cells, detonations ok=25
+```
+
+### Process failure worth recording
+
+The first version of this placed `CFG.radStep = 40` **inside** the
+`local CFG = { ... }` table, where entries are bare keys. That is a syntax error,
+and it was invisible to the brace counts. It is now blocked by a gate check, and
+the same edit round is what the build check caught:
+
+```
+  CFG table: no CFG.-prefixed entries
+```
+
+### Not yet verified
+
+Whether 25 detonations produce visible green tiles is untested - this has never
+been run. `lit=0` / `fx=00000000` remains unresolved and may mean the field being
+read is not the one that drives the green picture, so it is recorded as an open
+question rather than treated as proof the sites are invisible.
+
+## 2026-09-31 00:37 - sweep was biased to the player's own base
+
+### Report
+
+"The last match was annoyingly good, but: most Thunderstorms were on my base,
+unfair."
+
+### Confirmed in the log
+
+```
+[RAD] sweep starts at our base (97,139) from 23 buildings, ordered by distance
+[RAD] THUNDERSTORM aim 1 at (121,121)
+[RAD] THUNDERSTORM aim 2 at (61,121)
+[RAD] THUNDERSTORM aim 3 at (61,181)
+[RAD] THUNDERSTORM aim 4 at (121,181)
+```
+
+### Cause: a fix whose reason had expired
+
+The sweep was ordered by distance from the **player's own base** for one reason
+only: starting at the map origin put the first ten storms in a far corner, and an
+invisible storm is indistinguishable in the log from one that does not render.
+Moving the first aim cell onto the base is what made the storm visible at all.
+
+That reason expired the moment visibility was solved, but the bias stayed. The
+expanding square was centred on the player's own base, so their base took the
+first several hits and the enemy base was reached much later. The unfairness is a
+direct consequence of the visibility fix, not of the engine.
+
+### Fix: centre on the midpoint between the two bases
+
+`sweepCenter()` computes both centroids from `World.GetBuildings`
+(`util.is_ally` / `util.is_enemy`) and returns their midpoint, falling back to a
+single base, then to the map centre, when one side has no buildings. Ordering by
+distance from the midpoint grows coverage as an expanding square centred
+**between** the two, so both bases take the same number of hits over the same
+time. The start stays inside the normal view range, so visibility is preserved.
+
+Both sweeps use it - the storm and the green detonation sweep - since the same
+bias applied to both.
+
+The log now states the fairness inputs rather than assuming them:
+
+```
+[RAD] sweep centre (cx,cy) = midpoint of ours (ox,oy) n=N and enemy (ex,ey) n=M
+      - both bases are hit at the same rate
+```
+
+### Not yet verified
+
+Fairness is arithmetic on the centroid order, not an observation. To confirm, the
+next run's aim sequence should show the two base cells appearing at adjacent
+sequence numbers rather than ours first.
+
+## 2026-09-31 11:05 - vehicle damage from radiation: separated from the green site
+
+### Request
+
+"Can you disable damage to tanks and vehicles from the radiation?"
+
+### Where the damage actually comes from
+
+Not from the mod's damage loop. `sweep()` only damages units that pass
+`isOpenInfantry()`:
+
+```lua
+local function isOpenInfantry(u)
+    local t = u:GetTypeName()
+    if not t or t:sub(1, 1) ~= "E" then return false end   -- E-prefix = infantry
+```
+
+A `V`/`T` type never passes, so **the Lua loop has never damaged a tank**.
+`CFG.exempt` is an infantry-type table (`AGENT`, `ENGR`, `MCV`, `MCVB`, `THIEF`),
+not a vehicle rule.
+
+Vehicles were hit by the **detonation**:
+
+```
+[RAD] DETONATED f=39450 via=id:RadEruptionWeapon at (112,47) ok=11/11
+```
+
+`RadEruptionWeapon` carries a normal blast warhead, so it damages every armour
+type in range. That detonation is also the only thing that makes the engine build
+a green `RadSite`, because the hand-built path is disabled by the Phobos fault at
+`+0x6E0AA`. So the picture and the damage were welded together.
+
+### Fix: silence the warhead for that one blast
+
+`WarheadTypeClass::Verses` is the per-armour-type damage table - `double Verses[0xB]`.
+`SehDetonateWeapon` now takes `suppressDamage`: it saves the 11 values, zeroes
+them, calls `Explode(true)`, and restores them, mirroring the `CellSpread`
+override that was already there.
+
+Radiation is unaffected because the site comes from the weapon's `RadLevel` and
+the engine's own detonation hook, not from `Verses`.
+
+```
+World.DetonateAt(weaponId, x, y, [owner], [spread], [suppressDamage])
+World.DetonateAtFromUnit(unit, x, y, [spread], [suppressDamage])
+```
+
+The log states it rather than leaving it as an assumption:
+
+```
+[Bullet] DetonateAt: Verses[0..10] zeroed for this blast (was 1.000/1.000/1.000)
+         and restored - site built, no damage
+```
+
+### Scope
+
+`CFG.radNoDamage = true` is applied **only** to the map-scale green sweep
+(`radDrive`). The timed radiation event still detonates with full damage, so
+infantry attrition, the warning countdown and the garrison immunity all behave
+exactly as before. Set it to `false` to get vehicle damage back on the green
+sweep.
+
+### Not yet verified
+
+Never run. `Verses` all-zero is the obvious approach, but whether the engine still
+builds the site with a zeroed warhead is an assumption until a log shows both the
+"site built" line and the "Verses zeroed" line for the same detonation.

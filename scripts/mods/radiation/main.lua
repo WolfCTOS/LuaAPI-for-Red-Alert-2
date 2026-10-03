@@ -82,6 +82,26 @@ local CFG = {
     -- the orchestration path (strike) builds its sites through the engine and
     -- does not crash, so that is the one in use.
     green         = false,
+
+    -- Map-scale green sweep. Replaces the disabled hand-built grid: the engine
+    -- builds ONE site per detonation, so the map is covered by many detonations
+    -- rather than by one wide site. radStep is the aim stride; blastSpread is the
+    -- per-detonation damage radius (capped at 11, the warhead CellSpread limit).
+    -- 163x163 at radStep=40 gives 5x5 = 25 detonations.
+    radStep       = 40,
+    -- Map-scale green sweep: build the site's PICTURE without damaging anything.
+    --
+    -- The Lua damage loop never touches vehicles - isOpenInfantry() requires an
+    -- "E" type prefix - so what used to wreck tanks was the detonation itself: the
+    -- radiation weapon carries a normal blast warhead. But that detonation is the
+    -- only thing that makes the engine build a green RadSite, since the
+    -- hand-built path is disabled by the Phobos fault. Passing suppressDamage
+    -- zeroes WarheadTypeClass::Verses (11 armour types) for the duration of that
+    -- one blast: the site is still created, nothing takes damage.
+    --
+    -- The timed radiation event is UNAFFECTED - infantry attrition still works.
+    radNoDamage    = true,
+    radGap        = 20,       -- frames between detonations
     greenTint     = 1000,
     -- Engine's own green: order a Desolator to fire. Needs a side that owns
     -- one, and needs units in range for it to shoot at.
@@ -245,13 +265,133 @@ end
   -- route and no Desolator is needed. If the ID is wrong the binding says so in
   -- the log (unknown weaponId / RadLevel=0 / no Projectile) instead of failing
   -- quietly - that was the failure mode this whole project kept hitting.
-  CFG.detonateWeapon = "Desolator"
+  CFG.detonateWeapon = "RadEruptionWeapon"
 
   -- CellSpread to use for the blast, in cells. The Desolator's own is 10. A
   -- YR 1.001 map is 128x128, so 150 comfortably covers it from anywhere. This
   -- overrides the warhead for one detonation only; the binding restores it.
   -- 0 = leave the weapon's own spread alone.
-  CFG.blastSpread = 150
+  -- CellSpread is a fixed 12 entry lookup table, valid 0-11. 150 indexed past the
+  -- end of it and swept the whole map instead of one area. 11 is the maximum
+  -- legal blast radius, and the mod fires many detonations to cover ground.
+  CFG.blastSpread = 11
+
+  -- Thunderstorm. Superweapon id, its own key, and OFF by default.
+  --
+  -- The civilian-building filter is NOT implemented yet. Until it is, a
+  -- Thunderstorm will flatten civilian structures the way the real superweapon
+  -- does, which is exactly the behaviour the player asked to avoid. So it is
+  -- deliberately not wired to F6: F7 only, and the log says so out loud.
+  -- Thunderstorm. Superweapon id, its own key.
+  --
+  -- The id is NOT "Thunderstorm" - that is the name the UI shows. Enumerated
+  -- from the game itself (World.ListSuperWeapons), the real list is:
+  --   NukeSpecial, IronCurtainSpecial, LightningStormSpecial, ChronoSphereSpecial,
+  --   ChronoWarpSpecial, ParaDropSpecial, AmericanParaDropSpecial,
+  --   PsychicDominatorSpecial, SpyPlaneSpecial, GeneticConverterSpecial,
+  --   ForceShieldSpecial, PsychicRevealSpecial
+  -- The Allied lightning strike is LightningStormSpecial.
+  --
+  -- WARNING: the civilian-building filter is NOT implemented. A Thunderstorm
+  -- will flatten civilian structures exactly like the real superweapon does.
+  -- Test on a throwaway save. The filter is the next piece of work.
+  CFG.thunderKey     = 0x76          -- VK_F7 (0x76; 0x77 is F8, F9 is 0x78)
+  -- DISABLED. The SuperClass::Launch route CRASHES the game.
+  --
+  -- Measured 2026-09-30: GameCreate<SuperClass> + Launch() faults inside gamemd
+  -- at 0x006CAFA4 before "launched at" is ever logged. The lightning rules were
+  -- read and written correctly first (spread=10 duration=180 hitDelay=10
+  -- damage=250 separation=3), so the crash is in creating or launching the
+  -- delivery object, not in the rules. SuperClass is a Phobos-extended class and
+  -- almost certainly needs allocation and initialisation that GameCreate does not
+  -- perform. Unverified path, so it stays off until that is actually known.
+  -- ONE storm, not two. A house owns a single LightningStorm object and
+  -- Launch() re-targets it, so a second launch replaces the first even
+  -- 0.7s later - only the enemy base was ever visible. Coverage therefore
+  -- comes from the SCATTER, not from two storms.
+  --
+  -- scatter (Rules.LightningCellSpread) is a plain integer controlling where
+  -- strikes are placed, and is NOT the warhead CellSpread, so it has no
+  -- 0-11 table limit. Strikes still only damage their own small radius,
+  -- so a wide scatter covers a lot of ground without killing anything
+  -- instantly - which is exactly what a 150 CellSpread could not do.
+  -- Documented in the official rulesmd.ini:
+  --   LightningCellSpread=10    "how far away random bolts can go (n by n square)"
+  --   LightningHitDelay=10      "how often the direct target gets hit in frames"
+  --   LightningScatterDelay=5   "frame delay between random bolts - DO NOT DECREASE"
+  --   LightningSeparation=3     "city-block distance in cells between clouds/bolts"
+  --   LightningDeferment=250    "frames between announcement and commencement"
+  --
+  -- CellSpread is an n-by-n SQUARE around the aim cell, not a radius - which is
+  -- exactly why the stock value of 10 missed bases 25 cells away, and why
+  -- raising it to 40 still missed: 40x40 centred on (83,82) does not contain
+  -- (78,102) or (88,61).
+  --
+  -- Map-wide coverage therefore comes from a SWEEP of aim cells sized to the
+  -- real map. Two numbers must be EQUAL for the coverage to be gapless:
+  --
+  --   CFG.thunderScatter - Rules.LightningCellSpread, the n-by-n square of bolts
+  --                        the storm places around its aim cell;
+  --   CFG.thunderStep    - how far the sweep moves between aim cells.
+  --
+  -- stride == scatter means each square is exactly covered by the next one.
+  -- At the stock 10 on this 163x163 map that is 17x17 = 289 aim cells, measured
+  -- at 9.25s each: about 44 minutes for one pass. At 30 it is 6x6 = 36 cells,
+  -- about 5 minutes, with no gaps.
+  --
+  -- LightningCellSpread is a plain int with no 0-11 lookup table - that limit
+  -- applies to the warhead's CellSpread, a different field. The applied value is
+  -- read back from the engine and a mismatch is logged, because a silent clamp
+  -- would leave the tiling assumption false.
+  --
+  -- BOLT DENSITY is the other half, and it is what produced visible gaps with
+  -- stride == scatter == 30. The squares tiled correctly, but the storm only
+  -- placed duration/hitDelay = 180/10 = 18 bolts into a 30x30 = 900 cell square:
+  -- one bolt per 50 cells, about 26% coverage. Bolts are placed at RANDOM points
+  -- inside the square, so a sparse square is patchy no matter how well the aim
+  -- cells tile.
+  --
+  -- The limit on storm size is NOT CellSpread. It is LightningScatterDelay:
+  --   "frame delay between random bolts -- DO NOT DECREASE -- PERFORMANCE HIT"
+  -- so the random bolts are capped at duration/ScatterDelay, and with
+  -- separation=3 the storm can only span about sqrt(bolts)*3 cells:
+  --
+  --   duration= 180  bolts<=  36  span ~18 cells   (stock: tiny)
+  --   duration= 600  bolts<= 120  span ~33 cells
+  --   duration= 900  bolts<= 180  span ~40 cells
+  --   duration=1800  bolts<= 360  span ~57 cells   <- chosen
+  --
+  -- At a ~57 cell span a 163x163 map needs 3x3 = 9 aim cells instead of 6x6 = 36.
+  -- hitDelay is lowered to 1 so the direct target is hit every frame, using the
+  -- whole duration rather than a fraction of it. ScatterDelay stays at the stock
+  -- 5, which the INI explicitly warns must not be decreased.
+  CFG.thunderScatter     = 60       -- Rules.LightningCellSpread (stock 10)
+  CFG.thunderStep        = 60       -- sweep stride; must equal the scatter
+  CFG.thunderHitDelay    = 1        -- frames between target strikes (stock 10)
+  CFG.thunderDuration    = 1800     -- storm frames: 30s, the span driver
+  CFG.thunderDamage      = 250      -- per strike (stock 250)
+  CFG.thunderSeparation  = 3        -- min cells between bolts (stock 3)
+
+  -- The gap MUST exceed the storm's own lifetime. A run with gap=20 against a
+  -- 150 frame storm produced 21 Launch calls and exactly ONE visible storm:
+  -- SuperClass::Launch is silently dropped while a storm is already in
+  -- progress, and SuperClass has no in-progress predicate to query. The window
+  -- is therefore duration + deferment, not a value picked for looks.
+  CFG.thunderGap         = 1900    -- frames between aim cells. MUST exceed
+                                       -- CFG.thunderDuration (1800), or the next
+                                       -- Launch re-targets the storm still running
+                                       -- and the new aim cell is silently dropped.
+                                       -- These two are a pair: changing one
+                                       -- without the other loses whole aim cells.
+
+  CFG.thunderstorm   = true          -- F7 fires the ENGINE-OWNED storm
+  CFG.thunderId      = "LightningStormSpecial"
+  CFG.thunderType    = 2            -- SuperWeaponType::LightningStorm (enum, not a name)
+
+  -- Removed: an earlier block of duplicates (thunderSpread=150, strikeSpread=150,
+  -- thunderHitDelay=2, thunderSeparation=0, thunderDuration=600) that shadowed the
+  -- values above. Those were the source of the whole-map Game Over - strikeSpread
+  -- was the warhead CellSpread, which is a 12 entry table limited to 0-11.
 
   -- Set by radStrike() to the current Desolator's IsAttacking accessor, so the
   -- ACTIVE phase can tell whether the unit is already busy and must be left
@@ -340,16 +480,37 @@ local function radStrike(frame)
         -- hazard cell - the engine and Phobos build the site themselves. This is
         -- the whole point of World.DetonateAt and it needs no Desolator, no
         -- target unit and no line of sight.
-        if (World.DetonateAtFromUnit or World.DetonateAt) and CFG.detonateWeapon then
-            -- Prefer taking the weapon off a live unit's DEPLOY weapon. Every
-            -- type lookup in this YRpp is unreliable - DetonateAt("Desolator")
-            -- reported "unknown weaponId", and House:SpawnUnit never resolved a
-            -- single typeId in this project's history, not even "E1". A
-            -- Desolator's deploy weapon IS the radiation weapon, so reading it
-            -- off the unit sidesteps the lookup completely.
-            local provider
-            if World.DetonateAtFromUnit then
+        if (World.DetonateAtFromUnit or World.DetonateAt) then
+            -- Two ways to fire, and WHICH ONE IS TRIED FIRST MATTERS.
+            --
+            -- The "every type lookup is broken" conclusion was almost certainly
+            -- wrong: the real weapon id is 'RadEruptionWeapon', and the id that
+            -- failed, "Desolator", was my guess. 'CIV'/'ALLCIV'/'SOVCIV' are
+            -- Red Alert 2 ids that do not exist in Yuri's Revenge at all. So
+            -- DetonateAt(id) is tried first now, and taking the weapon off a live
+            -- Desolator is only the fallback.
+            --
+            -- This is the cheap test that decides whether a superweapon binding
+            -- is worth writing: SuperWeaponTypeClass::Find goes through the same
+            -- mechanism, so if the id lookup works, so will that.
+            local spread = CFG.blastSpread
+            local via
+            local okD, done, why
+            if CFG.detonateWeapon and CFG.detonateWeapon ~= "" and World.DetonateAt then
+                via = "id:" .. CFG.detonateWeapon
+                local owner
                 local all = World.GetUnits and World.GetUnits() or nil
+                if all then
+                    for _, u in ipairs(all) do
+                        if util.is_alive(u) then owner = u break end
+                    end
+                end
+                okD, done, why = pcall(World.DetonateAt, CFG.detonateWeapon, sx, sy,
+                    owner, spread)
+            end
+            if (not (okD and done)) and World.DetonateAtFromUnit then
+                local all = World.GetUnits and World.GetUnits() or nil
+                local provider
                 if all then
                     for _, u in ipairs(all) do
                         if util.is_alive(u) and u:GetTypeName() == STRIKE_TYPE then
@@ -358,26 +519,11 @@ local function radStrike(frame)
                         end
                     end
                 end
-            end
-            local okD, done, why
-            if provider then
-                -- One wide blast instead of many small ones. The Desolator's
-                -- own CellSpread is 10, i.e. a ~7 cell radius, so covering a
-                -- 128x128 map that way would take hundreds of detonations. The
-                -- binding widens CellSpread for the duration of this single
-                -- detonation and restores it right after, so the site Phobos
-                -- builds is map-sized. Zero means "use the weapon's own spread".
-                okD, done, why = pcall(World.DetonateAtFromUnit, provider, sx, sy,
-                    CFG.blastSpread)
-            else
-                local owner
-                local all = World.GetUnits and World.GetUnits() or nil
-                if all then
-                    for _, u in ipairs(all) do
-                        if util.is_alive(u) then owner = u break end
-                    end
+                if provider then
+                    via = "unit:" .. STRIKE_TYPE
+                    okD, done, why = pcall(World.DetonateAtFromUnit, provider, sx, sy,
+                        spread)
                 end
-                okD, done, why = pcall(World.DetonateAt, CFG.detonateWeapon, sx, sy, owner)
             end
             S.detonateTries = (S.detonateTries or 0) + 1
             if okD and done then
@@ -386,8 +532,7 @@ local function radStrike(frame)
                 print(string.format(
                     "[RAD] DETONATED f=%d via=%s at (%d,%d) ok=%d/%d - the"
                     .. " engine is building the site.",
-                    frame, provider and "unit" or CFG.detonateWeapon, sx, sy,
-                    S.detonateOk, S.detonateTries))
+                    frame, tostring(via), sx, sy, S.detonateOk, S.detonateTries))
                 return true
             end
             if not (S.detFailBeat) or (frame - S.detFailBeat) >= 600 then
@@ -395,8 +540,7 @@ local function radStrike(frame)
                 print(string.format(
                     "[RAD] DETONATE failed f=%d via=%s ok=%s why=%s - the [Bullet]"
                     .. " lines in LuaAPI.log say which condition did not hold.",
-                    frame, provider and STRIKE_TYPE or CFG.detonateWeapon,
-                    tostring(okD), tostring(why)))
+                    frame, tostring(via), tostring(okD), tostring(why)))
             end
             return false
         end
@@ -952,6 +1096,241 @@ local function startEvent(frame)
   end
 
 
+  -- Storm sweep driver. It MUST be called from update() every frame, not from
+  -- the F7 handler: the handler runs once per key press, so a driver parked
+  -- there never advances past aim cell 1.
+  -- Applies the storm parameters once per sweep and proves, by reading them back
+  -- from the engine, what is actually live. Returns nothing; the caller pcall()s
+  -- it so that a failure here can never stop the launch.
+  --
+  -- Read-back is not optional. A fresh process was observed holding
+  -- 150/15/200/0 against the documented 180/10/250/3, so none of these values can
+  -- be assumed. The engine may also clamp the scatter, and a clamped scatter
+  -- silently invalidates the "stride == scatter" tiling the sweep relies on.
+  local function applyStormRules()
+      if S.stormApplied then return end
+      if not (World.SetLightningRules and World.GetLightningRules) then return end
+      S.stormApplied = true
+      local _, p1, p2v, p3, p4, p5 = pcall(World.GetLightningRules)
+      pcall(World.SetLightningRules, CFG.thunderScatter,
+          CFG.thunderDuration, CFG.thunderHitDelay, CFG.thunderDamage,
+          CFG.thunderSeparation, -1)
+      local okR, a1, b1, c1, d1, e1 = pcall(World.GetLightningRules)
+      local got = tonumber(a1)
+      if got and got ~= CFG.thunderScatter then
+          print(string.format(
+              "[RAD] WARNING asked scatter=%d but engine reports %d -"
+              .. " stride must match the real value or the sweep leaves gaps",
+              CFG.thunderScatter, got))
+      end
+      -- Assigned before use. Doing it after the banner left this nil once, the
+      -- arithmetic threw, and the throw cost the whole frame - including the
+      -- launch and every other mod's Update.
+      S.stormFrames = tonumber(b1) or 180
+      -- Bolt density is what makes a tiled square look continuous: bolts are
+      -- placed at RANDOM points inside the n-by-n square, so a square can tile
+      -- perfectly and still read as patches.
+      local bolts = math.floor(S.stormFrames / math.max(1, tonumber(c1) or 10))
+      print(string.format(
+          "[RAD] lightning rules %s/%s/%s/%s/%s -> wrote %d/%d/%d/%d/%d"
+          .. " -> now %s/%s/%s/%s/%s  (%d bolts per %dx%d square, "
+          .. "warhead spread 2 ~ 13 cells -> %d%% coverage)",
+          tostring(p1), tostring(p2v), tostring(p3), tostring(p4), tostring(p5),
+          CFG.thunderScatter, CFG.thunderDuration, CFG.thunderHitDelay,
+          CFG.thunderDamage, CFG.thunderSeparation,
+          tostring(a1), tostring(b1), tostring(c1), tostring(d1), tostring(e1),
+          bolts, CFG.thunderScatter, CFG.thunderScatter,
+          math.floor(bolts * 13 / (CFG.thunderScatter * CFG.thunderScatter) * 100)))
+  end
+
+  -- Sweep centre, and the two base centroids it is derived from.
+  --
+  -- FAIRNESS. The sweep used to be ordered by distance from the PLAYER's own base,
+  -- because starting there was the only way to make the storm visible (starting at
+  -- the map origin put the first ten storms in a far corner). Once visibility was
+  -- solved that reasoning expired, but the bias stayed: the last run started at
+  -- (97,139) = our own base and expanded around it, so our base took the first
+  -- several hits and the enemy base was reached much later. "Most storms were on
+  -- my base, unfair" is exactly that, and it was a consequence of the fix, not of
+  -- the engine.
+  --
+  -- Ordering by distance from the MIDPOINT between the two bases fixes it: the
+  -- coverage grows as an expanding square centred between the two, so both bases
+  -- are reached at the same rate and neither side is hit first. The player can
+  -- still see the start, because the midpoint is inside the normal view range.
+  --
+  -- Returns centre x, centre y, own centroid, enemy centroid, own count,
+  -- enemy count.
+  local function sweepCenter(mx, my, mw, mh)
+      local ax, ay, an = 0, 0, 0
+      local ex, ey, en = 0, 0, 0
+      if World.GetBuildings and house then
+          local okB, bl = pcall(World.GetBuildings)
+          if okB and type(bl) == "table" then
+              for _, b in ipairs(bl) do
+                  if util.is_alive(b) then
+                      local pos = b:GetPosition()
+                      if pos then
+                          if util.is_ally(house, b) then
+                              ax, ay, an = ax + pos.x, ay + pos.y, an + 1
+                          elseif util.is_enemy(house, b) then
+                              ex, ey, en = ex + pos.x, ey + pos.y, en + 1
+                          end
+                      end
+                  end
+              end
+          end
+      end
+      local ox, oy = (an > 0) and math.floor(ax / an + 0.5) or nil
+      local fx, fy = (en > 0) and math.floor(ex / en + 0.5) or nil
+      local cx, cy
+      if ox and fx then
+          -- Midpoint: both bases are then equidistant, so they take equal numbers
+          -- of hits for equal time.
+          cx = math.floor((ox + fx) / 2 + 0.5)
+          cy = math.floor((oy + fy) / 2 + 0.5)
+      elseif ox then
+          cx, cy = ox, oy
+      elseif fx then
+          cx, cy = fx, fy
+      else
+          cx = mx + math.floor(mw / 2)
+          cy = my + math.floor(mh / 2)
+      end
+      print(string.format(
+          "[RAD] sweep centre (%d,%d) = midpoint of ours (%s) n=%d and enemy (%s)"
+          .. " n=%d - both bases are hit at the same rate",
+          cx, cy,
+          ox and tostring(ox .. "," .. oy) or "none", an,
+          fx and tostring(fx .. "," .. fy) or "none", en))
+      return cx, cy, ox, oy, fx, fy
+  end
+
+  -- MAP-SCALE RADIATION SWEEP
+  --
+  -- Why this exists. Green tiles come only from real RadSiteClass objects;
+  -- CellClass::RadLevel is damage, not picture. The mod's own grid path
+  -- (paintGreen) is switched off because hand-built sites fault in Phobos at
+  -- +0x6E0AA. That leaves exactly one green source: the engine building a site
+  -- from a detonation. Measured over a whole run, that source produces
+  -- sites=1 in 16 probes out of 16 - one zone at a time, never two. With one
+  -- zone per Desolator strike and no spreading path enabled, a 163x163 map is
+  -- structurally unreachable.
+  --
+  -- So the storm's proven sweep shape is reused, with the detonation in place
+  -- of the superweapon: serpentine over the REAL map extent, ordered by
+  -- distance from the player's base, one detonation per aim cell. Each
+  -- detonation is the engine's own, which is the only route known not to crash.
+  -- Nothing is hand-built.
+  local function buildRadSweep(mx, my, mw, mh)
+      local bx, by = sweepCenter(mx, my, mw, mh)
+      local cells = {}
+      local x = mx
+      while x < mx + mw do
+          local y = my
+          while y < my + mh do
+              local dx, dy = x - bx, y - by
+              if dx < 0 then dx = -dx end
+              if dy < 0 then dy = -dy end
+              cells[#cells + 1] = { x = x, y = y, d = (dx > dy) and dx or dy }
+              y = y + CFG.radStep
+          end
+          x = x + CFG.radStep
+      end
+      table.sort(cells, function(p1, p2)
+          if p1.d ~= p2.d then return p1.d < p2.d end
+          if p1.x ~= p2.x then return p1.x < p2.x end
+          return p1.y < p2.y
+      end)
+      return cells, bx, by
+  end
+
+  -- One detonation per aim cell. pcall-wrapped because a throw here would abort
+  -- the rest of Update for the frame and every other mod's update with it.
+  local function radDrive(frame)
+      if not S.radActive then return end
+      if S.radPending and S.radArmAt and frame >= S.radArmAt then
+          local c = S.radPending
+          S.radPending = nil
+          S.radArmAt = nil
+          local okD, done, why = pcall(World.DetonateAt, CFG.detonateWeapon,
+              c.x, c.y, nil, CFG.blastSpread, CFG.radNoDamage)
+          S.radOk = (S.radOk or 0) + (done and 1 or 0)
+          if S.radSeq <= 3 or not done then
+              print(string.format(
+                  "[RAD] GREEN aim %d at (%d,%d) detonate=%s spread=%d%s",
+                  S.radSeq, c.x, c.y, tostring(done), CFG.blastSpread,
+                  (not done) and (" why=" .. tostring(why)) or ""))
+          end
+          S.radCell = true
+          S.radNextAt = frame + CFG.radGap
+      end
+      if S.radCell and S.radNextAt and frame >= S.radNextAt then
+          S.radCell = false
+          local nxt = table.remove(S.radSweep, 1)
+          if nxt then
+              S.radPending = nxt
+              S.radSeq = S.radSeq + 1
+              S.radArmAt = frame + 2
+          else
+              S.radActive = false
+              print(string.format(
+                  "[RAD] GREEN sweep complete: %d cells, detonations ok=%d",
+                  S.radSeq or 0, S.radOk or 0))
+          end
+      end
+  end
+
+  local function thunderDrive(frame)
+
+      if not S.thunderActive then return end
+
+      -- Retire the current aim cell and queue the next one.
+      local cur = S.thunderCell
+      if cur and frame >= cur.nextAt then
+          S.thunderCell = nil
+          local nxt = table.remove(S.thunderSweep, 1)
+          if nxt then
+              S.thunderPending = { x = nxt.x, y = nxt.y, seq = (S.thunderSeq or 0) + 1 }
+              S.thunderSeq = S.thunderPending.seq
+              S.thunderArmAt = frame + CFG.thunderGap
+          else
+              S.thunderActive = false
+              print("[RAD] thunder sweep complete after "
+                  .. tostring(S.thunderSeq or 0) .. " aim cells")
+          end
+      end
+
+          -- Arm the next aim cell: apply the documented storm parameters, fire, and
+          -- schedule the retire.
+          --
+          -- The rule application and its banner are wrapped in pcall on purpose.
+          -- A throw anywhere in here aborts the REST of Mod.Update for that frame -
+          -- a nil field in a log line took out the launch AND every other mod's
+          -- Update (smart_ai reported the same error) - and silently dropped the
+          -- aim cell, because the pending cell had already been cleared. Logging
+          -- must never be able to stop the storm.
+          if S.thunderPending and S.thunderArmAt and frame >= S.thunderArmAt then
+              local p2 = S.thunderPending
+              S.thunderPending = nil
+              S.thunderArmAt = nil
+              pcall(applyStormRules)
+              if not S.stormFrames then S.stormFrames = 180 end
+              local okS, done, why = pcall(World.LaunchHouseSuperWeapon,
+                  CFG.thunderType, p2.x, p2.y)
+              print(string.format(
+                  "[RAD] THUNDERSTORM aim %d at (%d,%d) stock ok=%s%s",
+
+                  p2.seq, p2.x, p2.y,
+                  tostring(done),
+
+              (done ~= true) and (" why=" .. tostring(why)) or ""))
+          S.thunderCell = {
+              nextAt = frame + S.stormFrames + CFG.thunderGap }
+      end
+
+  end
+
 local function tick(frame)
     if not S.started then
         S.started = true
@@ -1072,25 +1451,38 @@ local function tick(frame)
             if World.RadSiteList and (frame - (S.listBeat or 0)) >= 300 then
                 S.listBeat = frame
                 local okL, lst = pcall(World.RadSiteList)
-                if okL and type(lst) == "string" and lst ~= "" and lst ~= " [SEH]" then
-                    local pos, cnt = {}, 0
-                    for p in string.gmatch(lst, "pos=%((%-?%d+)%,(%-?%d+)%)") do
-                        cnt = cnt + 1
-                        if cnt <= 6 then pos[#pos + 1] = "(" .. p .. ")" end
+                -- The binding writes " [i] site=%p fx=%p" - it has never emitted a
+                -- "pos=(x,y)" field. This parser used to look for exactly that, so
+                -- it could never match, and every run reported
+                -- "engineBuilt=0 / registry is EMPTY" while the raw probe line
+                -- showed "[0] site=1B541120 fx=00000000". The green diagnosis was
+                -- built on a measurement that could not succeed.
+                --
+                -- Count the entries the binding actually produces. fx is the
+                -- brightness field it reads; 0 there is reported verbatim rather
+                -- than guessed at, because that is the green-tile question.
+                local cnt, lit, raw = 0, 0, {}
+                for hexsite, hexfx in string.gmatch(lst, "site=(%x+) fx=(%x+)") do
+                    cnt = cnt + 1
+                    if hexfx ~= "00000000" then lit = lit + 1 end
+                    if cnt <= 4 then
+                        raw[#raw + 1] = hexsite .. "/" .. hexfx
                     end
-                    print(string.format("[RAD] SITES f=%d engineBuilt=%d at=%s",
-                        frame, cnt, (#pos > 0) and table.concat(pos, " ") or "-"))
-                elseif okL and lst == "" then
-                    -- An empty result is NOT silence. World_RadSiteList writes
-                    -- no header, so "" means the engine's registry is empty:
-                    -- radVecCount == 0. Say that, because "no output" reads as
-                    -- "no information" and hid a hard fact for a whole run.
+                end
+                if cnt > 0 then
+                    print(string.format(
+                        "[RAD] SITES f=%d engineBuilt=%d lit=%d  [%s]",
+                        frame, cnt, lit, table.concat(raw, " ")))
+                else
+                    -- An empty result is NOT silence: the binding writes no header,
+                    -- so "" means radVecCount == 0. Say that, because "no output"
+                    -- reads as "no information" and hid a hard fact for a run.
                     S.emptySites = (S.emptySites or 0) + 1
                     if S.emptySites <= 3 or (frame % 900 == 0) then
                         print(string.format(
-                            "[RAD] SITES f=%d engineBuilt=0 - the engine's RadSite"
-                            .. " registry is EMPTY. Shots are landing but no"
-                            .. " radiation site is being built.", frame))
+                            "[RAD] SITES f=%d engineBuilt=0 - RadSiteList returned"
+                            .. " no entries (radVecCount == 0). Raw: [%s]",
+                            frame, lst))
                     end
                 end
             end
@@ -1171,6 +1563,31 @@ function Mod.Update(frame)
         S.stateUntil = frame
         S.nextEvent = frame + 1
         say("Manual radiation trigger (F6) - instant.")
+
+
+        -- F6 also arms the map-scale green sweep. Independent of the timed
+        -- radiation event: this is the only path that can cover the map, since
+        -- the hand-built grid is off and the engine makes one site per blast.
+        if World.GetMapSize and World.DetonateAt then
+            local okM, ax, ay, aw, ah = pcall(World.GetMapSize)
+            if okM and type(aw) == "number" and aw > 0 then
+                local cells, bx, by = buildRadSweep(ax, ay, aw, ah)
+                S.radSweep = cells
+                S.radSeq = 0
+                S.radOk = 0
+                S.radCell = false
+                S.radPending = table.remove(cells, 1)
+                S.radSeq = 1
+                S.radActive = true
+                S.radArmAt = frame + 4
+                print(string.format(
+                    "[RAD] GREEN sweep armed: %d detonations over %dx%d map,"
+                    .. " starting at our base (%d,%d), stride %d",
+                    #cells + 1, aw, ah, bx, by, CFG.radStep))
+            else
+                print("[RAD] GREEN sweep not armed: GetMapSize returned no map")
+            end
+        end
     end
 
     local okF9, f9 = pcall(Input.WasKeyPressed, DESO_KEY)
@@ -1179,16 +1596,203 @@ function Mod.Update(frame)
         desoLast = nil
         say("Desolator watch armed 30s (F9). Deploy it yourself and watch the log.")
     end
-    if desoUntil > frame then desoWatch(frame) end
+      if desoUntil > frame then desoWatch(frame) end
+
+      -- Thunderstorm, on its own key and off by default. The civilian filter is
+      -- not implemented yet, so this is not on F6 on purpose: F6 is the
+      -- recording key and must not flatten anyone's city.
+      local okT, f7 = pcall(Input.WasKeyPressed, CFG.thunderKey)
+      if okT and f7 then
+          -- One line to the log on every press, so "nothing happened" is never
+          -- ambiguous: either the strike ran, or the flag is off, or it failed.
+          print("[RAD] F7 pressed - thunderstorm="
+              .. tostring(CFG.thunderstorm) .. " id=" .. tostring(CFG.thunderId))
+          -- Report only. Nothing is launched from here: the SuperClass::Launch
+          -- route is known to crash when the object is hand-built, so the only
+          -- safe version is Launch() on an object the engine itself owns, and
+          -- that first needs proof the house has one.
+          if World.ListHouseSupers and not S.supersListed then
+              S.supersListed = true
+              local okL, txt = pcall(World.ListHouseSupers)
+              print("[RAD] house supers = " .. (okL and tostring(txt) or tostring(txt)))
+          end
+          if not CFG.thunderstorm then
+              if not S.thunderSaid then
+                  S.thunderSaid = true
+                  print("[RAD] F7 ignored: CFG.thunderstorm is false. The"
+                      .. " civilian-building filter is not implemented, so a"
+                      .. " Thunderstorm would destroy civilian structures too.")
+              end
+          else
+              -- Plain, stock Thunderstorm. Every Rules override is gone: the
+              -- storm now runs on the values the game shipped with
+              -- (scatter=10 duration=180 hitDelay=10 separation=3 strikeSpread=2
+              -- damage=250), which is what a third party firing the real
+              -- superweapon looks like. The previous version widened the spread
+              -- to 150 and fired a strike every 2 frames, which annihilated both
+              -- bases and the match instantly - that was a settings problem, not
+              -- a mechanism problem, and the mechanism is proven.
+              --
+              -- Two launches, because a stock storm only covers a 10 cell radius:
+              -- one on the player's base and one on the enemy's, so both sides
+              -- get hit the way an actual third-party attack would.
+              -- Both bases, counted rather than guessed. The previous version
+              -- put the "enemy" storm 3 cells from the "self" storm, so both
+              -- landed on the same spot: the enemy centroid was built from
+              -- whatever util.is_enemy matched, and that was not the enemy base.
+              -- This prints the census so the next run shows the truth, and
+              -- computes each base from its OWN buildings.
+              -- Map-wide coverage, built from the REAL map size. The sweep is a
+              -- serpentine over aim cells, and a house owns only ONE storm
+              -- object, so the aim cell is moved by re-firing the same storm
+              -- rather than by trying to run several at once (the second Launch
+              -- replaces the first - proven).
+              -- Real playable rectangle from the engine. The previous version
+              -- used MaxWidth/MaxHeight, which is the 512x512 allocated BUFFER,
+              -- not the map: the sweep walked (0,0)..(0,70) and onward through
+              -- empty space, so there was sound but nothing on screen. GetMapSize
+              -- returns x, y, width, height.
+              local mx, my, mw, mh = 0, 0, 0, 0
+              if World.GetMapSize then
+                  local okM, a1, b1, c1, d1 = pcall(World.GetMapSize)
+                  if okM and type(c1) == "number" and type(d1) == "number" then
+                      mx, my, mw, mh = a1, b1, c1, d1
+                  end
+              end
+              if mw <= 0 or mh <= 0 then
+                  mx, my, mw, mh = 0, 0, 128, 128
+                  print("[RAD] GetMapSize unavailable; falling back to 0,0 128x128")
+              end
+              -- Refuse an implausible map rather than sweeping it for hours. The
+              -- 512x512 buffer size slipped through here once and produced 2704
+              -- aim cells of empty space. A real YR map is at most 256x256.
+              if mw > 256 or mh > 256 then
+                  print(string.format(
+                      "[RAD] refusing implausible map %dx%d - that is the cell"
+                      .. " buffer, not the map. No sweep started.", mw, mh))
+                  S.thunderActive = false
+                  S.thunderSweep = {}
+                  return
+              end
+              -- Stock storm only: the square size is the game's own
+              -- LightningCellSpread (10), reported by GetLightningRules. Do not
+              -- reference a CFG key here - a nil argument to string.format throws
+              -- and kills the whole F7 handler, which is exactly what happened.
+              print(string.format(
+                  "[RAD] thunder sweep over map rect (%d,%d) %dx%d, stride %d"
+                  .. " -> %d cells",
+                  mx, my, mw, mh, CFG.thunderStep,
+                  math.ceil(mw / CFG.thunderStep) * math.ceil(mh / CFG.thunderStep)))
+
+
+              S.thunderSweep = S.thunderSweep or {}
+              if #S.thunderSweep == 0 and not S.thunderCell
+                  and not S.thunderPending then
+                  -- The sweep starts at the player's OWN base and is ordered by
+                  -- distance from it, so the storm always begins where the camera
+                  -- is and then walks outward.
+                  --
+                  -- A plain serpentine began at the map origin, which put the
+                  -- first ten storms in a far corner: the log looked exactly like a
+                  -- storm that does not render, and nothing was visible. The first
+                  -- aim cell was therefore moved onto the player's own base - which
+                  -- fixed visibility and introduced the bias the player then
+                  -- reported. The centre is now the midpoint between the bases, so
+                  -- visibility and fairness hold at the same time.
+                  local bx, by = sweepCenter(mx, my, mw, mh)
+
+              -- Chebyshev distance on the cell grid: cheap, and the coverage
+                  -- grows as an expanding square, so no cell is ever skipped and
+                  -- consecutive aim cells are always neighbours.
+                  local cells = {}
+                  local x = mx
+                  while x < mx + mw do
+                      local y = my
+                      while y < my + mh do
+                          local dx, dy = x - bx, y - by
+                          if dx < 0 then dx = -dx end
+                          if dy < 0 then dy = -dy end
+                          cells[#cells + 1] = {
+                              x = x, y = y,
+                              d = (dx > dy) and dx or dy,
+                          }
+                          y = y + CFG.thunderStep
+                      end
+                      x = x + CFG.thunderStep
+                  end
+                  table.sort(cells, function(p1, p2)
+                      if p1.d ~= p2.d then return p1.d < p2.d end
+                      if p1.x ~= p2.x then return p1.x < p2.x end
+                      return p1.y < p2.y
+                  end)
+                  for i = 1, #cells do
+                      S.thunderSweep[#S.thunderSweep + 1] =
+                          { x = cells[i].x, y = cells[i].y }
+                  end
+              end
+
+              -- Arm the sweep. The driver itself is thunderDrive(), called from
+
+              -- Update() every frame: a driver living in the key handler would
+              -- only ever fire aim cell 1, because the handler runs once.
+              S.thunderActive = true
+              S.thunderSeq = 0
+              S.thunderCell = nil
+              S.thunderPending = nil
+              local first = table.remove(S.thunderSweep, 1)
+              if first then
+                  S.thunderPending = { x = first.x, y = first.y, seq = 1 }
+                  S.thunderSeq = 1
+                  S.thunderArmAt = frame
+              else
+                  S.thunderActive = false
+                  print("[RAD] thunder sweep had no aim cells to run")
+              end
+              print(string.format(
+                  "[RAD] F7 sweep armed: %d aim cells left, first at (%d,%d)",
+                  #S.thunderSweep + 1, S.thunderPending and S.thunderPending.x or -1,
+                  S.thunderPending and S.thunderPending.y or -1))
+    end   -- if not CFG.thunderstorm / else
+    end   -- if okT and f7
+
+    -- Drive the storm sweep every frame. This has to be here, in Update(), not
+    -- in the F7 handler: the handler runs once per press, so a driver parked
+    -- there could never advance past aim cell 1.
+    radDrive(frame)
+    thunderDrive(frame)
 
     tick(frame)
 end
+
 
 function Mod.Summary()
     print(string.format(
         "[RAD] SUMMARY events=%d hits=%d damage=%d exempted=%d",
         stats.events, stats.hits, stats.damage, stats.exempted))
     return stats
+end
+
+-- Read-only hazard status for other mods (e.g. SmartAI RADEVAC).
+-- Pure observation: no state change, no orders. Returns a FRESH table
+-- every call (callers cannot mutate our S.targets through it).
+-- phase: "IDLE" | "WARNING" | "ACTIVE" | "RECOVERY"
+-- targets: {{x, y}...} blast cells (pinned in WARNING, re-picked per
+--   sweep in ACTIVE); empty outside WARNING/ACTIVE.
+-- radius: blast radius in cells (CFG.blastRadius).
+-- untilFrame: frame the current phase ends.
+function Mod.GetStatus()
+    local tg = {}
+    for _, t in ipairs(S.targets) do
+        if type(t.x) == "number" and type(t.y) == "number" then
+            tg[#tg + 1] = { x = t.x, y = t.y }
+        end
+    end
+    return {
+        phase = STATE_NAME[S.state] or "IDLE",
+        untilFrame = S.stateUntil,
+        targets = tg,
+        radius = CFG.blastRadius,
+    }
 end
 
 return Mod

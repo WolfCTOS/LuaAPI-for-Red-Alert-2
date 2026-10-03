@@ -1,0 +1,51 @@
+MOD: Double Harvester per Refinery
+ID:   double_harvester_deploy (v0.2.0)
+
+WHAT:
+  Every time a harvester building (Tiberium refinery) appears on the map, its
+  owner receives extra harvesters spawned next to it:
+
+    GAREFN  Allied Ore Refinery  ->  CMIN  Chrono Miner   (+1)
+    NAREFN  Soviet Ore Refinery  ->  HARV  War Miner      (+1)
+
+  Vanilla YR already hands out ONE free harvester per refinery through the
+  vanilla [BuildingType] FreeUnit key, so "+1" means the refinery ends up with
+  2 harvesters, as asked.
+
+  The MCV deploy is a SEPARATE trigger and is currently DISABLED
+  (TUNING.GRANT_ON_MCV_DEPLOY = false), because a deploy only puts a
+  Construction Yard on the map and grants nothing in vanilla. Set it to true to
+  additionally grant 2 harvesters there (GACNST -> CMIN, NACNST -> HARV).
+
+  Buildings that already exist when the mod first scans the map are primed and
+  grant nothing (campaign start / save load stay vanilla). A refinery that is
+  destroyed and rebuilt grants again.
+
+ENABLE:
+  1. `double_harvester_deploy` must be listed in scripts/active_mods.txt.
+  2. Restart the game (scripts load once per process, std::call_once).
+  3. Build an Allied or Soviet refinery.
+
+VERIFY (LuaAPI.log):
+  [2HARV] PASS GAREFN: wanted 1 x CMIN, created 1 (owner=..., at x,y)
+  [2HARV] PASS NAREFN: wanted 1 x HARV, created 1 (owner=..., at x,y)
+
+TUNING (main.lua, M.TUNING):
+  TRIGGERS[*].grant           extra harvesters on top of the vanilla free one
+  GRANT_ON_MCV_DEPLOY          true = also grant 2 on Construction Yard
+  OFFSETS                      cell offsets tried around the building
+  SKIP_AI_HOUSES               true = only human houses get the gift
+
+STATUS:
+  IMPLEMENTED 2026-09-28 (v0.2.0). v0.1.0 triggered on the MCV deploy instead
+  of the refinery -- that was the reported bug and is fixed here.
+  RUNTIME VERIFIED: NO. Check LuaAPI.log in a live match before treating the
+  verdict lines above as proven.
+
+NOTE (why not rulesmd.ini):
+  FreeUnit is a single UnitTypeClass*, not a list, so INI cannot add a second
+  harvester. The key is consumed inside BuildingClass::Place (0x446AAF) -- which
+  is also why refineries get their vanilla harvester but an MCV deploy does
+  not: the deploy routine calls Put(), not Place(). Neither Ares nor Phobos has
+  an INI key for spawning units on deploy, and Spawns/SpawnsNumber is bound to
+  AircraftTypeClass* in SpawnManagerClass.

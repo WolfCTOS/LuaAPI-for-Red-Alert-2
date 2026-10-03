@@ -11,11 +11,15 @@ collide). aiHouses excludes human, player-allied, and neutral houses
 What it does (scripts/mods/smart_ai/main.lua, ~230 lines; mod.json:
 "Dynamic base flank defense and threat response"):
 
-  1. FLANK-BREACH RALLY (every 30 frames): for each AI house (identity-
-     matched, see OWNERSHIP above), if one of its buildings is below 85%
-     HP, idle reserve combat units far from the breach (> 6 cells) get
-     MoveTo + Hunt toward it. No per-unit change detection — while a
-     breach persists the orders re-issue every scan.
+   1. FLANK-BREACH RALLY (proximity trigger): for each AI house
+      (identity-matched, see OWNERSHIP above), an own building with a
+      hostile combat unit inside 10 cells is a breach; idle reserve
+      combat units far from the breach (> 6 cells) get a clean MoveTo
+      toward it (NO trailing Hunt — Hunt overwrote the queued Move in
+      the single-slot mission queue per OpenTS/YRpp, so reserves
+      hunted from place; fixed 2026-09-28). No per-unit change
+      detection — while a breach persists the orders re-issue every
+      scan.
   2. CAPTURE-AWARE VALUABLES GUARD (MVP): high-value own units (APOC,
       HTNK) that are idle, lone (> 4 cells from own centroid) and within
       9 cells of an observable mind-control threat (MIND live-observed;
@@ -26,9 +30,13 @@ What it does (scripts/mods/smart_ai/main.lua, ~230 lines; mod.json:
       30-frame scan, no extra World calls; ID-ordered, no RNG/clock.
       Commander: breach rally (item 1) + garrison directives below.
       Officer: capture guard (item 2) + escort + flip observation below.
-      ESCORT OFFICER: each own V3 ([V3] INI-confirmed) gets up to 2
-      nearest idle combat bodyguards (harvesters/MCVs/other V3 excluded;
-      engaged never yanked) with destination memory + 300-frame refresh.
+      ESCORT OFFICER: each own V3 ([V3] INI-confirmed) gets up to 3
+      bodyguards (idle first, marching-not-fighting backfill — live
+      idle pool is 0; fighting/unknown-state never yanked; fighters
+      stay in the detail and are spared from follow-refresh).
+      Free guards focus-fire hostiles within 15 cells of the V3
+      (ESCORT_INTERCEPT, 150f cooldown); a V3 with a threat inside
+      12 cells kites toward its base (ESCORT_KITE, 300f cooldown).
       GARRISON OFFICER (EXPERIMENTAL): idle own infantry within 12 cells
       of own BUNKER/NAPILL/GAPILL are ordered onto the building cell
       (vanilla enter-if-garrisonable, screen otherwise; BUNKER id
@@ -42,11 +50,66 @@ What it does (scripts/mods/smart_ai/main.lua, ~230 lines; mod.json:
       Commander. One-scan lag by construction (hysteresis, no thrash).
   5. RESTART GUARD: frame-backwards detection resets scan, guard,
       officer AND blackboard state, so a new match starts clean.
+  6. RADEVAC (radiation interplay, medium/hard only): while the
+      radiation mod (if active) reports WARNING or ACTIVE with
+      targets — read via its read-only Mod.GetStatus() — own
+      infantry inside the blast cells is ordered to the nearest own
+      building (WARNING evacuates preemptively with +2 margin).
+      Fighting/unknown-state/exempt/civilian infantry never yanked;
+      per-unit 300f cooldown + arrival hold. Silent when radiation
+      is inactive or IDLE.
+  7. MINER OFFICER (medium/hard only): idle war/chrono miners go
+      back to work via HarvestAt (first live consumer of the
+      primitive). Resume own field anchor (GetHarvestLocation),
+      else share the nearest ACTIVE donor's field; docked anchors
+      (at own base) don't count. Only idle miners — workers never
+      yanked; SMIN/vehicles/enemies untouched. Per-miner 300f
+      cooldown + arrival hold; claimed miners are skipped by rally.
+  8. BUILDLAW (medium/hard only): HIGH-STAKES rows only — labs
+      need WF+radar, superweapons/high-tech need the lab (Industrial
+      Plant/Ore Purifier also need a refinery or Slave Miner).
+      Recovery infrastructure (power/barracks/refineries/factories/
+      yards/depots/radars/defenses) and modded rows deliberately NOT
+      enforced — policing recovery order griefs worse than the bypass
+      (see header). Sell IFF: chain broken now AND at birth
+      (birth-legal never touched) AND never queue-marked fresh
+      (AI.IsQueued: ordered while satisfied = queue-completion;
+      marks expire QMARK_WINDOW) AND birth scan > 1 (load inventory
+      assumed legal) AND past grace (1800f) AND per-type sells below
+      cap 3 (then log-and-leave). Refund clawed back. AI houses only.
+      MCVLAW: Allied/Soviet MCVs need WF+depot (Yuri MCV has no INI
+      prerequisite — exempt); depot-less production is destroyed via
+      TakeDamage (never-had rule, birth>1, mobile-only, same gates).
+      Rally pool excludes MCVs/harvesters like every other layer.
+  9. WAVE-SHEPHERD (medium/hard only, recall family): vanilla attack
+      waves marching into prepared counters get called off instead
+      of feeding free kills. A marching-not-fighting AI group
+      (3+ within 12 cells) far from home (>25) facing >=3x local
+      mobile strength (within 15) is ordered home with one HUD per
+      wave. Fighters, unknown-state, lone units, harvesters/MCVs/
+      artillery and officer-held units never touched. Transition-only
+      + shared recall cooldown (300f); claims MARCH (defense tier).
+  10. M3 SEED — character, adaptation, initiative (medium/hard):
+      stance per house (first rushes, then alternate; hard always
+      rushes and presents as Mastermind), raid escalation on
+      evidence (win -> bigger next form, loss/wipe -> smaller),
+      counterpunch (rusher finishes a bled-dry enemy without waiting
+      for quiet), hard-only feint (one cheap unit distracts the
+      visible player force while hunters work economy), grudge flips
+      announced. No new forms while a breach is active (defense-first).
+  11. RETARGET OFFICER (medium/hard, raid family): engaged AI combat
+      redirected onto better targets without moving anyone — the
+      layer for fully-engaged matches where vanilla owns every
+      order. Switch iff value gap >= 1.0 and no farther than current
+      engagement +2 (attack-movers commit within 15). Fighters held
+      by any SmartAI layer keep SmartAI targets; harvesters/MCVs are
+      never re-aimed themselves (but are priority targets: 2.0/3.0).
+      Transition-only + 300f cooldown; dlog only (focus fire is the
+      visible proof).
 
-KNOWN SUSPECT (static observation, needs a live log): rally issues
-MoveTo + Hunt back-to-back — the Hunt mission may void the MoveTo, so
-reserves might hunt from place instead of rallying to the breach.
-Confirm with coordinates before relying on rally positioning.
+STOOD-DOWN ESCORTS are transparent to Commander drafting: a breach
+release frees the guards to the rally in the same tick instead of
+holding them one extra scan in assignment memory.
 
 What it does NOT do (older versions of this file described squads,
 officers, escorts, a CapabilityRegistry and framework Timer/Query/EventBus

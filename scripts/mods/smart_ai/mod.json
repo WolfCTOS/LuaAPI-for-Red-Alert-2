@@ -4,5 +4,6 @@
   "version": "1.0.0",
   "author": "NiTeMind",
   "description": "Dynamic base flank defense and threat response",
+  "description_ru": "Динамическая оборона флангов базы и реакция на угрозы",
   "conflicts": []
 }

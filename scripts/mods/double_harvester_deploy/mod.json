@@ -1,0 +1,8 @@
+{
+  "id": "double_harvester_deploy",
+  "name": "Double Harvester per Refinery",
+  "version": "0.2.0",
+  "author": "NiTeMind",
+  "description": "Grants 1 extra harvester per ore refinery (Allied GAREFN -> CMIN, Soviet NAREFN -> HARV) on top of the vanilla free one, so each refinery ends up with 2 harvesters.",
+  "conflicts": []
+}

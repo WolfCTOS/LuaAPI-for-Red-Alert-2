@@ -76,12 +76,15 @@ local PRESETS = {
         rallyEvery = 300,
         guard = false, escort = false, garrison = false,
         recall = false, defense = false, raid = false,
+        hero = true, heroLeash = 8, heroEvery = 900, heroRetreat = false,
     },
     medium = {
         scan = 30,
         rallyEvery = 150,
         guard = true, escort = true, garrison = true,
-        recall = true, defense = true, raid = true,
+        recall = true, defense = true, raid = true, radevac = true,
+        buildlaw = true, miner = true, hero = true,
+        heroLeash = 25, heroEvery = 600, heroRetreat = false,
         intruderR = 18, assignR = 35, defendersN = 2, defenseEvery = 150,
         confirmN = 2, clearN = 4, marchRecall = true, redirectEvery = 300,
         raidN = 4, raidMin = 3, raidQuiet = 600, raidEvery = 600,
@@ -91,7 +94,9 @@ local PRESETS = {
         scan = 15,
         rallyEvery = 90,
         guard = true, escort = true, garrison = true,
-        recall = true, defense = true, raid = true,
+        recall = true, defense = true, raid = true, radevac = true,
+        buildlaw = true, miner = true, hero = true,
+        heroLeash = 25, heroEvery = 300, heroRetreat = true,
         intruderR = 24, assignR = 45, defendersN = 3, defenseEvery = 90,
         confirmN = 1, clearN = 6, marchRecall = true, redirectEvery = 180,
         raidN = 5, raidMin = 3, raidQuiet = 450, raidEvery = 450,
@@ -162,6 +167,10 @@ local function tickScanEvery()
 end
 
 local lastScanFrame = 0
+-- Processed-scan counter this match (BUILDLAW birth rule: scan 1 is
+-- load-time / pre-placed inventory). Declared here: officerReset and
+-- Update both assign it, and Lua binds upvalues lexically.
+local scanCounter = 0
 
 -- ---------------------------------------------------------------------------
 -- Capture-aware valuables guard (MVP): high-value own units avoid lone
@@ -220,8 +229,12 @@ end
 -- (transition-only orders + destination memory + refresh caps).
 --
 -- Escort officer: own ARTILLERY_TYPES (V3, INI-confirmed [V3]) get up to
--- ESCORT_N idle combat bodyguards that follow at destination memory.
--- Engaged bodyguards are released, never yanked.
+-- ESCORT_N bodyguards that follow at destination memory. Guards are
+-- retained while fighting (not dropped the moment they engage), idle
+-- fills first and marching-not-fighting backfills (idle pool is 0
+-- live), free guards intercept threats near the V3 with focus fire,
+-- and a pressured V3 kites toward its own base. Engaged bodyguards
+-- are released, never yanked.
 -- Garrison officer (EXPERIMENTAL): idle own infantry near own DEFENSE_TYPES
 -- are ordered onto the building cell (vanilla enter-if-garrisonable, screen
 -- otherwise). BUNKER id is UNCONFIRMED live (no BUNK* section in the repo's
@@ -231,6 +244,47 @@ end
 -- ---------------------------------------------------------------------------
 
 local ARTILLERY_TYPES = { V3 = true }
+-- Heroes (sprint 2026-10-03, all presets): Tanya eats infantry +
+-- buildings (C4), Boris works vehicles/infantry (AKM; his airstrike has
+-- no binding — plain Attack only), Yuri Prime mind-controls via Attack
+-- (units/infantry only, never buildings). INI IDs: TANYA/BORIS/YURIPR.
+local HERO_TYPES = { TANYA = true, BORIS = true, YURIPR = true }
+local HERO_FOCUS_GAP = 1.0 -- hard: no flip-flop below this value gain
+local HERO_RETREAT_HP = 0.30 -- hard: below this fraction, back to anchor
+-- T3 armor (Battle-Lab-gated, INI-verified IDs: APOC/BFRT/SREF/MGTK).
+-- V3 stays its own category (escort principal, never a hunter).
+local T3_TYPES = { APOC = true, BFRT = true, SREF = true, MGTK = true }
+-- VALOR (sprint 2026-10-03): veterans/elites are force multipliers —
+-- killing the enemy's first is worth more than the chassis, and
+-- spending our own as bait is never allowed. Shared bonus so retarget
+-- and HERO scoring agree on what a crack target is worth.
+local VALOR_VET = 1.0
+local VALOR_ELITE = 2.0
+local VALOR_HERO = 1.5
+local VALOR_T3 = 1.0
+-- A veteran 0.1 from elite denies almost like an elite: progress tops up
+-- the veteran bonus linearly (0.9-vet ≈ +1.9). Rookies get no top-up —
+-- denying the elite transition outranks denying the veteran one.
+-- VALOR_KEEP: own units at/above this progress are investment worth
+-- protecting (feint/wave), even while still rookie.
+local VALOR_KEEP = 0.5
+local function valorBonus(u)
+    if u.k ~= "unit" and u.k ~= "infantry" then return 0 end
+    local b = 0
+    if u.vet == "elite" then b = b + VALOR_ELITE
+    elseif u.vet == "veteran" then
+        b = b + VALOR_VET + (u.vetProgress or 0)
+    end
+    if HERO_TYPES[u.t] then b = b + VALOR_HERO end
+    if T3_TYPES[u.t] then b = b + VALOR_T3 end
+    return b
+end
+-- Own precious: veterans/elites, half-invested near-promotions, T3.
+-- Feint and wave-shepherd consult this, never role code twice.
+local function isPrecious(u)
+    return u.vet ~= "rookie" or (u.vetProgress or 0) >= VALOR_KEEP
+        or T3_TYPES[u.t] == true
+end
 local DEFENSE_TYPES = { BUNKER = true, NAPILL = true, GAPILL = true }
 local HARVESTER_TYPES = { SMIN = true, HARV = true, CMIN = true }
 local MCV_TYPES = { AMCV = true, SMCV = true, YMCV = true }
@@ -268,16 +322,30 @@ local SURRENDER_FUTILITY_RATIO = 0.25
 
 local surrendered = {} -- house -> latch frame (Phase 1: order silence)
 
-local ESCORT_N = 2
+local ESCORT_N = 3
 local ESCORT_RADIUS = 6
 local ESCORT_EVERY = 300
 local ESCORT_DRAFT_RADIUS = 25 -- bodyguards draft near their V3 only: a guard
                                -- trekking 100 cells across the map is not an
                                -- escort, and far V3s must not eat home
                                -- defenders / recall candidates (live T15 bug)
+
+-- Bodyguard combat (vs tank rushes on the V3): guards engage hostiles
+-- closing on their principal instead of standing next to it, and a
+-- pressured V3 steps off toward its own lines instead of dying in
+-- place. All transition-only + cooldown-gated, like every other order
+-- in this file; vanilla may still yank — persistence is measured via
+-- readback/divergence, never assumed.
+local ESCORT_COMBAT_R = 15      -- guards Attack hostiles this close to the V3
+local ESCORT_COMBAT_EVERY = 150 -- per-guard intercept cooldown (frames)
+local V3_KITE_R = 12            -- threat this close -> the V3 itself retreats
+local V3_KITE_EVERY = 300       -- V3 kite cooldown (frames)
+local V3_KITE_DIST = 8          -- kite step in cells
 local GARRISON_N = 3
 local GARRISON_RADIUS = 12
 local GARRISON_EVERY = 600
+-- Within 2 cells of the ordered cell = holding (no re-issue, no slot).
+local GARRISON_REACHED_R2 = 4
 
 -- Base-threat recall: presence-based. RECALL_TYPES are committed long-range
 -- attackers worth bringing home.
@@ -287,6 +355,15 @@ local RECALL_TYPES = { V3 = true, KIROV = true }
 local RECALL_THREAT_RADIUS = 20
 local RECALL_THREAT_N = 3
 local RECALL_FAR = 30
+-- Wave-shepherd tuning (M3 initiative protection): a marching AI wave
+-- far from home facing overwhelming LOCAL strength is feeding, not
+-- attacking (the user's "reflex" — free kills every match). Lone units
+-- below WAVE_MIN are left alone (scouts/repositioning, not attacks).
+local WAVE_FAR = 25 -- must be this far from home to count as attacking
+local WAVE_R = 12 -- fellow marchers inside this radius form the wave
+local WAVE_MIN = 3 -- smaller groups are left alone
+local WAVE_THREAT_R = 15 -- enemy combat inside this radius threatens
+local WAVE_DOOM_MULT = 3 -- threat >= wave x mult: call it off
 local RECALL_EVERY = 300
 
 -- RALLY threat radius (2026-09-26): an own building with a hostile combat
@@ -443,6 +520,25 @@ local raidCooldownUntil = {} -- house -> frame before which no re-form after STA
 -- dropped with the group (standdown/retreat keeps it while members live).
 local raidGroups = {}
 
+-- M3 SEED — stance + fortunes (character + adaptation from evidence).
+-- stanceCache[house] = "rusher" | "turtle": assigned once, first-seen
+-- order (deterministic: engine house order — 1v1 showcase rushes, then
+-- alternate so mixed lobbies show both characters). Easy preset skips
+-- stance (rally-only by design). raidLevel[house] in [-1, +2]: +1 per
+-- observed raid WIN (target gone, members alive), -1 per loss tick or
+-- wipe; sizes the next form. lastCounter[house]: counterpunch cooldown.
+-- All cleared by officerReset; all in-match only (never persist.lua).
+local stanceCache = {}
+local stanceCount = 0
+local stanceAnnounced = {}
+local raidLevel = {}
+local lastCounter = {}
+local feintState = {} -- house -> last feint frame (FEINT_EVERY)
+-- Counterpunch tuning: a rusher whose enemy fields this few combat
+-- units stops waiting for quiet and finishes. Cooldown between punches.
+local PUNCH_WEAK_N = 4
+local PUNCH_COOLDOWN = 1800
+
 -- House getter factory (avoids loop-variable capture in closures).
 local function houseGetter(h)
     return function() return h end
@@ -476,7 +572,12 @@ end
 local dEff = {}
 local ADAPT_STREAK_TRIGGER = 2
 local ADAPT_PULL_MIN_DIST = 25 -- cells from the base anchor; near units are left alone
-local dEffStats = { w = 0, l = 0, pulls = 0, denied = 0, draw = 0 } -- per-match totals (diagnostic)
+-- M2-C4 RECOVERY: how many near-reserve units ONE response may commit. Kept at
+-- 1 on purpose -- a single loss is a signal to pull in the closest usable unit,
+-- not a licence to strip the map. The response is additionally rate-limited by
+-- defenseEvery and, per unit, by P.redirectEvery through recallState.
+local RECOVERY_MAX_UNITS = 1
+local dEffStats = { w = 0, l = 0, pulls = 0, denied = 0, draw = 0, recovery = 0 } -- per-match totals (diagnostic)
 
 -- M2-C1 belief tables (in-match only; cleared by officerReset below).
 -- grudge[aiHouse][enemyHouse] = { n = count, lastFrame = frame }
@@ -499,6 +600,256 @@ local focusState = {}
 local divLogged = {} -- defenderId -> last divergent actual target id logged
 local lastCensusFrame = 0
 
+-- RADEVAC (radiation interplay): own infantry out of warned/burning cells.
+-- Reads the radiation mod's read-only Mod.GetStatus() via package.loaded
+-- (nil when radiation is inactive -> whole layer silent, zero cost).
+-- WARNING (12s) evacuates preemptively with a margin; ACTIVE moves out
+-- whoever is still inside. Destination is the nearest own building cell
+-- (vanilla enter-if-garrisonable, screen otherwise — the player's own
+-- counterplay, mirrored). MoveTo only, never Hunt; fighting and
+-- unknown-state infantry are never yanked.
+local RADEVAC_WARN_MARGIN = 2   -- extra cells of head-start during WARNING
+local RADEVAC_EVERY = 300       -- per-unit re-order cooldown (frames)
+local RADEVAC_REACHED_R2 = 4    -- within 2 cells of last dest = arrived, hold
+-- Mirrors radiation CFG.exempt (units the hazard never hits — ordering them
+-- out would be pure churn). Civilian types are excluded separately below.
+local RADEVAC_EXEMPT = { AGENT = true, ENGR = true, THIEF = true }
+local radEvacState = {} -- unitId -> { orderedFrame, bx, by } last evac dest
+local minerState = {} -- unitId -> { orderedFrame, ax, ay } last harvest kick
+local retargetState = {} -- unitId -> { orderedFrame } last target switch
+-- (declared here: officerReset below assigns it — upvalue rule)
+local heroState = {} -- heroId -> { targetId, orderedFrame, posture } HERO officer
+local radEvacHud = {} -- house -> last evac HUD frame (900f throttle)
+local minerHud = {} -- house -> true once announced per match
+local kiteHud = {} -- v3id -> last kite HUD frame (900f throttle)
+local waveHud = {} -- house -> last shepherd HUD frame (900f throttle)
+
+-- Read-only pull of the radiation hazard state. Returns nil unless the
+-- radiation mod is loaded AND in WARNING/ACTIVE with targets; otherwise
+-- phase, radius (cells) and a target list. Never errors outward.
+local function radiationStatus()
+    if type(package) ~= "table" or type(package.loaded) ~= "table" then
+        return nil
+    end
+    local mod = package.loaded["mods.radiation.main"]
+    if type(mod) ~= "table" or type(mod.GetStatus) ~= "function" then
+        return nil
+    end
+    local ok, st = pcall(mod.GetStatus)
+    if not ok or type(st) ~= "table" then return nil end
+    if st.phase ~= "WARNING" and st.phase ~= "ACTIVE" then return nil end
+    if type(st.targets) ~= "table" or #st.targets == 0 then return nil end
+    local r = tonumber(st.radius) or 6
+    if r < 1 then r = 1 end
+    return st.phase, st.targets, r
+end
+
+-- ---------------------------------------------------------------------------
+-- BUILDLAW: full build-order enforcement for all 3 factions (user:
+-- "no more endless debugging" — strict limiters, 2026-09-30).
+-- INI ground truth: rulesmd_ref.ini is MODDED (campaign CA* rows, lamps,
+-- "intentionally empty" live rulesmd.ini = stock engine rules), so it is
+-- advisory only. Encoded below are STOCK-CONFIDENT rows only; anything
+-- uncertain is EXCLUDED (unknown = allowed — misses, never false
+-- positives). Full extracted graph lives in this header; enforced rows
+-- are marked [+], studied-but-excluded [-] with reasons.
+--
+-- ALLIED unlock spine:
+--   Power(GAPOWR) -> Barracks(GAPILE)/Refinery(GAREFN) -> WF(GAWEAP) ->
+--   Radar(GAAIRC)/Yard(GAYARD) -> Lab(GATECH) -> superweapons/tech.
+--   [+] GATECH <= WF + RADAR
+--   [+] GAWEAT/GACSPH/GASPYSAT <= lab
+--   [+] NANRCT/NAINDP(+PROC)/GAOREP(+PROC) (high tech)
+-- SOVIET unlock spine:
+--   Power(NAPOWR) -> Barracks(NAHAND)/Refinery(NAREFN) -> WF(NAWEAP) ->
+--   Radar(NARADR)/Yard(NAYARD) -> Lab(NATECH) -> superweapons/tech.
+--   [+] NATECH <= WF + RADAR
+--   [+] NAMISL/NAIRON <= lab
+-- YURI unlock spine:
+--   Power(YAPOWR) -> Barracks(YABRCK)/Refinery(YAREFN) -> WF(YAWEAP) ->
+--   Lab(YATECH) -> superweapons/tech (Yuri radar IS the Psychic Sensor).
+--   [+] YATECH <= WF + RADAR
+--   [+] YAGNTC/YAPPET <= lab
+-- [-] everything recovery-critical (power/barracks/refineries/factories/
+--     yards/depots/radars/defenses): policing recovery order punishes
+--     worse than the bypass (live refinery-first: ugly, harmless,
+--     self-healing; plus 11 powerless-fixture sells -> surrender
+--     cascade in the shared suite). Build ORDER lives in INI Build
+--     lists, not in a Lua policeman. Strict where stakes are high.
+-- [-] Excluded modded/corrupt rows: GAFWLL, NASAM, NACLON (disputed lab),
+-- NAPSIS (comment-corrupted line), NATBNK, NABNKR, GAGREEN, GASAND,
+-- GAWALL/NAWALL (walls must never trigger), ATESLA (modded), GAAIRC
+-- paradrop dummies AMRADR/NARADR-as-dummy (never AI-owned; inert anyway),
+-- campaign CA*/lamps. [-] Pillboxes/flak/gattling (defenses need no
+-- strict gate; order unambiguous in practice, stakes nil).
+-- [-] CY token everywhere: packed-MCV edge + zero cheat-catching value
+-- (AI always starts deployed; "never had CY" is near-impossible).
+-- PROC IS encoded (via [General] PrerequisiteProc + SMIN alternate)
+-- because NAINDP/GAOREP rows need it; POWER group was dropped with the
+-- tier rows (no remaining row references it).
+-- Why enforced rows are safe: normal AI order satisfies everything at
+-- birth (its own lists walk prereq-consistent), so they fire ONLY on
+-- bypass paths (community-confirmed "AI ignores prerequisite") — and
+-- the per-type SELL_CAP (default 3, then log-and-leave) bounds even
+-- those, so enforcement can tax a cheat without bricking recovery.
+-- Rule: a listed building is sold IFF all hold — chain broken NOW,
+-- chain broken at BIRTH (birth-legal never touched), never queue-marked
+-- fresh at birth (AI.IsQueued: ordered while satisfied =
+-- queue-completion; marks refresh while queued, expire QMARK_WINDOW
+-- after last sighting), birth scan > 1 (load-time inventory assumed
+-- legal), past BUILDLAW_GRACE, per-type sells below SELL_CAP (then
+-- log-and-leave), AI house, non-surrendered, preset on.
+-- ---------------------------------------------------------------------------
+-- RADAR providers (Radar=yes in INI): Allied Airforce Command, SpySat
+-- uplink, Soviet Radar Tower, Yuri Psychic Sensor (+AMRADR dummy, inert).
+local BUILDLAW_RADAR = { "GAAIRC", "GASPYSAT", "AMRADR", "NARADR", "NAPSIS" }
+-- PROC group ([General] PrerequisiteProc): any refinery ever. SMIN is
+-- listed alongside (its [General] PrerequisiteProcAlternate role: an
+-- undeployed Slave Miner vehicle satisfies PROC — recorded from the
+-- units snapshot, see the cur-building loop).
+local BUILDLAW_PROC = { "GAREFN", "NAREFN", "YAREFN", "SMIN" }
+-- PROC alternate ([General] PrerequisiteProcAlternate): Slave Miner
+-- VEHICLE satisfies PROC (Yuri). Recorded from the units snapshot.
+local PROC_ALT_TYPES = { SMIN = true }
+
+-- AND of ORs: every entry needs >=1 alternative ever seen.
+-- SCOPE (senior cut 2026-09-30, after the tier-row experiment): HIGH
+-- STAKES ONLY — labs, superweapons, high tech. Recovery infrastructure
+-- (power/barracks/refineries/factories/yards/depots/radars/defenses)
+-- is DELIBERATELY UNLISTED: punishing a recovering AI for its rebuild
+-- order griefs recovery worse than the bypass itself (proven live:
+-- refinery-first after total raze is ugly but harmless; selling it
+-- stalls the AI for zero match impact). Build ORDER lives in INI
+-- ([AI] BuildPower/BuildRefinery/... + ScriptTypes), not in a Lua
+-- policeman — a snapshot layer cannot guide construction, only punish
+-- it. BARRACKS specifically broke the shared defense suite first
+-- (11 powerless-fixture sells -> surrender cascade -> 29 red).
+local BUILDLAW = {
+    GATECH = { { "GAWEAP" }, BUILDLAW_RADAR },
+    NATECH = { { "NAWEAP" }, BUILDLAW_RADAR },
+    YATECH = { { "YAWEAP" }, BUILDLAW_RADAR },
+    GAWEAT = { { "GATECH" } },
+    GACSPH = { { "GATECH" } },
+    GASPYSAT = { { "GATECH" } },
+    NAMISL = { { "NATECH" } },
+    NAIRON = { { "NATECH" } },
+    NANRCT = { { "NATECH" } },
+    NAINDP = { { "NATECH" }, BUILDLAW_PROC },
+    GAOREP = { { "GATECH" }, BUILDLAW_PROC },
+    YAGNTC = { { "YATECH" } },
+    YAPPET = { { "YATECH" } },
+}
+
+-- Tunable grace window (frames). Test override path; live default below.
+SmartAI.BUILDLAW_GRACE = 1800 -- 30s: pre-placed inventory is never sold
+-- Sell cap per (house, type) per match. Bounds rebuild loops: without
+-- it, an AI stuck re-cheating one type would be taxed forever and never
+-- progress. After the cap the type is left standing + logged once.
+SmartAI.BUILDLAW_SELL_CAP = 3
+-- Queue-mark lifetime (frames) after the last satisfied sighting.
+-- A mark must survive queue->completion lag (same/next scan) but must
+-- NOT spare a fresh cheat minutes later (live 2026-09-30: a mark from
+-- f=29890 would otherwise grandfather a post-raze rebuild forever).
+SmartAI.QMARK_WINDOW = 1800
+
+-- birthScan[buildingId] / birthViol[buildingId]: scan number of first
+-- sighting + whether the chain was broken then. Load-time and
+-- pre-placed inventory (birth scan 1) is assumed legal. Cleared by
+-- officerReset; never pruned (ids are never recycled; a flickering
+-- building keeps its original birth).
+local birthScan = {}
+local birthViol = {}
+-- sellCounts[house][canonType] / gaveUp[house][canonType]: per-match
+-- enforcement budget + once-only give-up notice (see SELL_CAP).
+local sellCounts = {}
+local gaveUp = {}
+
+-- queuedWhileSat[house][canonType] = true: type observed in production
+-- (AI.IsQueued, read-only) while its chain was satisfied. Closes the
+-- had-early/lost/cheat-late hole: queue-completion is grandfathered,
+-- fresh post-loss orders are not. Queues persist minutes, scans run
+-- every 15-30f, so a real queue cannot hide between two scans.
+-- Residual: save-loaded matches (first scan sees queue + dead chain).
+local queuedWhileSat = {}
+
+-- Row lookup tolerating modded prefixed IDs ("RAZER-GAWEAT").
+-- Returns row + canonical key (engine IDs are unprefixed, which is
+-- also what the queue binding must be asked with).
+local function buildLawRowKey(t)
+    if not t or t == "" then return nil, nil end
+    if BUILDLAW[t] then return BUILDLAW[t], t end
+    for k, row in pairs(BUILDLAW) do
+        if t:sub(-(#k + 1)) == "-" .. k then return row, k end
+    end
+    return nil, nil
+end
+
+local function buildLawRow(t)
+    local row = buildLawRowKey(t)
+    return row
+end
+
+-- True when `want` was seen exactly or as a "-SUFFIX".
+local function typeSeenAs(seen, want)
+    if seen[want] then return true end
+    for t in pairs(seen) do
+        if t:sub(-(#want + 1)) == "-" .. want then return true end
+    end
+    return false
+end
+
+-- First unmet AND-entry (alternatives joined), or nil when satisfied.
+local function buildLawMissing(seen, row)
+    for _, entry in ipairs(row) do
+        local ok = false
+        for _, alt in ipairs(entry) do
+            if typeSeenAs(seen, alt) then ok = true break end
+        end
+        if not ok then return table.concat(entry, "/") end
+    end
+    return nil
+end
+
+-- ---------------------------------------------------------------------------
+-- MCVLAW: Allied/Soviet MCVs need their War Factory + Service Depot
+-- (INI: AMCV <= GAWEAP,GADEPT / SMCV <= NAWEAP,NADEPT; YMCV has NO
+-- Prerequisite line — freely rebuildable, exempt by design, verified
+-- 2026-10-01). Units cannot be sold, so the enforcement is destruction
+-- via the native damage pipeline (no attacker, no refund, no bounty —
+-- damage events are unwired). Scope is deliberately ONE unit family:
+-- combat units are never policed (killing armies = griefing).
+-- Rule: never-had (no depot type EVER seen for that house) + birth>1 +
+-- grace + cap + MOBILE only (a deployed MCV is someone's base — skip
+-- via IsDeployed; old DLLs without the binding fail open = enforced,
+-- the DLL ships with the scripts so this is a non-issue in practice).
+-- Queue-completion is UNSIGHTED for units (AI.IsQueued resolves
+-- buildings only) — documented residual, same class as the French
+-- case. Rationale for never-had over birth-strict here: a legally
+-- ordered MCV whose depot then dies (the user's raze scenario) must
+-- survive relocation; only systematic depot-less production is cut.
+-- ---------------------------------------------------------------------------
+local MCVLAW = {
+    AMCV = { { "GAWEAP" }, { "GADEPT" } },
+    SMCV = { { "NAWEAP" }, { "NADEPT" } },
+}
+
+-- seenBTypes[house][rawType] = true: every own BUILDING type ever
+-- snapshotted (MCVLAW depot AND factory entries both read here).
+-- Cleared by officerReset; never pruned (types, tiny — and pruning
+-- would resurrect grandfathered cheats as "fresh" violations).
+local seenBTypes = {}
+
+-- Row + canonical key for an MCV type (exact or "-SUFFIX"), nil else.
+-- YMCV (and anything unlisted) returns nil: untouched by design.
+local function mcvLawRow(t)
+    if not t or t == "" then return nil, nil end
+    if MCVLAW[t] then return MCVLAW[t], t end
+    for k, row in pairs(MCVLAW) do
+        if t:sub(-(#k + 1)) == "-" .. k then return row, k end
+    end
+    return nil, nil
+end
+
 local function officerReset()
     escortState = {}
     garrisonState = {}
@@ -512,12 +863,39 @@ local function officerReset()
     lastThreatFrame = {}
     raidCooldownUntil = {}
     raidGroups = {}
+    stanceCache = {}
+    stanceCount = 0
+    stanceAnnounced = {}
+    raidLevel = {}
+    lastCounter = {}
+    feintState = {}
     grudge = {}
     econSeen = {}
     dEff = {}
-    dEffStats = { w = 0, l = 0, pulls = 0, denied = 0, draw = 0 }
+    dEffStats = { w = 0, l = 0, pulls = 0, denied = 0, draw = 0, recovery = 0 }
     combatSeen = {}
     focusState = {}
+    radEvacState = {}
+    minerState = {}
+    retargetState = {}
+    heroState = {}
+    moveTrack = {}
+    moveStats = { ordered = 0, arrived = 0, yanked = 0, handoff = 0,
+        stale = 0 }
+    if TargetLease then TargetLease.Clear() end -- Phase 1: Lua mirror of
+    -- native ClearAll (match restart): no lease outlives the reset.
+    lastMoveStatsFrame = 0
+    seenBTypes = {}
+    radEvacHud = {}
+    minerHud = {}
+    kiteHud = {}
+    waveHud = {}
+    birthScan = {}
+    birthViol = {}
+    sellCounts = {}
+    gaveUp = {}
+    queuedWhileSat = {}
+    scanCounter = 0
     divLogged = {}
     lastCensusFrame = 0
     surrendered = {}
@@ -527,13 +905,48 @@ end
 
 -- Coordination: units the Officer is actively handling (escort bodyguards,
 -- threatened pullbacks, active defenders). Commander rally stands off them.
+-- A stood-down escort (breach owns the sector, guards released to the
+-- rally per the hygiene pass) is transparent here: otherwise the
+-- assignment memory blocks the very rally the stand-down released the
+-- guards for, for one scan.
 local function isOfficerAssigned(id)
     local gs = guardState[id]
     if gs and gs.threatened then return true end
     if defenseState[id] then return true end
+    if heroState[id] then return true end -- HERO-held: every layer stands off
     for _, st in pairs(escortState) do
-        for _, gid in ipairs(st.guards) do
-            if gid == id then return true end
+        if not st.standDown then
+            for _, gid in ipairs(st.guards) do
+                if gid == id then return true end
+            end
+        end
+    end
+    for _, rst in pairs(raidState) do
+        if rst.members then
+            for _, mid in ipairs(rst.members) do
+                if mid == id then return true end
+            end
+        end
+    end
+    if minerState[id] then return true end -- kicked miner: rally stands off
+    return false
+end
+
+-- Like isOfficerAssigned, but the miner's own assignees don't block
+-- re-evaluation. Without this, a kicked miner would be officer-held
+-- forever BY ITS OWN assignment, and the cooldown/arrival logic below
+-- would be dead code (live-found 2026-09-30: re-kick never fired).
+-- Every other layer's claim is still honored: a miner drafted by
+-- point defense mid-intercept is never yanked back.
+local function officerHeldElsewhere(id)
+    local gs = guardState[id]
+    if gs and gs.threatened then return true end
+    if defenseState[id] then return true end
+    for _, st in pairs(escortState) do
+        if not st.standDown then
+            for _, gid in ipairs(st.guards) do
+                if gid == id then return true end
+            end
         end
     end
     for _, rst in pairs(raidState) do
@@ -586,6 +999,15 @@ local function snapOf(u)
     e.maxhp = (ok and type(v) == "number") and v or nil
     ok, v = pcall(u.GetCost, u)
     e.cost = (ok and type(v) == "number" and v > 0) and math.floor(v) or 0
+    -- VALOR: veterancy tier for preservation + anti-valor targeting.
+    -- Missing binding (old DLL, odd object) reads as rookie: promotion
+    -- blindness, never a misgrade — same fail-quiet as cost above.
+    ok, v = pcall(u.GetVeterancy, u)
+    e.vet = (ok and (v == "veteran" or v == "elite")) and v or "rookie"
+    -- Fraction to the next tier (0.0..1.0; missing binding reads 0).
+    ok, v = pcall(u.GetVeterancyProgress, u)
+    e.vetProgress = (ok and type(v) == "number" and v >= 0)
+        and math.min(v, 1.0) or 0
     return e
 end
 
@@ -606,10 +1028,174 @@ local function orderMove(e, x, y)
     return ok and res == true
 end
 
+-- Mission read helpers (defensive: GetMission may return a numeric code
+-- or fail — both read as nil, i.e. UNREADABLE, which always means HOLD,
+-- never yank: false positives would poison the measurement).
+local function readMissionName(e)
+    local ok, m = pcall(e.u.GetMission, e.u)
+    if ok and type(m) == "string" then return m end
+    return nil
+end
+
+local function unitOnMoveMission(e)
+    return readMissionName(e) == "Move"
+end
+
+-- MoveTo readback (overwrite measurement): tracked orders carry a
+-- first-scan memory; moveReadback() verdicts each tracked unit per
+-- scan as ARRIVED (at dest), HOLDING (mission Move, closing in),
+-- YANKED (mission changed away with no SmartAI owner — vanilla or
+-- manual re-task), HANDOFF (a SmartAI layer owns it now — not a yank),
+-- or STALE (still on MoveTo mission after MOVE_TRACK_EXPIRE_F frames
+-- with no arrival — stuck, ignored, or claimed too late to matter).
+-- Verdicts drop the entry; entries also drop on death/disappearance
+-- (silent — the unit is gone, not the order's fault). The window is
+-- deliberately LONG (probe-2 finding 2026-10-03: a 6-scan window went
+-- blind to a Tier-1 draft landing 600f after the rally order — the
+-- drain is real, the verdict must outlive the march).
+-- Counts feed MOVE_STATS (census cadence, incl. pool sizes for the
+-- availability trend) + MoveInspect (harness).
+-- Today only RALLY tracks (the Hunt-fix follow-up needs exactly
+-- GetMission readback here); escort refresh/recall use plain
+-- orderMove until the numbers say otherwise.
+local moveTrack = {} -- unitId -> { ax, ay, frame, site, scans }
+local moveStats = { ordered = 0, arrived = 0, yanked = 0, handoff = 0,
+    stale = 0 }
+local lastMoveStatsFrame = 0
+local MOVE_TRACK_EXPIRE_F = 3600 -- 2 min: a march ends or it never will
+local MOVE_REACHED_R2 = 4
+
+local function orderMoveTracked(e, x, y, site, frame)
+    if not orderMove(e, x, y) then return false end
+    moveTrack[e.id] = { ax = x, ay = y, frame = frame, site = site,
+        scans = 0 }
+    moveStats.ordered = moveStats.ordered + 1
+    return true
+end
+
+local function moveReadback(frame, units, logFn)
+    for id, t in pairs(moveTrack) do
+        local e = findSnap(units, id)
+        if e == nil then
+            moveTrack[id] = nil -- gone (died/sold/left): not a verdict
+        else
+            t.scans = t.scans + 1
+            if dist2(e.x, e.y, t.ax, t.ay) <= MOVE_REACHED_R2 then
+                moveTrack[id] = nil
+                moveStats.arrived = moveStats.arrived + 1
+            elseif t.scans < 2 then
+                -- Order settling: mission may not have commenced yet.
+            elseif readMissionName(e) == nil or unitOnMoveMission(e) then
+                if frame - (t.frame or 0) > MOVE_TRACK_EXPIRE_F then
+                    moveTrack[id] = nil
+                    moveStats.stale = moveStats.stale + 1
+                    logFn("MOVE_DIVERGENCE", frame, string.format(
+                        "unit=%s site=%s dest=%d,%d at=%d,%d mission=%s verdict=STALE",
+                        tostring(id), tostring(t.site), t.ax, t.ay,
+                        e.hasPos and e.x or -1, e.hasPos and e.y or -1,
+                        tostring(readMissionName(e))))
+                end
+                -- else HOLDING: keep watching silently
+            elseif isOfficerAssigned(id) then
+                moveTrack[id] = nil
+                moveStats.handoff = moveStats.handoff + 1
+            else
+                    moveTrack[id] = nil
+                    moveStats.yanked = moveStats.yanked + 1
+                    logFn("MOVE_DIVERGENCE", frame, string.format(
+                    "unit=%s site=%s dest=%d,%d at=%d,%d mission=%s",
+                    tostring(id), tostring(t.site), t.ax, t.ay,
+                    e.hasPos and e.x or -1, e.hasPos and e.y or -1,
+                    tostring(readMissionName(e))))
+            end
+        end
+    end
+end
+
+-- Test-only inspector (harnesses only): MoveTo readback counters.
+-- Returns live table — tests must read, never write.
+function SmartAI.MoveInspect()
+    local tracked = 0
+    for _ in pairs(moveTrack) do tracked = tracked + 1 end
+    return { ordered = moveStats.ordered, arrived = moveStats.arrived,
+        yanked = moveStats.yanked, handoff = moveStats.handoff,
+        stale = moveStats.stale,
+        tracked = tracked, idleNow = moveStats.idleNow or 0,
+        marchingNow = moveStats.marchingNow or 0 }
+end
+
 local function orderAttack(e, target)
     local ok, res = pcall(e.u.Attack, e.u, target)
     return ok and res ~= false
 end
+
+-- Hero base scoring shared by the HERO scan and its focus-keep
+-- (one function, no drift): per-hero chassis value + VALOR bonus.
+-- Returns nil for YuriP-vs-building (uncontrollable, never scored).
+local function heroBaseValue(ht, u)
+    local isBld = u.k == "building"
+    local v
+    if ht == "TANYA" then
+        if u.k == "infantry" then v = 3.0
+        elseif isBld then v = raidTargetValue(u)
+        else v = 1.0 end
+    elseif ht == "BORIS" then
+        if u.k == "unit" then v = 2.5
+        elseif u.k == "infantry" then v = 1.5
+        else v = 1.0 end
+    else -- YURIPR: control the expensive one
+        if isBld then return nil end
+        v = 1.0 + (u.cost or 0) / 2000.0
+        if v > 4.0 then v = 4.0 end
+    end
+    return v + valorBonus(u)
+end
+
+-- Retarget value (M3 fight-smarter): what a target is WORTH shooting.
+-- Buildings reuse raidTargetValue (economy-weighted); mobiles price by
+-- role + cost so Apocs outrank GIs and MCVs/suicides top everything.
+-- VALOR: enemy veterans/elites/heroes/T3 carry a bonus (an elite GI
+-- outranks a rookie Rhino — killing multipliers first is the doctrine).
+local function retargetValue(e)
+    if e.k == "building" then return raidTargetValue(e) end
+    if HARVESTER_TYPES[e.t] then return 2.0 end
+    if MCV_TYPES[e.t] then return 3.0 end
+    if ARTILLERY_TYPES[e.t] then return 2.5 end
+    if SUICIDE_TYPES[e.t] then return 4.0 end
+    if e.k == "aircraft" then return 1.0 end
+    local base = 0.5
+    if e.k == "unit" then base = 1.0 + (e.cost or 0) / 4000.0 end
+    return base + valorBonus(e)
+end
+
+-- Retarget tuning: only a CLEAR upgrade (gap), never farther than the
+-- current engagement (+2 cells slop, no repositioning treks), and only
+-- inside REASSESS_R for attack-movers (no native target to compare).
+local RETARGET_R = 15
+local RETARGET_GAP = 1.0
+local RETARGET_EVERY = 300
+
+local function orderHarvest(e, x, y)
+    if type(e.u.HarvestAt) ~= "function" then return false end
+    local ok, res = pcall(e.u.HarvestAt, e.u, x, y)
+    return ok and res ~= false
+end
+
+local function orderDestroy(e, amount)
+    local ok, res = pcall(e.u.TakeDamage, e.u, amount)
+    return ok and type(res) == "number"
+end
+
+-- Miner officer types: war/chrono miners only. SMIN (slave miner)
+-- excluded: its deploy-grind is its own minigame, don't touch it.
+local MINER_TYPES = { HARV = true, CMIN = true }
+local MINER_EVERY = 300 -- per-miner re-kick cooldown (frames)
+-- Anchor within this distance of an own building = docked, not mining.
+local MINER_BASE_R2 = 9
+-- Within 2 cells of the kick destination = arrived, hold (no churn).
+local MINER_REACHED_R2 = 4
+-- minerState lives with the other officer state above officerReset
+-- (upvalue rule); constants can stay here (runtime reads only).
 
 -- ---------------------------------------------------------------------------
 -- Diagnostics (attribution only — never decisions, never re-orders).
@@ -624,6 +1210,37 @@ local SMARTAI_CENSUS_EVERY = 1800 -- AI-house roster dump cadence (frames)
 local function dlog(tag, frame, body)
     print(string.format("[SMARTAI][%s] frame=%d %s", tostring(tag),
         math.floor(frame or 0), tostring(body)))
+end
+
+-- KEEP/QUIET/CUT (2026-10-03, user-approved): steady-state diagnostic
+-- chatter collapsed to on-change + heartbeat. diagLast[key] tracks the
+-- last EMITTED payload and the opportunity count. Emits when the
+-- compared payload differs, or every DIAG_HEARTBEAT-th opportunity
+-- (liveness proof: "running with nothing new" vs "not running" — the
+-- RALLYDIAG/RECOVERY heartbeat lesson). `cmp` optionally separates the
+-- compared signal from the emitted line (GROUP decision|reason without
+-- the wiggling ratio; C4DIAG funnel without the position-carrying
+-- samples). `force` keeps true events always visible (a RECOVERY that
+-- claimed or ordered is news even when shaped like the last one).
+-- Cleared on match restart next to guardReset/officerReset.
+local diagLast = {}
+local DIAG_HEARTBEAT = 3
+local function dlogChange(tag, frame, key, msg, cmp, force)
+    local k = tostring(tag) .. "|" .. tostring(key)
+    local slot = diagLast[k]
+    local sig = cmp or msg
+    if slot == nil then
+        diagLast[k] = { payload = sig, n = 1 }
+        dlog(tag, frame, msg)
+        return true
+    end
+    slot.n = slot.n + 1
+    if force or sig ~= slot.payload or slot.n % DIAG_HEARTBEAT == 0 then
+        slot.payload = sig
+        dlog(tag, frame, msg)
+        return true
+    end
+    return false
 end
 
 local function liveId(u)
@@ -675,6 +1292,18 @@ local function lastSmartAIOrder(did, sinceFrame)
     local rs = recallState[did]
     if rs and (rs.orderedFrame or 0) > (sinceFrame or 0) then
         hits[#hits + 1] = "RECALL@" .. tostring(rs.orderedFrame)
+    end
+    local ev = radEvacState[did]
+    if ev and (ev.orderedFrame or 0) > (sinceFrame or 0) then
+        hits[#hits + 1] = "RADEVAC@" .. tostring(ev.orderedFrame)
+    end
+    local mn = minerState[did]
+    if mn and (mn.orderedFrame or 0) > (sinceFrame or 0) then
+        hits[#hits + 1] = "MINER@" .. tostring(mn.orderedFrame)
+    end
+    local rt = retargetState[did]
+    if rt and (rt.orderedFrame or 0) > (sinceFrame or 0) then
+        hits[#hits + 1] = "RETARGET@" .. tostring(rt.orderedFrame)
     end
     for _, rdst in pairs(raidState) do
         if rdst.members then
@@ -738,6 +1367,65 @@ local function c4RawDifficulty(house)
     if not ok then return "error" end
     if level == nil then return "nil" end
     return tostring(level)
+end
+
+-- M3 stance: per-house character for the raid layer. Returns an
+-- ADJUSTED COPY (never mutates the shared preset) + the stance name
+-- (nil for easy: characterless by design). Rusher raids bigger, more
+-- often, farther; turtle raids smaller, rarer, closer. Announced once
+-- per house per match — the readable-intent moment. Hard houses present
+-- as Mastermind (the only CnCNet-lobby name we own is the one we say).
+local function stanceParams(aiHouse, P, aiName, frame)
+    if not P.raid then return P, nil end
+    local st = stanceCache[aiHouse]
+    if not st then
+        -- Hard difficulty always rushes (Mastermind doctrine); everyone
+        -- else alternates from the deterministic first-seen order.
+        if c4RawDifficulty(aiHouse) == "hard" then
+            st = "rusher"
+        else
+            stanceCount = stanceCount + 1
+            st = (stanceCount % 2 == 1) and "rusher" or "turtle"
+        end
+        stanceCache[aiHouse] = st
+    end
+    if not stanceAnnounced[aiHouse] then
+        stanceAnnounced[aiHouse] = true
+        local title = "AI Commander"
+        if c4RawDifficulty(aiHouse) == "hard" then title = "Mastermind" end
+        local diff = c4RawDifficulty(aiHouse)
+        dlog("STANCE", frame, string.format("house=%s stance=%s difficulty=%s",
+            tostring(aiName), st, diff))
+        local alert = string.format("[%s - %s] adopts %s stance (%s).",
+            title, tostring(aiName), string.upper(st), diff)
+        Engine.PrintMessage(alert)
+        print("[LuaAPI] " .. alert)
+    end
+    local Q = {}
+    for k, v in pairs(P) do Q[k] = v end
+    if st == "rusher" then
+        Q.raidN = (P.raidN or 4) + 1
+        Q.raidEvery = math.floor((P.raidEvery or 600) * 0.66)
+        Q.raidQuiet = math.floor((P.raidQuiet or 600) * 0.66)
+        Q.raidRange = (P.raidRange or 60) + 10
+    else
+        Q.raidN = (P.raidN or 4) - 1
+        Q.raidEvery = math.floor((P.raidEvery or 600) * 1.5)
+        Q.raidQuiet = math.floor((P.raidQuiet or 600) * 1.5)
+        Q.raidRange = math.max(30, (P.raidRange or 60) - 10)
+    end
+    return Q, st
+end
+
+-- Raid group size: stanced base +/- evidence level, floored at raidMin
+-- (tiny groups never form) and capped at base+2 (no doomstacks).
+local function raidSizeFor(aiHouse, P)
+    local lv = raidLevel[aiHouse] or 0
+    local base = P.raidN or 4
+    local n = base + lv
+    if n < (P.raidMin or 3) then n = P.raidMin or 3 end
+    if n > base + 2 then n = base + 2 end
+    return n
 end
 
 local function c4diagScan(units, home, aiHouse, P, allied)
@@ -911,11 +1599,12 @@ function SmartAI.Update(frame)
     -- Command Authority). Resets both the legacy scan gate and the
     -- capture-guard state so a new match starts clean.
     if frame < lastScanFrame then lastScanFrame = 0 end
-    if frame < guardLastFrame then guardReset(); officerReset() end
+    if frame < guardLastFrame then guardReset(); officerReset(); diagLast = {} end
     guardLastFrame = frame
 
     if frame - lastScanFrame < tickScanEvery() then return end
     lastScanFrame = frame
+    scanCounter = (scanCounter or 0) + 1
 
     local humanPlayer = House.GetPlayer()
     if not humanPlayer then return end
@@ -986,7 +1675,13 @@ function SmartAI.Update(frame)
     -- M2-C2 ARBITER (tick-claim registry): ONE authority deciding which
     -- site owns a unit THIS tick. Priority = file order below (codified
     -- status quo, not a rebalance — severity retuning is C4):
-    --   GUARD > DEFENSE(+MARCH) > ESCORT > GARRISON > RALLY > RECALL > RAID.
+    --   GUARD > DEFENSE(+MARCH) > ESCORT > GARRISON > RALLY > RADEVAC
+    --     > MINER > RECALL > RAID.
+    -- RADEVAC sits below RALLY (a live breach kills faster than attrition);
+    -- MINER sits below RADEVAC (evacuees outrank ore) and above RECALL
+    -- (a working miner is not a quiet-home surplus). NOTE: file order is
+    -- ESCORT > GARRISON > RADEVAC > MINER, all inside the Officer loop,
+    -- hence all above RALLY (Commander acts after the Officer).
     -- Every drafting site must tryClaim() before ordering and skip on
     -- conflict; the skipped site counts arbSkips for the per-tick ARBITER
     -- summary. Tick-local by construction: nothing survives the tick, so
@@ -1073,6 +1768,18 @@ function SmartAI.Update(frame)
                 end
                 surrendered[aiHouse] = frame
                 cmdState[aiHouse] = nil
+                -- Phase 1: surrendered units stay alive but silent — release
+                -- their native leases so the hook never vetoes for a dead
+                -- house (the hook always loses to match end, without a
+                -- fight). Records stay for the ledger; only the lease goes.
+                if TargetLease then
+                    for did, ds in pairs(defenseState) do
+                        if ds.house == aiHouse then
+                            local def = findSnap(units, did)
+                            if def and def.u then TargetLease.Release(def.u) end
+                        end
+                    end
+                end
                 dlog("SURRENDER_DETECTED", frame, string.format(
                     "house=%s barracks=0 war_factory=0 mcv=0",
                     tostring(aiHouse:GetName())))
@@ -1138,6 +1845,250 @@ function SmartAI.Update(frame)
             end
             ::next_surrender::
         end
+    end
+
+    -- BUILDLAW enforcement, FINAL rule (v3): sell IFF all hold —
+    -- (a) chain broken NOW, (b) chain was broken at BIRTH (birth-legal
+    -- buildings are never touched: ordered-while-stood), (c) type was
+    -- NOT queue-marked fresh at birth (queued-while-satisfied =
+    -- queue-completion; marks refresh while queued and expire
+    -- QMARK_WINDOW after the last satisfied sighting, so a stale mark
+    -- never grandfathers a post-raze rebuild), (d) birth scan > 1
+    -- (load-time / pre-placed inventory assumed legal),
+    -- (e) past BUILDLAW_GRACE, (f) AI house, non-surrendered, preset on.
+    -- This is MM-doctrine (prereqs at order time) made measurable:
+    -- birth + queue-mark separate "ordered legally" from "fresh cheat",
+    -- which snapshots alone cannot (French f=31652 lesson).
+    for _, aiHouse in ipairs(aiHouses) do
+        local P = paramsFor(aiHouse) -- per-house preset (Beta M1)
+        -- Declared before the skips below: a goto may not jump over a
+        -- local declaration (Lua 5.4 scope rule).
+        local cur = {}
+        for _, b in ipairs(buildings) do
+            if b.oh == aiHouse and b.t ~= "" then
+                cur[b.t] = true
+            end
+        end
+        -- PROC alternate: an undeployed Slave Miner vehicle satisfies
+        -- PROC ([General] PrerequisiteProcAlternate=SMIN; modded prefix
+        -- tolerated like everywhere else).
+        for _, e in ipairs(units) do
+            if e.oh == aiHouse and e.t ~= "" then
+                if PROC_ALT_TYPES[e.t] then
+                    cur[e.t] = true
+                else
+                    for alt in pairs(PROC_ALT_TYPES) do
+                        if e.t:sub(-(#alt + 1)) == "-" .. alt then
+                            cur[e.t] = true
+                            break
+                        end
+                    end
+                end
+            end
+        end
+        if surrendered[aiHouse] then goto next_buildlaw end
+        if not P.buildlaw then goto next_buildlaw end
+        local grace = SmartAI.BUILDLAW_GRACE or 1800
+        -- Queue binding (read-only, may be absent on old DLLs): resolved
+        -- per tick, never cached across ticks (a rebuilt DLL mid-process
+        -- must not keep a stale nil).
+        local AIQ = nil
+        if type(AI) == "table" and type(AI.IsQueued) == "function" then
+            AIQ = AI.IsQueued
+        end
+        local qmarks = queuedWhileSat[aiHouse]
+        if not qmarks then
+            qmarks = {}
+            queuedWhileSat[aiHouse] = qmarks
+        end
+        local qmarkWindow = SmartAI.QMARK_WINDOW or 1800
+        if AIQ then
+            for canon, row in pairs(BUILDLAW) do
+                if not buildLawMissing(cur, row) then
+                    local ok, q = pcall(AIQ, aiHouse, canon)
+                    if ok and q == true then
+                        if not qmarks[canon] then
+                            dlog("QUEUE_GRAND", frame, string.format(
+                                "house=%s type=%s chain=satisfied",
+                                tostring(aiHouse:GetName()),
+                                tostring(canon)))
+                        end
+                        qmarks[canon] = frame -- refresh while queued
+                    end
+                end
+            end
+        end
+        -- Expire stale marks: a mark outlives queue->completion lag but
+        -- never a post-raze rebuild minutes later.
+        for canon, mf in pairs(qmarks) do
+            if frame - (mf or 0) > qmarkWindow then
+                qmarks[canon] = nil
+            end
+        end
+        if frame >= grace then
+        for _, b in ipairs(buildings) do
+            if b.oh == aiHouse then
+                local row, canon = buildLawRowKey(b.t)
+                if row then
+                    if birthScan[b.id] == nil then
+                        birthScan[b.id] = scanCounter
+                        -- Birth-latch: born satisfied OR born under a
+                        -- fresh mark (queue-completion) = legal forever.
+                        -- A standing legal building is never re-examined
+                        -- when its mark later expires.
+                        local bornMissing =
+                            buildLawMissing(cur, row) ~= nil
+                        local mf = qmarks[canon]
+                        local markedFresh =
+                            mf and (frame - mf <= qmarkWindow)
+                        birthViol[b.id] = bornMissing and not markedFresh
+                    end
+                    local missing = buildLawMissing(cur, row)
+                    if missing and (birthScan[b.id] or 0) > 1
+                        and birthViol[b.id] then
+                    -- Sell budget: an AI stuck re-cheating one type is
+                    -- taxed SELL_CAP times per match, then left standing
+                    -- (log-and-leave) so enforcement cannot brick the AI.
+                    local cap = SmartAI.BUILDLAW_SELL_CAP or 3
+                    local sc = sellCounts[aiHouse]
+                    if not sc then
+                        sc = {}
+                        sellCounts[aiHouse] = sc
+                    end
+                    local n = sc[canon] or 0
+                    if n >= cap then
+                        local gu = gaveUp[aiHouse]
+                        if not gu then
+                            gu = {}
+                            gaveUp[aiHouse] = gu
+                        end
+                        if not gu[canon] then
+                            gu[canon] = true
+                            dlog("BUILDLAW_GAVE_UP", frame, string.format(
+                                "house=%s type=%s sells=%d cap=%d",
+                                tostring(aiHouse:GetName()),
+                                tostring(canon), n, cap))
+                            local alert = string.format(
+                                "[AI Commander - %s] Leaving illegal %s "
+                                .. "standing (%d sells).",
+                                tostring(aiHouse:GetName()),
+                                tostring(b.t), n)
+                            Engine.PrintMessage(alert)
+                            print("[LuaAPI] " .. alert)
+                        end
+                    else
+                    local okC0, c0 = pcall(aiHouse.GetCredits, aiHouse)
+                    local okS, sold = pcall(b.u.Sell, b.u)
+                    if okS and sold == true then
+                        sc[canon] = n + 1
+                        local refund = 0
+                        local okC1, c1 = pcall(aiHouse.GetCredits, aiHouse)
+                        if okC0 and okC1 and type(c0) == "number"
+                            and type(c1) == "number" and c1 > c0 then
+                            refund = c1 - c0
+                            pcall(aiHouse.AddCredits, aiHouse, c0 - c1)
+                        end
+                        dlog("BUILDLAW_SELL", frame, string.format(
+                            "house=%s sold=%s type=%s missing=%s refund=%d",
+                            tostring(aiHouse:GetName()), tostring(b.id),
+                            tostring(b.t), tostring(missing), refund))
+                        local alert = string.format(
+                            "[AI Commander - %s] Illegal %s sold (no %s).",
+                            tostring(aiHouse:GetName()), tostring(b.t),
+                            tostring(missing))
+                        Engine.PrintMessage(alert)
+                        print("[LuaAPI] " .. alert)
+                    end
+                    end -- budget: sell vs leave
+                    end -- missing entry: violation confirmed
+                end
+            end
+        end
+        end -- grace window
+        ::next_buildlaw::
+    end
+
+    -- MCVLAW enforcement (units, never-had rule over WF+depot).
+    -- Records every own building type first (same-scan unlock
+    -- legalizes same-scan MCV), then destroys systematic MCVs whose
+    -- whole chain was never seen. No arbiter claims: destruction is
+    -- terminal, there is no order to conflict over.
+    for _, aiHouse in ipairs(aiHouses) do
+        local P = paramsFor(aiHouse) -- per-house preset (Beta M1)
+        local dep = seenBTypes[aiHouse]
+        if not dep then
+            dep = {}
+            seenBTypes[aiHouse] = dep
+        end
+        for _, b in ipairs(buildings) do
+            if b.oh == aiHouse and b.t ~= "" then
+                dep[b.t] = true
+            end
+        end
+        if surrendered[aiHouse] then goto next_mcv end
+        if not P.buildlaw then goto next_mcv end
+        local grace = SmartAI.BUILDLAW_GRACE or 1800
+        if frame >= grace then
+        for _, e in ipairs(units) do
+            if e.oh == aiHouse and e.k == "unit" and e.hasPos then
+                local row, canon = mcvLawRow(e.t)
+                if row then
+                    -- Deployed MCVs are bases, never touched (fail-open
+                    -- toward enforcement on bindings without IsDeployed).
+                    local okD, isDep = pcall(e.u.IsDeployed, e.u)
+                    if not (okD and isDep == true) then
+                        if birthScan[e.id] == nil then
+                            birthScan[e.id] = scanCounter
+                        end
+                        local missing = buildLawMissing(dep, row)
+                        if missing and (birthScan[e.id] or 0) > 1 then
+                            local cap = SmartAI.BUILDLAW_SELL_CAP or 3
+                            local sc = sellCounts[aiHouse]
+                            if not sc then
+                                sc = {}
+                                sellCounts[aiHouse] = sc
+                            end
+                            local n = sc[canon] or 0
+                            if n >= cap then
+                                local gu = gaveUp[aiHouse]
+                                if not gu then
+                                    gu = {}
+                                    gaveUp[aiHouse] = gu
+                                end
+                                if not gu[canon] then
+                                    gu[canon] = true
+                                    dlog("MCVLAW_GAVE_UP", frame,
+                                        string.format(
+                                            "house=%s type=%s destroys=%d cap=%d",
+                                            tostring(aiHouse:GetName()),
+                                            tostring(canon), n, cap))
+                                end
+                            else
+                                if orderDestroy(e, 100000) then
+                                    sc[canon] = n + 1
+                                    dlog("MCVLAW_DESTROY", frame,
+                                        string.format(
+                                            "house=%s destroyed=%s type=%s "
+                                            .. "missing=%s",
+                                            tostring(aiHouse:GetName()),
+                                            tostring(e.id), tostring(e.t),
+                                            tostring(missing)))
+                                    local alert = string.format(
+                                        "[AI Commander - %s] Illegal %s "
+                                        .. "destroyed (no %s).",
+                                        tostring(aiHouse:GetName()),
+                                        tostring(e.t), tostring(missing))
+                                    Engine.PrintMessage(alert)
+                                    print("[LuaAPI] " .. alert)
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        end -- grace window
+        ::next_mcv::
     end
 
     -- COMMANDER recon (base): breach detection feeds the shared blackboard.
@@ -1326,7 +2277,9 @@ function SmartAI.Update(frame)
             elseif not ph.intruderR then state = "OFF_NO_INTRUDER_R"
             elseif isSurr then state = "OFF_SURRENDERED"
             else state = "ON" end
-            dlog("C4PRESET", frame, string.format(
+            -- QUIET (KEEP/QUIET/CUT): constant all match except on
+            -- surrender/preset flip; on-change + heartbeat.
+            dlogChange("C4PRESET", frame, aiHouse:GetName(), string.format(
                 "aiHouses=%d house=%s outer=%s preset=%s difficulty=%s R=%s "
                     .. "def=%s r=%s surr=%s state=%s diverge=%s funnel=%s",
                 #aiHouses, tostring(aiHouse:GetName()), outerName, innerName,
@@ -1601,8 +2554,8 @@ function SmartAI.Update(frame)
                         end
                     end
                 end
-    if poolTaken > 0 then
-        dEffStats.pulls = dEffStats.pulls + poolTaken
+                if poolTaken > 0 then
+                    dEffStats.pulls = dEffStats.pulls + poolTaken
                 else
                     dEffStats.denied = dEffStats.denied + 1
                 end
@@ -1614,6 +2567,130 @@ function SmartAI.Update(frame)
                         .. "poolFar=%d poolBusy=%d poolOfficer=%d pulled=%d",
                     tostring(aiName), eff.streak, eff.w, eff.l, #intruders,
                     tostring(sevLevel), poolFar, poolBusy, poolOfficer, poolTaken))
+            end
+
+            -- === M2-C4 RECOVERY: the response to the FIRST loss ============
+            -- Proven live 2026-09-26: the adaptation ladder could not
+            -- bootstrap. The reason was an INVERSION OF PREREQUISITES, not a
+            -- threshold that was merely too high:
+            --     to LOSE     -> 1 idle ground defender + 1 contact
+            --     to ADAPT    -> streak 2, i.e. 2 contacts, i.e. 2 idle
+            --                     ground defenders over time, PLUS a distant
+            --                     ground reserve
+            -- Recovery therefore demanded strictly MORE than the failure it
+            -- was recovering from. A house that lost one exchange and then
+            -- lost its mobility could never leave streak=1.
+            --
+            -- This block removes the inversion: ONE measured loss is enough to
+            -- get a response. It is NOT the ADAPT block with a lower
+            -- threshold -- the two are separate responses with separate
+            -- populations, radii, limits and cooldowns:
+            --
+            --   RECOVERY  streak >= 1, near reserve, <= assignR, max 1 unit,
+            --             no `confirmed` requirement, cooldown defenseEvery
+            --   ADAPT     streak >= ADAPT_STREAK_TRIGGER (unchanged 2), FAR
+            --             reserve, > ADAPT_PULL_MIN_DIST, no count limit
+            --
+            -- The two responses partition on the streak, and the partition is
+            -- on the STREAK BAND, not on "did ADAPT happen to run this tick".
+            -- An earlier revision guarded with `not adaptFired`; that is wrong,
+            -- and live in this harness: ADAPT and RECOVERY latch on SEPARATE
+            -- cooldowns, so at streak 3 there are windows where ADAPT is
+            -- cooling down and RECOVERY is not. RECOVERY then hijacked an
+            -- escalated state and pulled a unit ADAPT deliberately leaves
+            -- alone -- which broke the T59 25-cell-floor contract. With the
+            -- band guard, streak >= ADAPT_STREAK_TRIGGER belongs to ADAPT
+            -- unconditionally and the latches can never overlap.
+            --
+            -- Population: NOT idle and NOT attacking -- the units Act
+            -- structurally cannot use, which is why no new ground defender
+            -- appeared after the loss. Idle units are Act's business; a WIN
+            -- resets the streak and stops the response on its own.
+            --
+            -- Radius uses P.assignR, not the severity-scaled sevAssignR, so the
+            -- bound is stable regardless of the current threat level.
+            --
+            -- Anti-churn: the existing defenseEvery cadence plus the existing
+            -- per-unit redirectEvery window through recallState -- the same
+            -- mechanism Tier 2 MARCH_RECALL uses. No new lease system.
+            --
+            -- Claim "MARCH" reuses the documented tier
+            -- (GUARD > DEFENSE(+MARCH) > ESCORT > GARRISON > RALLY > RECALL >
+            -- RAID); no new priority tier, and a contested unit is resolved by
+            -- the existing C2 claim, not by any logic here.
+            if eff and #intruders > 0 and streak >= 1
+                and streak < ADAPT_STREAK_TRIGGER
+                and frame >= (eff.recoveryUntil or 0) then
+                eff.recoveryUntil = frame + P.defenseEvery
+                local recR2 = P.assignR * P.assignR
+                local cands = {}
+                local poolNear, poolBusy, poolOfficer, poolRecent = 0, 0, 0, 0
+                for _, u in ipairs(units) do
+                    if u.oh == aiHouse and u.k == "unit" and u.hasPos
+                        and not HARVESTER_TYPES[u.t] and not MCV_TYPES[u.t]
+                        and not ARTILLERY_TYPES[u.t] then
+                        local d2 = dist2(u.x, u.y, bx, by)
+                        if d2 <= recR2 then
+                            poolNear = poolNear + 1
+                            if not u.idle and u.attacking == false then
+                                poolBusy = poolBusy + 1
+                                local rs = recallState[u.id]
+                                if isOfficerAssigned(u.id) then
+                                    poolOfficer = poolOfficer + 1
+                                elseif rs and frame - (rs.orderedFrame or 0) < P.redirectEvery then
+                                    poolRecent = poolRecent + 1
+                                else
+                                    cands[#cands + 1] = { u = u, d2 = d2 }
+                                end
+                            end
+                        end
+                    end
+                end
+                -- Nearest first, id ascending on a tie: deterministic, so the
+                -- reported unit is reproducible.
+                table.sort(cands, function(a, b)
+                    if a.d2 ~= b.d2 then return a.d2 < b.d2 end
+                    return a.u.id < b.u.id
+                end)
+                local claimed, ordered = 0, 0
+                local firstUnit, firstDist = nil, nil
+                -- Single source of truth for the claim site: the same value is
+                -- passed to tryClaim AND reported by the event, so the log
+                -- cannot claim a tier the order did not actually use.
+                local recClaim = "MARCH"
+                for i = 1, math.min(RECOVERY_MAX_UNITS, #cands) do
+                    local c = cands[i]
+                    if tryClaim(c.u.id, recClaim) then
+                        claimed = claimed + 1
+                        if orderMove(c.u, math.floor(bx + 0.5), math.floor(by + 0.5)) then
+                            ordered = ordered + 1
+                            recallState[c.u.id] = { orderedFrame = frame }
+                            if not firstUnit then firstUnit, firstDist = c.u, c.d2 end
+                        end
+                    end
+                end
+                if ordered > 0 then
+                    dEffStats.recovery = dEffStats.recovery + ordered
+                end
+                -- QUIET (KEEP/QUIET/CUT): empty repeats collapse to
+                -- on-change + heartbeat; a response that claimed or
+                -- ordered is an event and always logs (force).
+                local recMsg = string.format(
+                    "house=%s streak=%d w=%d l=%d intruders=%d sev=%s "
+                        .. "unit=%s type=%s dist=%d anchor=%d,%d "
+                        .. "poolNear=%d poolBusy=%d poolOfficer=%d poolRecent=%d "
+                        .. "claim=%s claimed=%s ordered=%s orderedUnits=%d",
+                    tostring(aiName), eff.streak, eff.w, eff.l, #intruders,
+                    tostring(sevLevel),
+                    firstUnit and tostring(firstUnit.id) or "-",
+                    firstUnit and tostring(firstUnit.t) or "-",
+                    firstDist and math.floor(math.sqrt(firstDist) + 0.5) or -1,
+                    math.floor(bx + 0.5), math.floor(by + 0.5),
+                    poolNear, poolBusy, poolOfficer, poolRecent,
+                    tostring(recClaim), tostring(claimed > 0),
+                    tostring(ordered > 0), ordered)
+                dlogChange("RECOVERY", frame, aiName, recMsg, nil,
+                    claimed > 0 or ordered > 0)
             end
             eff = nil
             local confirmed = false
@@ -1646,7 +2723,8 @@ function SmartAI.Update(frame)
                         and (not isOfficerAssigned(u.id) or holdingIt)
                         and not takenDef[u.id] and kindOk
                         and not HARVESTER_TYPES[u.t] and not MCV_TYPES[u.t]
-                        and not ARTILLERY_TYPES[u.t] and u.hasPos then
+                        and not ARTILLERY_TYPES[u.t] and not HERO_TYPES[u.t]
+                        and u.hasPos then
                         local d2 = dist2(u.x, u.y, it.x, it.y)
                         if d2 <= sevAssignR * sevAssignR then
                             cands[#cands + 1] = { u = u, d2 = d2 }
@@ -1709,6 +2787,14 @@ function SmartAI.Update(frame)
                                         -- right ledger.
                                         house = aiHouse,
                                     }
+                                    -- Phase 1 (exclusive ownership): the
+                                    -- SetTarget hook vetoes foreign re-tasks
+                                    -- of this unit while leased. Nil-guarded:
+                                    -- harnesses and hook-inactive builds run
+                                    -- unleashed (pure vanilla + readback).
+                                    if TargetLease then
+                                        TargetLease.Acquire(c.u.u, it.u)
+                                    end
                             takenDef[c.u.id] = true
                             assigned = assigned + 1
                             diagOrder(frame, "POINT_DEFENSE", c.u, "Attack",
@@ -1827,27 +2913,32 @@ function SmartAI.Update(frame)
         -- funnel are reported the same way. Bounded to one line plus one
         -- sample line per house per SMARTAI_CENSUS_EVERY frames.
         if c4diag and c4d then
-            dlog("C4DIAG", frame, c4diagLine(frame, aiName, c4d))
+            -- QUIET (KEEP/QUIET/CUT): C4DIAG_SAMPLE merged into C4DIAG
+            -- (user-approved CUT of the duplicate channel). Samples ride
+            -- as a suffix; the on-change signal is the funnel (base)
+            -- line, since samples carry positions that wiggle every gate.
+            local c4base = c4diagLine(frame, aiName, c4d)
+            local c4msg = c4base
             if #c4d.samples > 0 then
-                dlog("C4DIAG_SAMPLE", frame, string.format("house=%s n=%d | %s",
-                    tostring(aiName), #c4d.samples,
-                    table.concat(c4d.samples, " | ")))
+                c4msg = c4msg .. " samples=" .. #c4d.samples .. " | "
+                    .. table.concat(c4d.samples, " | ")
             end
+            dlogChange("C4DIAG", frame, aiName, c4msg, c4base)
             -- M2-C4 ADAPT: the feedback loop's own state, so Act -> Observe
             -- result -> Adapt is legible in one line: what the house has
             -- won/lost, the streak that arms the adaptation, and whether the
             -- adaptation is currently allowed to pull.
             local e3 = dEff[aiHouse]
             local st3 = (e3 and e3.streak) or 0
-    dlog("ADAPTSTATE", frame, string.format(
+    dlogChange("ADAPTSTATE", frame, aiName, string.format(
         "house=%s w=%d l=%d streak=%d armed=%s adaptUntil=%d "
-            .. "totW=%d totL=%d totDraw=%d totPulls=%d totDenied=%d",
+            .. "totW=%d totL=%d totDraw=%d totPulls=%d totDenied=%d totRecovery=%d",
         tostring(aiName),
         (e3 and e3.w) or 0, (e3 and e3.l) or 0, st3,
         tostring(st3 >= ADAPT_STREAK_TRIGGER),
         (e3 and e3.adaptUntil) or 0,
         dEffStats.w, dEffStats.l, dEffStats.draw, dEffStats.pulls,
-        dEffStats.denied))
+        dEffStats.denied, dEffStats.recovery))
         end
         ::next_defense::
     end
@@ -1855,6 +2946,9 @@ function SmartAI.Update(frame)
 
     -- Commander + Officer share this scan (no extra World calls).
     -- Split: Commander takes base defense, Officer takes unit escort.
+    -- Radiation interplay: one read per tick (nil unless the radiation
+    -- mod is loaded and warning/active with targets).
+    local radPhase, radTargets, radRadius = radiationStatus()
     local v3ids, defids = {}, {}
     for _, aiHouse in ipairs(aiHouses) do
         local P = paramsFor(aiHouse) -- per-house preset (Beta M1)
@@ -1871,6 +2965,136 @@ function SmartAI.Update(frame)
                 ownBlds[#ownBlds + 1] = b
             end
         end
+
+        if P.hero then
+        -- OFFICER: heroes (all presets). A hero the vanilla AI built is
+        -- irreplaceable firepower that Tier-1 would feed man-for-man, so
+        -- HERO runs FIRST in the Officer loop and holds every live hero
+        -- (heroState => isOfficerAssigned => all other layers stand off;
+        -- garrison additionally excludes HERO_TYPES by kind filter).
+        -- Easy hunts nothing: leash 8 makes it a base bodyguard reacting
+        -- to adjacent threats. Medium hunts priority targets inside the
+        -- leash. Hard adds retreat at low HP + focus (no flip-flop).
+        -- Transition-only + per-preset cooldown; refresh re-issues the
+        -- same target (cheap yank-resistance: heroes carry no lease).
+        -- Never chases beyond the leash, never orders dead targets.
+        local anchorX, anchorY, anchorId = nil, nil, nil
+        for _, b in ipairs(ownBlds) do
+            if b.hasPos and (anchorId == nil or b.id < anchorId) then
+                anchorId, anchorX, anchorY = b.id, b.x, b.y
+            end
+        end
+        if anchorX then
+        local leash2 = P.heroLeash * P.heroLeash
+        for _, e in ipairs(units) do
+            if e.oh == aiHouse and e.k == "infantry" and e.hasPos
+                and HERO_TYPES[e.t] then
+                local mem = heroState[e.id]
+                local hpFrac = (e.maxhp and e.maxhp > 0)
+                    and (e.hp or e.maxhp) / e.maxhp or 1.0
+                -- Hard retreat: bleeding hero falls back to the anchor.
+                -- Resume is threat-gated below (no medic exists to heal).
+                if P.heroRetreat and hpFrac < HERO_RETREAT_HP
+                    and (not mem or mem.posture ~= "retreat") then
+                    if tryClaim(e.id, "HERO")
+                        and orderMove(e, anchorX, anchorY) then
+                        heroState[e.id] = { targetId = nil,
+                            orderedFrame = frame, posture = "retreat" }
+                        diagOrder(frame, "HERO", e, "MoveTo",
+                            string.format("dest=%d,%d reason=BLEEDING hpf=%.2f",
+                                anchorX, anchorY, hpFrac))
+                    end
+                else
+                    local inRetreat = mem and mem.posture == "retreat"
+                    local threatNear = false
+                    if inRetreat then
+                        for _, u in ipairs(units) do
+                            if u.oh and u.oh ~= aiHouse
+                                and not allied(aiHouse, u.oh)
+                                and not util.is_neutral_house(u.oh)
+                                and not util.CIVIL_TYPES[u.t] and u.hasPos
+                                and (u.k == "unit" or u.k == "infantry")
+                                and dist2(u.x, u.y, e.x, e.y) <= 225 then
+                                threatNear = true
+                                break
+                            end
+                        end
+                    end
+                    if not (inRetreat and threatNear) then
+                        -- Score hostiles inside the anchor leash (shared
+                        -- heroBaseValue: scan and focus-keep cannot drift).
+                        local scored = {}
+                        for _, u in ipairs(units) do
+                            if u.oh and u.oh ~= aiHouse
+                                and not allied(aiHouse, u.oh)
+                                and not util.is_neutral_house(u.oh)
+                                and not util.CIVIL_TYPES[u.t] and u.hasPos then
+                                local isBld = u.k == "building"
+                                if (u.k == "unit" or u.k == "infantry"
+                                        or (isBld and e.t ~= "YURIPR"))
+                                    and dist2(u.x, u.y, anchorX, anchorY)
+                                        <= leash2 then
+                                    local v = heroBaseValue(e.t, u)
+                                    if v then
+                                        scored[#scored + 1] = { u = u, v = v,
+                                            d2 = dist2(u.x, u.y, e.x, e.y) }
+                                    end
+                                end
+                            end
+                        end
+                        table.sort(scored, function(a, b)
+                            if a.v ~= b.v then return a.v > b.v end
+                            if a.d2 ~= b.d2 then return a.d2 < b.d2 end
+                            return a.u.id < b.u.id
+                        end)
+                        local best = scored[1]
+                        -- Hard focus: keep finishing the current target
+                        -- unless something clearly better shows up.
+                        if best and mem and mem.targetId
+                            and P.heroRetreat then
+                            local cur = findSnap(units, mem.targetId)
+                                or findSnap(buildings, mem.targetId)
+                            if cur and cur.hasPos then
+                                local curV = heroBaseValue(e.t, cur)
+                                if curV and best.u.id ~= mem.targetId
+                                    and best.v < curV + HERO_FOCUS_GAP then
+                                    best = { u = cur, v = curV, d2 = 0 }
+                                end
+                            end
+                        end
+                        if best then
+                            local same = mem and mem.targetId == best.u.id
+                            if (not same or frame - (mem.orderedFrame or 0)
+                                    >= P.heroEvery) then
+                                -- best.u is a SNAPSHOT; the order needs the
+                                -- engine object (convention: orderAttack
+                                -- takes e.u-style userdata with GetId —
+                                -- passing the snapshot silently fails).
+                                if tryClaim(e.id, "HERO")
+                                    and orderAttack(e, best.u.u) then
+                                    heroState[e.id] = {
+                                        targetId = best.u.id,
+                                        orderedFrame = frame,
+                                        posture = "hunt",
+                                    }
+                                    diagOrder(frame, "HERO", e, "Attack",
+                                        string.format(
+                                            "target=%s type=%s value=%.1f%s",
+                                            tostring(best.u.id),
+                                            tostring(best.u.t), best.v,
+                                            same and " refresh" or ""))
+                                end
+                            end
+                        elseif not mem then
+                            heroState[e.id] = { targetId = nil,
+                                orderedFrame = frame, posture = "hold" }
+                        end
+                    end
+                end
+            end
+        end
+        end -- anchor present
+        end -- P.hero
 
         if P.escort then
         -- OFFICER: escort for own artillery (units business).
@@ -1895,7 +3119,11 @@ function SmartAI.Update(frame)
                     local live = {}
                     for _, gid in ipairs(st.guards) do
                         local g = findSnap(units, gid)
-                        if g and g.idle then
+                        -- Retained while alive + still ours, even when
+                        -- fighting: the old `g.idle` filter forgot a guard
+                        -- the moment it engaged, so a V3 under attack kept
+                        -- losing its detail exactly when it needed it.
+                        if g and g.oh == aiHouse then
                             live[#live + 1] = gid
                             taken[gid] = true
                         end
@@ -1908,7 +3136,14 @@ function SmartAI.Update(frame)
                         and (need > 0 or moved or frame - st.orderedFrame >= ESCORT_EVERY) then
                         local cands = {}
                         for _, c in ipairs(ownUnits) do
-                            if c.id ~= e.id and not taken[c.id] and c.idle
+                            -- Idle first; marching-but-not-fighting fills the
+                            -- rest (same strictness as march recall and the
+                            -- raid fix: live the idle pool is 0, so an
+                            -- idle-only detail starves). Actually fighting
+                            -- (attacking == true) is never yanked; unknown
+                            -- attack state (nil, old DLL) means skip.
+                            if c.id ~= e.id and not taken[c.id]
+                                and (c.idle or c.attacking == false)
                                 and not isOfficerAssigned(c.id)
                                 and not HARVESTER_TYPES[c.t] and not MCV_TYPES[c.t]
                                 and not ARTILLERY_TYPES[c.t] and c.hasPos then
@@ -1939,10 +3174,14 @@ function SmartAI.Update(frame)
                         end
                         if need <= 0 and #live > 0 and added == 0 then
                             -- Follow refresh: V3 moved or cap elapsed, guards hold.
+                            -- Fighting guards are NOT pulled back here: a
+                            -- refresh MoveTo on a guard mid-intercept would
+                            -- yank it off its target (same rule as drafting).
                             local held = {}
                             for _, gid in ipairs(live) do
                                 local g = findSnap(units, gid)
-                                if g and orderMove(g, e.x, e.y) then
+                                if g and (g.idle or g.attacking == false)
+                                    and orderMove(g, e.x, e.y) then
                                     held[#held + 1] = tostring(gid)
                                 end
                             end
@@ -1968,6 +3207,111 @@ function SmartAI.Update(frame)
                             st.orderedFrame = frame
                         end
                     end
+                    -- BODYGUARD COMBAT + V3 KITE (same tick, same snapshot).
+                    -- Guards focus the nearest threat to the principal;
+                    -- the V3 steps off when the threat is inside the inner
+                    -- ring. Skipped on stand-down (breach owns the units)
+                    -- and when surrender silences the house (outer gate).
+                    if not st.standDown then
+                        local threats = {}
+                        for _, u in ipairs(units) do
+                            if u.oh and u.oh ~= aiHouse
+                                and not allied(aiHouse, u.oh)
+                                and not util.is_neutral_house(u.oh)
+                                and not util.CIVIL_TYPES[u.t] and u.hasPos
+                                and (u.k == "unit" or u.k == "infantry") then
+                                local d2 = dist2(u.x, u.y, e.x, e.y)
+                                if d2 <= ESCORT_COMBAT_R * ESCORT_COMBAT_R then
+                                    threats[#threats + 1] = { u = u, d2 = d2 }
+                                end
+                            end
+                        end
+                        if #threats > 0 then
+                            table.sort(threats, function(a, b)
+                                if a.d2 ~= b.d2 then return a.d2 < b.d2 end
+                                return a.u.id < b.u.id
+                            end)
+                            local prime = threats[1]
+                            st.combat = st.combat or {}
+                            for _, gid in ipairs(st.guards) do
+                                local g = findSnap(units, gid)
+                                if g and (g.idle or g.attacking == false)
+                                    and frame - (st.combat[gid] or -ESCORT_COMBAT_EVERY)
+                                        >= ESCORT_COMBAT_EVERY then
+                                    if tryClaim(gid, "ESCORT")
+                                        and orderAttack(g, prime.u.u) then
+                                        st.combat[gid] = frame
+                                        diagOrder(frame, "ESCORT_INTERCEPT", g,
+                                            "Attack", string.format(
+                                                "principal=%s threat=%s type=%s d2=%d",
+                                                tostring(e.id),
+                                                tostring(prime.u.id),
+                                                tostring(prime.u.t),
+                                                math.floor(prime.d2)))
+                                        -- Readback (measurement only, no
+                                        -- divLogged: that table feeds the
+                                        -- defense lease, which must not see
+                                        -- escort targets).
+                                        local actual = readbackTargetId(g.u)
+                                        if actual ~= nil
+                                            and actual ~= prime.u.id then
+                                            dlog("READBACK_MISMATCH", frame,
+                                                string.format(
+                                                    "unit=%s expected_target=%s actual_target=%s",
+                                                    tostring(gid),
+                                                    tostring(prime.u.id),
+                                                    tostring(actual)))
+                                        end
+                                    end
+                                end
+                            end
+                            if prime.d2 <= V3_KITE_R * V3_KITE_R
+                                and frame - (st.kiteFrame or -V3_KITE_EVERY)
+                                    >= V3_KITE_EVERY then
+                                local dx, dy = e.x - prime.u.x, e.y - prime.u.y
+                                local L = math.sqrt(dx * dx + dy * dy)
+                                if L < 0.001 then dx, dy = 1, 0
+                                else dx, dy = dx / L, dy / L end
+                                local kx = math.floor(e.x + dx * V3_KITE_DIST + 0.5)
+                                local ky = math.floor(e.y + dy * V3_KITE_DIST + 0.5)
+                                local bx, by, bn = 0, 0, 0
+                                for _, b in ipairs(ownBlds) do
+                                    if b.hasPos then
+                                        bx, by, bn = bx + b.x, by + b.y, bn + 1
+                                    end
+                                end
+                                if bn > 0 then
+                                    -- Kite INTO the own lines: midpoint of the
+                                    -- away-point and the base centroid.
+                                    kx = math.floor((kx + bx / bn) / 2 + 0.5)
+                                    ky = math.floor((ky + by / bn) / 2 + 0.5)
+                                end
+                                if tryClaim(e.id, "ESCORT")
+                                    and orderMove(e, kx, ky) then
+                                    st.kiteFrame = frame
+                                    st.ax, st.ay = kx, ky
+                                    diagOrder(frame, "ESCORT_KITE", e, "MoveTo",
+                                        string.format("dest=%d,%d threat=%s type=%s",
+                                            kx, ky, tostring(prime.u.id),
+                                            tostring(prime.u.t)))
+                                    -- HUD, throttled per principal: a kiting
+                                    -- V3 is exactly the visible "AI reacts"
+                                    -- moment. Intercepts stay log-only
+                                    -- (150f cadence would spam).
+                                    if frame - (kiteHud[e.id] or -900) >= 900 then
+                                        kiteHud[e.id] = frame
+                                        local alert = string.format(
+                                            "[AI Commander - %s] %s#%s "
+                                            .. "falling back from threat!",
+                                            tostring(aiName), tostring(e.t),
+                                            tostring(e.id))
+                                        Engine.PrintMessage(alert)
+                                        print("[LuaAPI] " .. alert)
+                                    end
+                                end
+                            end
+                        end
+                    end
                 end
             end
         end
@@ -1980,31 +3324,64 @@ function SmartAI.Update(frame)
                 defids[e.id] = true
                 local gs = garrisonState[e.id]
                 if e.hasPos and (not gs or frame - gs.orderedFrame >= GARRISON_EVERY) then
-                    local cands = {}
+                    -- Holders first: previously sent units still alive,
+                    -- idle and on the cell hold their slots (no re-issue),
+                    -- and so does any unrecorded squatter already there —
+                    -- otherwise every refresh re-spams orders onto a held
+                    -- cell (live: ~250 orders/match, nearly all no-ops).
+                    local held, heldSet = {}, {}
+                    for _, gid in ipairs((gs and gs.ids) or {}) do
+                        local g = findSnap(units, gid)
+                        if g and g.idle and g.hasPos
+                            and dist2(g.x, g.y, e.x, e.y)
+                                <= GARRISON_REACHED_R2 then
+                            held[#held + 1] = gid
+                            heldSet[gid] = true
+                        end
+                    end
                     for _, u in ipairs(units) do
-                        if u.k == "infantry" and u.idle and u.oh == aiHouse and u.hasPos then
+                        if u.k == "infantry" and u.idle and u.oh == aiHouse
+                            and u.hasPos and not heldSet[u.id]
+                            and not HERO_TYPES[u.t] -- heroes never garrison
+                            and dist2(u.x, u.y, e.x, e.y)
+                                <= GARRISON_REACHED_R2 then
+                            held[#held + 1] = u.id
+                            heldSet[u.id] = true
+                        end
+                    end
+                    local need = GARRISON_N - #held
+                    local cands = {}
+                    if need > 0 then
+                    for _, u in ipairs(units) do
+                        if u.k == "infantry" and u.idle and u.oh == aiHouse and u.hasPos
+                            and not heldSet[u.id] and not HERO_TYPES[u.t] then
                             local d2 = dist2(u.x, u.y, e.x, e.y)
-                            if d2 <= GARRISON_RADIUS * GARRISON_RADIUS then
+                            if d2 <= GARRISON_RADIUS * GARRISON_RADIUS
+                                and d2 > GARRISON_REACHED_R2 then
                                 cands[#cands + 1] = { u = u, d2 = d2 }
                             end
                         end
+                    end
                     end
                     table.sort(cands, function(a, b)
                         if a.d2 ~= b.d2 then return a.d2 < b.d2 end
                         return a.u.id < b.u.id
                     end)
                         local sent = 0
-                        for i = 1, math.min(GARRISON_N, #cands) do
+                        local sentIds = {}
+                        for _, gid in ipairs(held) do sentIds[#sentIds + 1] = gid end
+                        for i = 1, math.min(math.max(need, 0), #cands) do
                             local cu = cands[i].u
                             if tryClaim(cu.id, "GARRISON") and orderMove(cu, e.x, e.y) then
                                 sent = sent + 1
+                                sentIds[#sentIds + 1] = cu.id
                                 diagOrder(frame, "GARRISON", cu, "MoveTo",
                                     string.format("dest=%d,%d building=%s type=%s",
                                         e.x, e.y, tostring(e.id), tostring(e.t)))
                             end
                         end
                     if sent > 0 then
-                        garrisonState[e.id] = { orderedFrame = frame }
+                        garrisonState[e.id] = { orderedFrame = frame, ids = sentIds }
                         local alert = string.format(
                             "[AI Commander - %s] GARRISON? %s (%d inf) -> %s#%s (experimental).",
                             tostring(aiName), tostring(e.t), sent,
@@ -2016,6 +3393,174 @@ function SmartAI.Update(frame)
             end
         end
         end -- P.garrison
+        if P.radevac and radPhase then
+        -- RADEVAC: own infantry out of radiation-warned/burning cells.
+        -- WARNING evacuates preemptively (radius + margin: the warning is
+        -- the head-start); ACTIVE moves out whoever is still inside.
+        -- Destination: nearest own building (garrison-or-screen, the
+        -- player's own counterplay). MoveTo only; transition-only +
+        -- per-unit cooldown + destination memory (no churn while the
+        -- cloud sits on the same cells).
+        local radR = radRadius
+            + ((radPhase == "WARNING") and RADEVAC_WARN_MARGIN or 0)
+        local radR2 = radR * radR
+        for _, e in ipairs(units) do
+            if e.oh == aiHouse and e.k == "infantry" and e.hasPos
+                and not RADEVAC_EXEMPT[e.t]
+                and not util.CIVIL_TYPES[e.t]
+                and (e.idle or e.attacking == false)
+                and not isOfficerAssigned(e.id) then
+                local inside = false
+                for _, t in ipairs(radTargets) do
+                    if type(t.x) == "number" and type(t.y) == "number"
+                        and dist2(e.x, e.y, t.x, t.y) <= radR2 then
+                        inside = true
+                        break
+                    end
+                end
+                if inside then
+                    local mem = radEvacState[e.id]
+                    if mem and frame - (mem.orderedFrame or 0) < RADEVAC_EVERY then
+                        goto next_evac
+                    end
+                    local bb, bestD2, bestId
+                    for _, b in ipairs(ownBlds) do
+                        if b.hasPos then
+                            local d2 = dist2(e.x, e.y, b.x, b.y)
+                            if not bestD2 or d2 < bestD2
+                                or (d2 == bestD2 and b.id < bestId) then
+                                bb, bestD2, bestId = b, d2, b.id
+                            end
+                        end
+                    end
+                    if bb then
+                        if mem and mem.bx == bb.x and mem.by == bb.y
+                            and dist2(e.x, e.y, bb.x, bb.y)
+                                <= RADEVAC_REACHED_R2 then
+                            goto next_evac -- arrived: hold, don't re-issue
+                        end
+                        if tryClaim(e.id, "RADEVAC")
+                            and orderMove(e, bb.x, bb.y) then
+                            radEvacState[e.id] = {
+                                orderedFrame = frame, bx = bb.x, by = bb.y,
+                            }
+                            diagOrder(frame, "RADEVAC", e, "MoveTo",
+                                string.format(
+                                    "dest=%d,%d phase=%s",
+                                    bb.x, bb.y, tostring(radPhase)))
+                            -- HUD, throttled: the player must SEE the AI
+                            -- react to the warning (log-only smarts might
+                            -- as well not exist). One banner per house per
+                            -- ~15s max, no per-unit spam.
+                            if frame - (radEvacHud[aiHouse] or -900) >= 900 then
+                                radEvacHud[aiHouse] = frame
+                                local alert = string.format(
+                                    "[AI Commander - %s] Radiation %s: "
+                                    .. "pulling infantry to cover!",
+                                    tostring(aiName),
+                                    tostring(radPhase))
+                                Engine.PrintMessage(alert)
+                                print("[LuaAPI] " .. alert)
+                            end
+                        end
+                    end
+                end
+                ::next_evac::
+            end
+        end
+        end -- P.radevac
+        if P.miner then
+        -- MINER OFFICER: idle war/chrono miners go back to work.
+        -- An idle harvester earns nothing by definition (harvesting is
+        -- not an idle mission), so kicking one cannot interrupt real
+        -- work — workers are non-idle and never touched. Two sources,
+        -- in order: (1) its OWN harvest anchor (resume via
+        -- GetHarvestLocation, which reads Destination), unless the
+        -- anchor sits at its own base (docked, not mining); (2) the
+        -- nearest ACTIVE donor's field anchor (share the field; donor
+        -- anchors at base are skipped for the same reason).
+        -- HarvestAt only: no MoveTo/Hunt/Attack here, ever.
+        for _, e in ipairs(units) do
+            if e.oh == aiHouse and e.k == "unit" and MINER_TYPES[e.t]
+                and e.idle and e.hasPos
+                and not officerHeldElsewhere(e.id) then
+                local mem = minerState[e.id]
+                if mem and frame - (mem.orderedFrame or 0) < MINER_EVERY then
+                    goto next_miner
+                end
+                local function anchorIsField(loc)
+                    if type(loc) ~= "table" then return nil end
+                    if type(loc.x) ~= "number" or type(loc.y) ~= "number" then
+                        return nil
+                    end
+                    for _, b in ipairs(ownBlds) do
+                        if b.hasPos
+                            and dist2(loc.x, loc.y, b.x, b.y)
+                                <= MINER_BASE_R2 then
+                            return nil -- docked, not a field
+                        end
+                    end
+                    return loc.x, loc.y
+                end
+                local ax, ay
+                do
+                    local okA, loc = pcall(e.u.GetHarvestLocation, e.u)
+                    if okA then ax, ay = anchorIsField(loc) end
+                end
+                if not ax then
+                    local best, bestD2, bestId
+                    for _, d in ipairs(units) do
+                        if d.oh == aiHouse and d.k == "unit"
+                            and MINER_TYPES[d.t] and not d.idle
+                            and d.id ~= e.id and d.hasPos then
+                            local okA, loc =
+                                pcall(d.u.GetHarvestLocation, d.u)
+                            if okA then
+                                local lx, ly = anchorIsField(loc)
+                                if lx then
+                                    local d2 = dist2(e.x, e.y, lx, ly)
+                                    if not bestD2 or d2 < bestD2
+                                        or (d2 == bestD2 and d.id < bestId) then
+                                        best, bestD2, bestId =
+                                            { x = lx, y = ly }, d2, d.id
+                                    end
+                                end
+                            end
+                        end
+                    end
+                    if best then ax, ay = best.x, best.y end
+                end
+                if ax then
+                    if mem and mem.ax == ax and mem.ay == ay
+                        and dist2(e.x, e.y, ax, ay) <= MINER_REACHED_R2 then
+                        goto next_miner -- already there: hold
+                    end
+                    if tryClaim(e.id, "MINER")
+                        and orderHarvest(e, ax, ay) then
+                        minerState[e.id] = {
+                            orderedFrame = frame, ax = ax, ay = ay,
+                        }
+                        diagOrder(frame, "MINER", e, "HarvestAt",
+                            string.format("dest=%d,%d", ax, ay))
+                        -- HUD once per house per match: miner kicks recur
+                        -- every 300f while idlers persist, so per-kick
+                        -- banners would spam; one notice names the
+                        -- behavior, the log carries the rest.
+                        if not minerHud[aiHouse] then
+                            minerHud[aiHouse] = true
+                            local alert = string.format(
+                                "[AI Commander - %s] Idle miners ordered "
+                                .. "back to the fields.",
+                                tostring(aiName))
+                            Engine.PrintMessage(alert)
+                            print("[LuaAPI] " .. alert)
+                        end
+                    end
+                end
+                ::next_miner::
+            end
+        end
+        end -- P.miner
         ::next_officer::
     end
 
@@ -2055,7 +3600,12 @@ function SmartAI.Update(frame)
                     dg.since = (rs and (frame - (rs.frame or 0))) or 0
                 end
                 for _, u in ipairs(units) do
-                    if u.oh == aiHouse and u.k == "unit" and u.hasPos then
+                    if u.oh == aiHouse and u.k == "unit" and u.hasPos
+                        -- Unarmed construction/economy never rallies (live
+                        -- 2026-10-01: an AMCV ordered into a breach; every
+                        -- other layer already excludes these).
+                        and not HARVESTER_TYPES[u.t]
+                        and not MCV_TYPES[u.t] then
                         if dg then dg.poolOwn = dg.poolOwn + 1 end
                         if u.idle then
                             if dg then dg.poolIdle = dg.poolIdle + 1 end
@@ -2067,23 +3617,30 @@ function SmartAI.Update(frame)
                                         if dg then dg.poolFresh = dg.poolFresh + 1 end
                                         -- Command reserve tank to reinforce the
                                         -- threatened flank!
-                                        -- NOTE: MoveTo+Hunt back-to-back is a
-                                        -- KNOWN SUSPECT (HOW_TO_USE): Hunt may void
-                                        -- MoveTo, leaving the reserve hunting from
-                                        -- place. Kept until a live coordinate
-                                        -- check decides; point defense above is the
-                                        -- verified home-defense path (Attack).
+                                        -- MoveTo ONLY, no trailing Hunt (fixed
+                                        -- 2026-09-28 via OpenTS): the mission
+                                        -- queue is a single slot
+                                        -- (MissionClass::Assign_Mission sets
+                                        -- MissionQueue; YRpp MissionClass.h
+                                        -- has one QueuedMission field), so a
+                                        -- back-to-back Hunt overwrote the
+                                        -- queued Move and the reserve hunted
+                                        -- from place instead of rallying to
+                                        -- the breach. Point defense above is
+                                        -- the verified home-defense path
+                                        -- (Attack).
                                         if tryClaim(u.id, "RALLY") then
                                             if dg then dg.claims = dg.claims + 1 end
-                                            if orderMove(u, bPos.x, bPos.y) then
-                                                local okH = pcall(u.u.Hunt, u.u)
-                                                if okH then
-                                                    ralliedCount = ralliedCount + 1
-                                                    if dg then dg.orders = dg.orders + 1 end
-                                                    ids[u.id] = true
-                                                    diagOrder(frame, "RALLY_BREACH", u, "MoveTo+Hunt",
-                                                        string.format("dest=%d,%d", bPos.x, bPos.y))
-                                                end
+                                            -- Tracked: the Hunt-fix follow-up
+                                            -- needs GetMission readback on
+                                            -- rally orders (did Move stick?).
+                                            if orderMoveTracked(u, bPos.x, bPos.y,
+                                                "RALLY", frame) then
+                                                ralliedCount = ralliedCount + 1
+                                                if dg then dg.orders = dg.orders + 1 end
+                                                ids[u.id] = true
+                                                diagOrder(frame, "RALLY_BREACH", u, "MoveTo",
+                                                    string.format("dest=%d,%d", bPos.x, bPos.y))
                                             end
                                         end
                                     end
@@ -2141,7 +3698,10 @@ function SmartAI.Update(frame)
             else
                 why = "ORDER_FAILED"
             end
-            dlog("RALLYDIAG", frame, string.format(
+            -- QUIET (KEEP/QUIET/CUT): on-change + heartbeat. The empty
+            -- line still proves "running with no candidate" (heartbeat),
+            -- without repeating it every gate.
+            dlogChange("RALLYDIAG", frame, aiName, string.format(
                 "house=%s why=%s own=%d threatened=%d bld=%s type=%s d2=%d R2=%d "
                     .. "poolOwn=%d poolIdle=%d poolFar=%d poolFree=%d poolFresh=%d "
                     .. "claims=%d orders=%d sameSpot=%s capElapsed=%s since=%d",
@@ -2224,6 +3784,113 @@ function SmartAI.Update(frame)
         ::next_recall::
     end
     end -- P.recall
+
+    -- WAVE-SHEPHERD (M3 initiative protection, same P.recall family):
+    -- vanilla attack waves march into prepared counters and feed (free
+    -- kills the player counters by reflex). A marching-not-fighting AI
+    -- group far from home facing overwhelming LOCAL strength is called
+    -- off (MoveTo home): preserve, let vanilla mass bigger later, deny
+    -- the free kill — the attack either comes back larger or not at
+    -- all, and the player's reflex stops working. Fighting units are
+    -- never yanked (no lease); officer roles stand off; structures
+    -- are NOT counted as threat in v1 (mobiles decide fights).
+    -- Claims "MARCH" (defense tier, like march-recall); shares
+    -- recallState memory + RECALL_EVERY cadence with base-threat
+    -- recall (one memory for "we sent this one home").
+    if P.recall then
+    for _, aiHouse in ipairs(aiHouses) do
+        local P = paramsFor(aiHouse) -- per-house preset (Beta M1)
+        if surrendered[aiHouse] then goto next_shepherd end
+        local aiName = aiHouse:GetName()
+        local bx, by, bn = 0, 0, 0
+        for _, b in ipairs(buildings) do
+            if b.oh == aiHouse and b.hasPos then
+                bx, by, bn = bx + b.x, by + b.y, bn + 1
+            end
+        end
+        if bn == 0 then goto next_shepherd end
+        bx, by = bx / bn, by / bn
+        local announced = false
+        for _, e in ipairs(units) do
+            if e.oh == aiHouse and e.k == "unit" and e.hasPos
+                and not e.idle and e.attacking == false
+                and not HARVESTER_TYPES[e.t] and not MCV_TYPES[e.t]
+                and not ARTILLERY_TYPES[e.t]
+                and dist2(e.x, e.y, bx, by) > WAVE_FAR * WAVE_FAR
+                and not isOfficerAssigned(e.id) then
+                local waveN = 0
+                local waveVetN = 0 -- veterans/elites/T3 in the group
+                for _, m in ipairs(units) do
+                    if m.oh == aiHouse and m.k == "unit" and m.hasPos
+                        and not m.idle and m.attacking == false
+                        and not HARVESTER_TYPES[m.t]
+                        and not MCV_TYPES[m.t]
+                        and not ARTILLERY_TYPES[m.t]
+                        and dist2(m.x, m.y, e.x, e.y)
+                            <= WAVE_R * WAVE_R then
+                        waveN = waveN + 1
+                        if isPrecious(m) then
+                            waveVetN = waveVetN + 1
+                        end
+                    end
+                end
+                if waveN >= WAVE_MIN then
+                    local threatN = 0
+                    for _, u in ipairs(units) do
+                        if u.oh and u.oh ~= aiHouse
+                            and not allied(aiHouse, u.oh)
+                            and not util.is_neutral_house(u.oh)
+                            and not util.CIVIL_TYPES[u.t] and u.hasPos
+                            and (u.k == "unit" or u.k == "infantry"
+                                or u.k == "aircraft") then
+                            if dist2(u.x, u.y, e.x, e.y)
+                                <= WAVE_THREAT_R * WAVE_THREAT_R then
+                                threatN = threatN + 1
+                            end
+                        end
+                    end
+                    -- VALOR: a precious-led group (half+ veterans /
+                    -- near-promotions / T3) is recalled at 2x, not 3x —
+                    -- crack troops are not spent proving the counter real.
+                    local doomMult = WAVE_DOOM_MULT
+                    if waveVetN * 2 >= waveN then doomMult = 2 end
+                    if threatN >= waveN * doomMult then
+                        local rs = recallState[e.id]
+                        if not rs
+                            or frame - rs.orderedFrame >= RECALL_EVERY then
+                            if tryClaim(e.id, "MARCH")
+                                and orderMove(e, math.floor(bx + 0.5),
+                                    math.floor(by + 0.5)) then
+                                recallState[e.id] = { orderedFrame = frame }
+                                diagOrder(frame, "WAVE_RECALL", e, "MoveTo",
+                                    string.format(
+                                        "reason=DOOMED wave=%d threat=%d "
+                                        .. "mult=%d dest=%d,%d",
+                                        waveN, threatN, doomMult,
+                                        math.floor(bx + 0.5),
+                                        math.floor(by + 0.5)))
+                                if not announced
+                                    and frame - (waveHud[aiHouse] or -900)
+                                        >= 900 then
+                                    announced = true
+                                    waveHud[aiHouse] = frame
+                                    local alert = string.format(
+                                        "[AI Commander - %s] Calling off "
+                                        .. "doomed attack (%d vs %d): "
+                                        .. "falling back!",
+                                        tostring(aiName), waveN, threatN)
+                                    Engine.PrintMessage(alert)
+                                    print("[LuaAPI] " .. alert)
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        ::next_shepherd::
+    end
+    end -- P.recall shepherd
 
     -- M2-C1 BELIEF UPDATE (grudge slice): HP drops and kills of own
     -- economy with an enemy near are attributed to the nearest hostile
@@ -2341,6 +4008,14 @@ function SmartAI.Update(frame)
 -- Returns live tables — tests must read, never write.
 function SmartAI.BeliefInspect()
     return grudge, econSeen
+end
+
+-- Test-only inspector (harnesses only): per-house stance assignment.
+-- Returns live table — tests must read, never write.
+function SmartAI.StanceInspect()
+    local out = {}
+    for h, s in pairs(stanceCache) do out[h] = s end
+    return out
 end
 
 local function grudgeMult(aiHouse, candOwner)
@@ -2510,6 +4185,38 @@ end
         end
         if bn == 0 then goto next_raid end
         bx, by = bx / bn, by / bn
+        -- M3 stance: character-adjusted raid params (a COPY — the shared
+        -- preset is never mutated). rst is nil on easy (no character).
+        local rst
+        P, rst = stanceParams(aiHouse, P, aiName, frame)
+        -- M3 counterpunch ready-state: a rusher whose enemy is bled dry
+        -- does not wait for quiet — it finishes. Fired in FORM below;
+        -- self-resolving (no targets -> STANDDOWN). Two shapes: a weak
+        -- field army (1..N combat units), or no army but standing
+        -- economy (post-wipe cleanup). Zero units AND zero economy is
+        -- NOT weakness, it is absence (fresh start would raid at
+        -- frame 30 otherwise) — nothing to hit, no punch.
+        local playerCombat, playerEcon = 0, 0
+        for _, u in ipairs(units) do
+            if u.oh == humanPlayer and u.hasPos
+                and (u.k == "unit" or u.k == "infantry"
+                    or u.k == "aircraft")
+                and not HARVESTER_TYPES[u.t] and not MCV_TYPES[u.t]
+                and not util.CIVIL_TYPES[u.t] then
+                playerCombat = playerCombat + 1
+            end
+        end
+        for _, b in ipairs(buildings) do
+            if b.oh == humanPlayer and b.hasPos
+                and raidTargetValue(b) > 0 then
+                playerEcon = playerEcon + 1
+            end
+        end
+        local counterDue = rst == "rusher"
+            and (playerCombat >= 1 and playerCombat <= PUNCH_WEAK_N
+                or (playerCombat == 0 and playerEcon > 0))
+            and frame - (lastCounter[aiHouse] or -PUNCH_COOLDOWN)
+                >= PUNCH_COOLDOWN
         local quietSince = frame - (lastThreatFrame[aiHouse] or 0)
         local st = raidState[aiHouse]
         -- Live members, re-resolved from this tick's snapshot.
@@ -2527,7 +4234,64 @@ end
             for _, m in ipairs(members) do cx, cy = cx + m.x, cy + m.y end
             return cx / #members, cy / #members
         end
+        -- M3 wipe: had a group, none live — a lost engagement.
+        if st and st.members and #st.members > 0 and #live == 0 then
+            local lv = raidLevel[aiHouse] or 0
+            if lv > -1 then
+                raidLevel[aiHouse] = lv - 1
+                dlog("RAID_WIPE", frame, string.format(
+                    "house=%s members=%d level=%d",
+                    tostring(aiName), #st.members, lv - 1))
+                local alert = string.format(
+                    "[AI Commander - %s] Hunter group wiped out!",
+                    tostring(aiName))
+                Engine.PrintMessage(alert)
+                print("[LuaAPI] " .. alert)
+            end
+        end
         if #live > 0 then
+            -- M3 fortunes: evidence-driven escalation. Target gone with
+            -- members alive = WIN (level up, force re-pick); member
+            -- losses on a tick = bad tick (level down). Capped [-1, +2].
+            -- Sold/captured targets count as destroyed — acceptable.
+            do
+                local lv = raidLevel[aiHouse] or 0
+                local tgtGone = st.targetId
+                    and not findSnap(units, st.targetId)
+                    and not findSnap(buildings, st.targetId)
+                if tgtGone then
+                    st.targetId = nil
+                    if lv < 2 then
+                        raidLevel[aiHouse] = lv + 1
+                        dlog("RAID_ESCALATE", frame, string.format(
+                            "house=%s members=%d level=%d",
+                            tostring(aiName), #live, lv + 1))
+                        local alert = string.format(
+                            "[AI Commander - %s] Raid pays off: "
+                            .. "escalating (%d hunters)!",
+                            tostring(aiName), #live)
+                        Engine.PrintMessage(alert)
+                        print("[LuaAPI] " .. alert)
+                    end
+                end
+                local prev = st.prevLive or #live
+                if #live < prev then
+                    if lv > -1 then
+                        raidLevel[aiHouse] = lv - 1
+                        dlog("RAID_BLOODIED", frame, string.format(
+                            "house=%s members=%d lost=%d level=%d",
+                            tostring(aiName), #live, prev - #live,
+                            lv - 1))
+                        local alert = string.format(
+                            "[AI Commander - %s] Raid bloodied: "
+                            .. "scaling down.",
+                            tostring(aiName))
+                        Engine.PrintMessage(alert)
+                        print("[LuaAPI] " .. alert)
+                    end
+                end
+                st.prevLive = #live
+            end
             -- M2-C5 Director rule #1: home under HIGH threat recalls the
             -- offense — disband to the defense pool (no orders issued;
             -- members re-enter pools by mission state). Re-form needs a
@@ -2585,11 +4349,16 @@ end
             local res = grp.tactical:reassess(snap, frame)
             if res.changed then
                 local met = res.metrics or {}
-                dlog("GROUP", frame, string.format(
-                    "house=%s group=raid decision=%s reason=%s ratio=%s",
-                    tostring(aiName), tostring(res.decision),
-                    tostring(res.reason),
-                    met.ratio and string.format("%.2f", met.ratio) or "nil"))
+                -- QUIET (KEEP/QUIET/CUT): transition on decision|reason;
+                -- the ratio wiggles every reassessment and is context,
+                -- not signal — it rides along but does not trigger.
+                dlogChange("GROUP", frame, tostring(aiName) .. "|raid",
+                    string.format(
+                        "house=%s group=raid decision=%s reason=%s ratio=%s",
+                        tostring(aiName), tostring(res.decision),
+                        tostring(res.reason),
+                        met.ratio and string.format("%.2f", met.ratio) or "nil"),
+                    tostring(res.decision) .. "|" .. tostring(res.reason))
             end
             -- Drive the existing group: pick/refresh target, or retreat.
             local rcx, rcy = raidCentroid(live)
@@ -2700,6 +4469,8 @@ end
                                     tostring(aiName), issued, tostring(best.id),
                                     tostring(best.t), bestVal))
                                 -- M2-C1 causal proof: memory changed the winner.
+                                -- Visible memory: flips are rare, so the
+                                -- player gets told who the AI is avenging.
                                 if bestNoMem and bestNoMem.id ~= best.id then
                                     local _, gn = grudgeMult(aiHouse, best.oh)
                                     dlog("BELIEF_EFFECT", frame, string.format(
@@ -2707,6 +4478,15 @@ end
                                         tostring(aiName), tostring(bestNoMem.id),
                                         tostring(bestNoMem.t), tostring(best.id),
                                         tostring(best.t), gn))
+                                    local _, ehn =
+                                        pcall(best.oh.GetName, best.oh)
+                                    local alert = string.format(
+                                        "[AI Commander - %s] Avenging past "
+                                        .. "raids: hunting %s economy!",
+                                        tostring(aiName),
+                                        tostring(ehn or best.oh))
+                                    Engine.PrintMessage(alert)
+                                    print("[LuaAPI] " .. alert)
                                 end
                                 local alert = string.format(
                                     "[AI Commander - %s] Raid: %d hunter(s) on %s#%s!",
@@ -2739,8 +4519,13 @@ end
                     end
                 end
             end
-        elseif quietSince >= P.raidQuiet
+        elseif (quietSince >= P.raidQuiet or counterDue)
             and frame >= (raidCooldownUntil[aiHouse] or 0) then
+            -- Defense-first: no NEW offensives while a breach is active
+            -- this tick (live groups continue unless HIGH; re-form resumes
+            -- when the breach lifts). Keeps fresh releases flowing to the
+            -- rally instead of being drafted mid-handoff.
+            if pendingBreach[aiHouse] then goto next_raid end
             -- Form: idle combat surplus first (ID-ordered, deterministic);
             -- vanilla AI rarely leaves armor idle, so marching-but-not-
             -- fighting units (attacking==false, same strictness as march
@@ -2757,16 +4542,30 @@ end
                     elseif u.attacking == false then march[#march + 1] = u end
                 end
             end
-            table.sort(pool, function(a, b) return a.id < b.id end)
-            table.sort(march, function(a, b) return a.id < b.id end)
+            table.sort(pool, function(a, b)
+                -- VALOR: T3 leads the raid (most lethal + most survivable),
+                -- ID order inside the tier (deterministic as before).
+                local ta = T3_TYPES[a.t] and true or false
+                local tb = T3_TYPES[b.t] and true or false
+                if ta ~= tb then return ta end
+                return a.id < b.id
+            end)
+            table.sort(march, function(a, b)
+                local ta = T3_TYPES[a.t] and true or false
+                local tb = T3_TYPES[b.t] and true or false
+                if ta ~= tb then return ta end
+                return a.id < b.id
+            end)
             local idleN = #pool
+            -- M3 size: stanced base +/- evidence level (never tiny).
+            local effN = raidSizeFor(aiHouse, P)
             for _, m in ipairs(march) do
-                if #pool >= (P.raidN or 4) then break end
+                if #pool >= effN then break end
                 pool[#pool + 1] = m
             end
             if #pool >= (P.raidMin or 3) then
                 local members = {}
-                for i = 1, math.min(P.raidN or 4, #pool) do
+                for i = 1, math.min(effN, #pool) do
                     members[#members + 1] = pool[i].id
                     claimTick[pool[i].id] = "RAID" -- M2-C2: register picks
                 end
@@ -2775,12 +4574,26 @@ end
                     orderedFrame = 0, formedFrame = frame,
                 }
                 dlog("RAID_FORM", frame, string.format(
-                    "house=%s members=%s quiet=%d idle=%d march=%d",
+                    "house=%s members=%s quiet=%d idle=%d march=%d size=%d",
                     tostring(aiName), table.concat(members, ","),
-                    quietSince, idleN, #members - idleN))
-                local alert = string.format(
-                    "[AI Commander - %s] Hunter group out (%d): seeking enemy economy!",
-                    tostring(aiName), #members)
+                    quietSince, idleN, #members - idleN, effN))
+                -- Counterpunch announces itself; normal forms use the
+                -- standing banner (never both — one banner per form).
+                local counterFired =
+                    counterDue and quietSince < P.raidQuiet
+                if counterFired then lastCounter[aiHouse] = frame end
+                local alert
+                if counterFired then
+                    alert = string.format(
+                        "[AI Commander - %s] Hunter group out (%d): "
+                        .. "smells blood, counter-attacking!",
+                        tostring(aiName), #members)
+                else
+                    alert = string.format(
+                        "[AI Commander - %s] Hunter group out (%d): "
+                        .. "seeking enemy economy!",
+                        tostring(aiName), #members)
+                end
                 Engine.PrintMessage(alert)
                 print("[LuaAPI] " .. alert)
             end
@@ -2820,9 +4633,234 @@ end
             end
             if st then raidState[aiHouse] = nil end
         end
+        -- MASTERMIND FEINT (hard only): while a raid group is live, one
+        -- cheap unit attacks the most visible enemy force elsewhere —
+        -- noise on one axis, business on the other. The feint needs an
+        -- audience (player combat); without one it is skipped, not
+        -- faked. One-shot per cooldown; the feinter is expected to die
+        -- (that IS the distraction). Claims RAID (family tier).
+        if rst == "rusher" and c4RawDifficulty(aiHouse) == "hard"
+            and raidState[aiHouse]
+            and frame - (feintState[aiHouse] or -900) >= 900 then
+            -- Audience: nearest player combat to the player's own base
+            -- centroid (their troops = the attention to fix in place).
+            local px, py, pn = 0, 0, 0
+            for _, b in ipairs(buildings) do
+                if b.oh == humanPlayer and b.hasPos then
+                    px, py, pn = px + b.x, py + b.y, pn + 1
+                end
+            end
+            if pn > 0 then
+                px, py = px / pn, py / pn
+                local tgt, tgtD2
+                for _, u in ipairs(units) do
+                    if u.oh == humanPlayer and u.hasPos
+                        and (u.k == "unit" or u.k == "infantry")
+                        and not HARVESTER_TYPES[u.t]
+                        and not MCV_TYPES[u.t]
+                        and not util.CIVIL_TYPES[u.t] then
+                        local d2 = dist2(u.x, u.y, px, py)
+                        if not tgtD2 or d2 < tgtD2 then
+                            tgt, tgtD2 = u, d2
+                        end
+                    end
+                end
+                if tgt then
+                    local feinter, feintCost, feintId
+                    for _, u in ipairs(units) do
+                        if u.oh == aiHouse and u.k == "unit" and u.hasPos
+                            and not HARVESTER_TYPES[u.t]
+                            and not MCV_TYPES[u.t]
+                            and not ARTILLERY_TYPES[u.t]
+                            -- VALOR: the feinter is expected to die — never
+                            -- spend the precious (vets, half-invested
+                            -- near-promotions, T3) as bait. Heroes never
+                            -- reach here (infantry kind filter above).
+                            and not isPrecious(u)
+                            and (u.idle or u.attacking == false)
+                            and not isOfficerAssigned(u.id) then
+                            local c = u.cost or 0
+                            if not feintCost or c < feintCost
+                                or (c == feintCost and u.id < feintId) then
+                                feinter, feintCost, feintId = u, c, u.id
+                            end
+                        end
+                    end
+                    if feinter
+                        and tryClaim(feinter.id, "RAID")
+                        and orderAttack(feinter, tgt.u) then
+                        feintState[aiHouse] = frame
+                        diagOrder(frame, "FEINT", feinter, "Attack",
+                            string.format("target=%s type=%s",
+                                tostring(tgt.id), tostring(tgt.t)))
+                        -- Readback (measurement only, no divLogged).
+                        local actual = readbackTargetId(feinter.u)
+                        if actual ~= nil and actual ~= tgt.id then
+                            dlog("READBACK_MISMATCH", frame, string.format(
+                                "unit=%s expected_target=%s actual_target=%s",
+                                tostring(feinter.id), tostring(tgt.id),
+                                tostring(actual)))
+                        end
+                        local alert = string.format(
+                            "[AI Commander - %s] Feint at %s to fix "
+                            .. "defenders while hunters work!",
+                            tostring(aiName), tostring(tgt.t))
+                        Engine.PrintMessage(alert)
+                        print("[LuaAPI] " .. alert)
+                    end
+                end
+            end
+        end
         ::next_raid::
     end
     end -- P.raid
+
+    -- RETARGET OFFICER (M3 fight-smarter, P.raid family): engaged AI
+    -- combat redirected onto better targets WITHOUT moving anyone.
+    -- This is the layer for the 100%-engaged match: vanilla owns every
+    -- order, but nobody owns the TARGET choice — SmartAI takes it.
+    -- SmartAI-held fighters (guard/defense/escort/raid/miner) keep
+    -- SmartAI targets; only vanilla-driven fighters are re-aimed, and
+    -- only at a CLEAR upgrade (gap) no farther than the current
+    -- engagement (+2 slop). Attack-move (no native target) commits at
+    -- infantry-grade: any real value takes it. Transition-only +
+    -- per-unit cooldown; dlog only (battles are frequent, HUD would
+    -- spam — the focus fire itself is the visible proof).
+    if P.raid then
+    for _, aiHouse in ipairs(aiHouses) do
+        local P = paramsFor(aiHouse) -- per-house preset (Beta M1)
+        if not P.raid or surrendered[aiHouse] then goto next_retarget end
+        for _, e in ipairs(units) do
+            if e.oh == aiHouse and e.hasPos
+                and (e.k == "unit" or e.k == "infantry"
+                    or e.k == "aircraft")
+                and e.attacking == true
+                and not HARVESTER_TYPES[e.t] and not MCV_TYPES[e.t]
+                and not isOfficerAssigned(e.id) then
+                local mem = retargetState[e.id]
+                if mem and frame - (mem.orderedFrame or 0) < RETARGET_EVERY then
+                    -- cooling down: hold current target
+                else
+                    local curVal, curDist = 0.5, nil
+                    local okT, tgt = pcall(e.u.GetTarget, e.u)
+                    if okT and tgt ~= nil then
+                        local tid = liveId(tgt)
+                        local cs = (tid ~= nil)
+                            and (findSnap(units, tid)
+                                or findSnap(buildings, tid)) or nil
+                        if cs ~= nil and cs.hasPos then
+                            curVal = retargetValue(cs)
+                            curDist = math.sqrt(dist2(e.x, e.y, cs.x, cs.y))
+                        else
+                            -- Target gone/positionless: vanilla re-acquires.
+                            curVal = nil
+                        end
+                    end
+                    if curVal ~= nil then
+                        -- Range first: only what is already within reach
+                        -- (current engagement +2 slop, or REASSESS_R for
+                        -- attack-movers) can win — a far rich target must
+                        -- never veto a near good switch, nor cause treks.
+                        local reach2
+                        if curDist ~= nil then
+                            reach2 = (curDist + 2) * (curDist + 2)
+                        else
+                            reach2 = RETARGET_R * RETARGET_R
+                        end
+                        local best, bestVal, bestD2 = nil, 0, nil
+                        for _, u in ipairs(units) do
+                            if u.oh and u.oh ~= aiHouse
+                                and not allied(aiHouse, u.oh)
+                                and not util.is_neutral_house(u.oh)
+                                and not util.CIVIL_TYPES[u.t] and u.hasPos
+                                and (u.k == "unit" or u.k == "infantry"
+                                    or u.k == "aircraft") then
+                                local d2 = dist2(e.x, e.y, u.x, u.y)
+                                if d2 <= reach2 then
+                                    local v = retargetValue(u)
+                                    if v > bestVal or (v == bestVal
+                                        and ((not bestD2 or d2 < bestD2)
+                                            or (d2 == bestD2 and best
+                                                and u.id < best.id))) then
+                                        best, bestVal, bestD2 = u, v, d2
+                                    end
+                                end
+                            end
+                        end
+                        for _, b in ipairs(buildings) do
+                            if b.oh and b.oh ~= aiHouse
+                                and not allied(aiHouse, b.oh)
+                                and not util.is_neutral_house(b.oh)
+                                and not util.CIVIL_TYPES[b.t] and b.hasPos then
+                                local d2 = dist2(e.x, e.y, b.x, b.y)
+                                if d2 <= reach2 then
+                                    local v = retargetValue(b)
+                                    if v > bestVal or (v == bestVal
+                                        and ((not bestD2 or d2 < bestD2)
+                                            or (d2 == bestD2 and best
+                                                and b.id < best.id))) then
+                                        best, bestVal, bestD2 = b, v, d2
+                                    end
+                                end
+                            end
+                        end
+                        if best and bestVal >= curVal + RETARGET_GAP then
+                            if orderAttack(e, best.u) then
+                                retargetState[e.id] = { orderedFrame = frame }
+                                diagOrder(frame, "RETARGET", e, "Attack",
+                                    string.format(
+                                        "from=%.1f to=%s(%s)=%.1f",
+                                        curVal, tostring(best.id),
+                                        tostring(best.t), bestVal))
+                                -- Readback (measurement only, no divLogged).
+                                local actual = readbackTargetId(e.u)
+                                if actual ~= nil and actual ~= best.id then
+                                    dlog("READBACK_MISMATCH", frame,
+                                        string.format(
+                                            "unit=%s expected_target=%s actual_target=%s",
+                                            tostring(e.id),
+                                            tostring(best.id),
+                                            tostring(actual)))
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        ::next_retarget::
+    end
+    end -- P.raid retarget
+
+    -- MoveTo readback pass (overwrite measurement): verdicts tracked
+    -- orders, then emits the census line with the commandable-pool
+    -- snapshot (the Phase-1 availability probe rides on idle/marching
+    -- counts below — no extra scans needed).
+    moveReadback(frame, units, dlog)
+    if frame - lastMoveStatsFrame >= SMARTAI_CENSUS_EVERY then
+        lastMoveStatsFrame = frame
+        local idleN, marchN = 0, 0
+        for _, aiHouse in ipairs(aiHouses) do
+            for _, e in ipairs(units) do
+                if e.oh == aiHouse and e.k == "unit" and e.hasPos
+                    and not HARVESTER_TYPES[e.t]
+                    and not MCV_TYPES[e.t]
+                    and not ARTILLERY_TYPES[e.t] then
+                    if e.idle then
+                        idleN = idleN + 1
+                    elseif e.attacking == false then
+                        marchN = marchN + 1
+                    end
+                end
+            end
+        end
+        moveStats.idleNow = idleN
+        moveStats.marchingNow = marchN
+        dlog("MOVE_STATS", frame, string.format(
+            "ordered=%d arrived=%d yanked=%d handoff=%d stale=%d idle=%d marching=%d",
+            moveStats.ordered, moveStats.arrived, moveStats.yanked,
+            moveStats.handoff, moveStats.stale, idleN, marchN))
+    end
 
     -- M2-C2 ARBITER summary: one line per tick that had contested picks —
     -- the visible proof that conflicts are arbitrated, not double-ordered.
@@ -2834,7 +4872,10 @@ end
         end
         if skipTotal > 0 then
             table.sort(parts)
-            dlog("ARBITER", frame, "skips " .. table.concat(parts, " "))
+            -- QUIET (KEEP/QUIET/CUT): same skip-set every tick is one
+            -- fact; on-change + heartbeat.
+            dlogChange("ARBITER", frame, "global",
+                "skips " .. table.concat(parts, " "))
         end
     end
 
@@ -2859,7 +4900,9 @@ end
                 end
             end
         end
-        dlog("CENSUS", frame, string.format("ai_units=%d :: %s%s", total,
+        -- QUIET (KEEP/QUIET/CUT): roster dumps repeat verbatim while
+        -- nothing changes; on-change + heartbeat.
+        dlogChange("CENSUS", frame, "global", string.format("ai_units=%d :: %s%s", total,
             table.concat(parts, " "), total > #parts and " (+" .. (total - #parts) .. " more)" or ""))
         -- [SMARTAI][BASE] (diagnostic only, same gate): per-AI-house base
         -- state — buildings with HP, unit count, power, credits. Read-only;
@@ -2888,7 +4931,9 @@ end
             local okPo, po = pcall(aiHouse.GetPowerOutput, aiHouse)
             local okPd, pd = pcall(aiHouse.GetPowerDrain, aiHouse)
             local okCr, cr = pcall(aiHouse.GetCredits, aiHouse)
-            dlog("BASE", frame, string.format(
+            -- QUIET (KEEP/QUIET/CUT): same gate as CENSUS; on-change +
+            -- heartbeat per house.
+            dlogChange("BASE", frame, tostring(aiHouse:GetName()), string.format(
                 "house=%s blds=%d units=%d power=%s/%s credits=%s :: %s%s",
                 tostring(aiHouse:GetName()), bn, un,
                 (okPo and type(po) == "number") and tostring(math.floor(po)) or "?",
@@ -3015,11 +5060,36 @@ end
                 end
             end
             defenseState[id] = nil -- defender or target gone: release
+            -- Phase 1: drop the native lease with the record (live unit:
+            -- Release by userdata; dead unit: nothing to release — the
+            -- hook's UID check drops the stale lease on pointer reuse).
+            if defAlive and TargetLease then
+                local def = findSnap(units, id)
+                if def and def.u then TargetLease.Release(def.u) end
+            end
         end
     end
     for id in pairs(focusState) do
         if not seenNow[id] then focusState[id] = nil end -- bomber gone
     end
+    for id in pairs(radEvacState) do
+        if not seenNow[id] then radEvacState[id] = nil end -- evacuee gone
+    end
+    for id in pairs(minerState) do
+        if not seenNow[id] then minerState[id] = nil end -- miner gone
+    end
+    for id in pairs(retargetState) do
+        if not seenNow[id] then retargetState[id] = nil end -- fighter gone
+    end
+    for id in pairs(kiteHud) do
+        if not seenNow[id] then kiteHud[id] = nil end -- principal gone
+    end
+    -- NOTE: birthScan/birthViol are deliberately NOT pruned here. A
+    -- building flickering out of one scan (validation hiccup) and back
+    -- must keep its original birth, or a legal building would be
+    -- reborn-violated. Ids are never recycled, so a true rebuild is a
+    -- new id with a new birth anyway; memory is bounded by buildings
+    -- ever seen (hundreds).
     for h, rst in pairs(raidState) do
         if rst.members then
             local kept = {}

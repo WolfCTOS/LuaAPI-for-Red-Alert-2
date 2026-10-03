@@ -1,8 +1,9 @@
 {
   "id": "bounty_hunter",
   "name": "Bounty Hunter",
-  "version": "2.0.0",
+  "version": "2.2.0",
   "author": "NiTeMind",
-  "description": "Marks one enemy vehicle as BOUNTY (outline + label) and pays a veterancy-scaled reward on its destruction",
+  "description": "Bounty rewards for kills, scaled by veterancy",
+  "description_ru": "Награды за убийства по рангу ветеранства",
   "conflicts": []
 }

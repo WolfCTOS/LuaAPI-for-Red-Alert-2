@@ -26,6 +26,14 @@ never reveals any. Runs AUTOMATICALLY (no hotkeys; remove from
   vanilla Reshroud combination); one tactical dirty-area flush per writing
   sweep (`World.FlushShroudRedraw`), plus a periodic mop-up. No renderer
   hooks in the visual path.
+- **Native driver (v0.9.25)** — with `World.NativeReshroud` present, the mod
+  additionally calls the engine's own `MapClass::Reshroud(CurrentPlayer)` on
+  a frame timer (`NATIVE_INTERVAL`, default 150) instead of writing cells one
+  by one: the whole-map cascade blackens unseen mapped ground and the vanilla
+  reveal restores sighted ground by itself. All guard/hysteresis/trail
+  machinery keeps RUNNING as observation (meters like `blackWatch`/`orphan`
+  still validate the result from outside), but per-cell Lua writes stay OFF;
+  without the binding the mod falls back to the per-cell path automatically.
 
 ## Knobs (`main.lua` top)
 
@@ -37,6 +45,7 @@ never reveals any. Runs AUTOMATICALLY (no hotkeys; remove from
 | `MAX_PER_SWEEP` | 4000 | global backstop |
 | `PROGRESS_MIN` | 1 | net cells/4 sweeps arming the fast cone |
 | `VISUAL_CRISP` | false | resolver-mark visuals (off: engine bits only) |
+| `NATIVE_RESHROUD` / `NATIVE_INTERVAL` | true / 150 | native driver on/off; whole-map `Reshroud` cadence in frames (set `NATIVE_RESHROUD=false` to restore per-cell Lua writes) |
 
 ## Meters (LuaAPI.log)
 
@@ -44,10 +53,17 @@ never reveals any. Runs AUTOMATICALLY (no hotkeys; remove from
 - `SHROUD` — window volumes: `total`, `+cells`, `rate` (cells/s), `meanAge` (abandonment-to-blacken), `maxBurst`, `activeSw`;
 - `blackWatch@` — coords black-in-data inside true sight (engine not reopening);
 - `orphan@` — open cells under no management (coverage holes);
-- `census` — object/position/sight coverage of the guard.
+- `census` — object/position/sight coverage of the guard;
+- `NATIVE` — one line per driver call: frame and the `Reshroud` return value.
 
 ## Version notes (v0.9.x live findings)
 
+- v0.9.25 — native driver mode: probe run (2026-09-29, fault=0, far cell 0→1,
+  watched cell 0→0, effect persists) motivated `World.NativeReshroud`;
+  the headless harness additionally pins the Lua side (timer, no per-cell
+  writes while the driver is bound, failure re-arms, fallback intact).
+  A LIVE match on the committed driver mode has NOT been run — that
+  verification is still pending.
 - Frame `== -1` and `ShroudCounter` are invalid guards (stale/dead live).
 - The engine draws dirty rects only: writes need `FlushShroudRedraw`.
 - Patrol/patrol-route oscillation is prevented by watch-duration history,
