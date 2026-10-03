@@ -1,8 +1,44 @@
 # 🚀 LuaAPI for Red Alert 2 — Yuri's Revenge
 Note: **CnCNet development is currently paused. Singleplayer and Skirmish remain the primary development targets. Further CnCNet work will resume only if project adoption increases enough to justify the additional development and testing effort.**
- 
+
 It means LuaAPI is probably for singleplayer. Don't forget I always test my mods in CnCNet, they always successful, so you can play in CnCNet. 
 > **Lua scripting API for Command & Conquer: Red Alert 2 — Yuri's Revenge 1.001**
+
+## 🎮 For players (download → play in 5 minutes)
+
+**1. Download.** Get the release archive here (pick one):
+- ModDB: <https://www.moddb.com/mods/luaapi-for-red-alert-2-yuris-revenge>
+- GitHub Releases: <https://github.com/WolfCTOS/LuaAPI-for-Red-Alert-2/releases>
+
+**2. Extract** the archive into your Yuri's Revenge directory (where `gamemd.exe` lives).
+You should end up with `LuaAPI.dll`, `injector.exe` and a `scripts/` folder next to it.
+
+**3. Enable a mod.** Open `scripts/active_mods.txt` and make sure it lists the mod
+you want (one ID per line, `#` starts a comment). Default stack:
+
+```text
+bounty_hunter
+smart_ai
+radiation
+```
+
+**4. Launch.** Run `injector.exe` and press **Launch** — it starts the game
+with LuaAPI loaded.
+The injector is a small launcher: it starts the game and loads LuaAPI into it —
+LuaAPI does not load itself, the game must go through the injector. (If the
+game is already running, the injector picks up `gamemd.exe` — or
+`gamemd-spawn.exe` under CnCNet — instead.)
+
+**5. Verify it worked.** Open `LuaAPI.log` (next to `LuaAPI.dll`): you should see
+mod-loading lines such as `[LuaAPI] [+] Mod active: 'smart_ai'`. If a mod's
+`Update` throws, the error lands in the same log with the mod name — no debugger
+needed.
+
+> Ares / Phobos / Syringe / CnCNet players: see
+> [Compatibility](#ares--phobos--syringe--cncnet-compatibility) below —
+> no extra steps for the standard setup.
+
+---
 
 LuaAPI is a native x86 Lua 5.4 runtime injected into `gamemd.exe`. It exposes selected Red Alert 2 engine functionality to Lua so modders can build gameplay systems without implementing every mechanic directly in C++.
 The project follows three core principles:
@@ -139,16 +175,17 @@ Yuri's Revenge/
     ├── active_mods.txt
     │
     └── mods/
-        ├── my_first_mod/
-        │   └── main.lua
-        │
-        └── command_authority/
-            └── main.lua
+        ├── smart_ai/
+        ├── radiation/
+        ├── bounty_hunter/
+        ├── double_harvester_deploy/
+        └── dynamic_fow/
 ```
 
-> The default active stack is `target_reselect`, `bounty_hunter`, and
-> `smart_ai` (see `scripts/active_mods.txt`). Other showcase and diagnostic
-> mods remain available under `scripts/mods/`.
+> The default active stack is `bounty_hunter`, `smart_ai`, `radiation`
+> (see `scripts/active_mods.txt`). `double_harvester_deploy` and
+> `dynamic_fow` ship in `scripts/mods/` but are off by default — add
+> their IDs to `active_mods.txt` to try them.
 
 ---
 
@@ -177,7 +214,7 @@ scripts/active_mods.txt
 Add one mod ID per line (use mods that exist under `scripts/mods/`):
 
 ```text
-command_authority
+smart_ai
 ```
 
 Lines beginning with `#` are comments.
@@ -214,7 +251,9 @@ return MyMod
 
 ### 4. Launch the game
 
-Run `injector.exe` and start Yuri's Revenge.
+Same as [For players](#for-players-download--play-in-5-minutes) step 4:
+run `injector.exe` and start Yuri's Revenge (LuaAPI loads itself only
+through the injector, never on a plain game start).
 
 Check `LuaAPI.log` (written next to `LuaAPI.dll`) for initialization and mod-loading messages.
 
@@ -433,6 +472,32 @@ LuaAPI's injector must therefore resolve the actual game module from the running
 
 LuaAPI may also encounter an existing hook at a function already modified by Ares, Phobos, or another engine modification. A signature mismatch should be treated as a condition requiring evaluation, not automatically as an injection failure.
 
+### 🧩 Ares / Phobos / Syringe / CnCNet compatibility
+
+The game folder ships (or can ship) alongside the usual community stack:
+
+- `Syringe.exe` + `Ares.dll` + `Phobos.dll` — the Syringe/Ares/Phobos
+  extension chain many mods and the CnCNet client rely on;
+- `run_syringe_game.bat` / `run_syringe_cncnet.bat` — launch the game
+  through Syringe (`Syringe.exe gamemd.exe CnCNet-Spawner.dll`).
+
+LuaAPI works next to this stack: the injector looks for the **live**
+game process (`gamemd.exe`, then `gamemd-spawn.exe`), so both the plain
+start and the CnCNet start are covered. Order of operations that is verified
+in practice:
+
+1. Run `injector.exe` and press **Launch** (starts the game with LuaAPI),
+   or start the game the way you normally do (plain shortcut, Syringe
+   batch file, or the CnCNet client) and let the injector pick the
+   running process up.
+2. Confirm `LuaAPI.log` shows the DLL loaded and your mods active.
+
+If Ares/Phobos already hook a function LuaAPI also hooks, the log
+records a signature note — that is diagnostic information, not an
+automatic failure. Tested configurations are singleplayer/skirmish;
+CnCNet play works in practice but is not under active development
+(see the note at the top).
+
 ---
 
 ## ⏱️ Logical Frames & Multiplayer
@@ -575,6 +640,21 @@ Document the proven capability
 ```
 
 The goal is not to expose every engine feature immediately. The goal is to expose useful functionality incrementally while keeping the boundary between unsafe engine internals and Lua gameplay logic well defined.
+
+---
+
+## 🛠️ For developers (build from source)
+
+Players stop here — this is only for building LuaAPI itself.
+MSVC-only, 32-bit x86:
+
+```text
+build_release.bat
+```
+
+(equivalent: `cmake --build build --config Release`). The build auto-deploys
+`LuaAPI.dll` + `injector.exe` next to the game. Full instructions, submodule
+setup and iteration workflow: [`AGENTS.md`](AGENTS.md).
 
 ---
 

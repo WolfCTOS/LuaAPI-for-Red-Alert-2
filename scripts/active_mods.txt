@@ -1,9 +1,4 @@
 # LuaAPI active mods - one mod ID per line
-# BISECT 2026-09-29 (crash 0x3BC806 x5): engine-state writers OFF this round
-# (dynamic_fow cell writes + radiation RadSites). Verbs/AI/marks stay.
-target_reselect
 bounty_hunter
 smart_ai
-#radiation
-#dynamic_fow
-command_authority
+radiation
