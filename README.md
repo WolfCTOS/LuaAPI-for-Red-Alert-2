@@ -47,10 +47,10 @@ The project follows three core principles:
 - 🎮 **Lua controls gameplay behavior**
 - 🛡️ **Only implemented and tested functionality is documented as verified**
 
-> **Project Stage:** **Beta** (`2.0.0`; Alpha history: see `FSM/MODDB_ALPHA_RELEASE.md`)
-> **Current Release Tag:** `v2.0.0` — *Beta release (`v1.0.0` was a historical milestone tag, not a production claim)*
+> **Project Stage:** **Beta** (`0.2.0`; Alpha history: see `FSM/MODDB_ALPHA_RELEASE.md`)
+> **Current Release Tag:** `v0.2.0` — *Beta release (`v1.0.0` was a historical milestone tag, not a production claim)*
 > **Current Focus:** Documentation/gate reset (`PROJECT/GATES.md`); research: Dynamic Unit Behavior
-> **Development API Line:** `2.0.0`
+> **Development API Line:** `0.2.0`
 > **Target:** Yuri's Revenge `1.001`
 > **Primary targets:** Singleplayer and Skirmish  
 > **CnCNet:** compatible environment and tested in practice; active CnCNet development is currently paused
