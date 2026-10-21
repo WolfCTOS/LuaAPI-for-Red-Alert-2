@@ -48,7 +48,7 @@ The project follows three core principles:
 - 🛡️ **Only implemented and tested functionality is documented as verified**
 
 > **Project Stage:** **Beta** (`0.2.0`; Alpha history: see `FSM/MODDB_ALPHA_RELEASE.md`)
-> **Current Release Tag:** `v0.2.0` — *Beta release (`v1.0.0` was a historical milestone tag, not a production claim)*
+> **Current Release Tag:** `v0.2.0` — *Beta release (`v0.1.0` was a historical milestone tag, not a production claim)*
 > **Current Focus:** Documentation/gate reset (`PROJECT/GATES.md`); research: Dynamic Unit Behavior
 > **Development API Line:** `0.2.0`
 > **Target:** Yuri's Revenge `1.001`
@@ -76,10 +76,10 @@ The project follows three core principles:
 
 | Property | Value |
 |---|---|
-| **Project Stage** | Beta (`2.0.0`) |
-| **Current Release Tag** | `v2.0.0` (Beta; `v1.0.0` was historical — see `FSM/MODDB_ALPHA_RELEASE.md`) |
+| **Project Stage** | Beta (`0.2.0`) |
+| **Current Release Tag** | `v0.2.0` (Beta; `v0.2.0` was historical — see `FSM/MODDB_ALPHA_RELEASE.md`) |
 | **Current Focus** | Gate reset — `PROJECT/GATES.md` |
-| **Development API Line** | `2.0.0` |
+| **Development API Line** | `0.2.0` |
 | **Game** | Yuri's Revenge `1.001` |
 | **Primary Process** | `gamemd.exe` |
 | **CnCNet Process** | `gamemd-spawn.exe` |
@@ -425,22 +425,6 @@ local count = player:SpawnUnit(
 
 Engine.PrintMessage("Spawned " .. count .. " APOC")
 ```
-
-The return value is the number of units actually created.
-
----
-
-## 🔫 Multi-Turret Systems — REMOVED 2026-09-21
-
-> The native `SubTurretManager`, its Lua bindings, the spawned-missile
-> decoupling, the `BulletHook` Detonate hook, the `EventHook` module, and
-> `FireProjectile` were removed: zero live consumers in `scripts/`, plus
-> per-frame full-array sweep and per-detonation hook cost on the game
-> thread. History preserved in git and `PROJECT/ROADMAP.md` (Milestone 10).
-> The design lesson stands: C++ maintains state, Lua decides firing — but
-> ship it only with a live consumer (API principle №10).
-
----
 
 ## 📨 Engine Messaging
 
