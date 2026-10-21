@@ -1,6 +1,6 @@
 # LuaAPI for Red Alert 2 — API Reference
 
-> **Version:** `2.0.0` (Beta)
+> **Version:** `0.2.0` (Beta)
 > **Milestone:** `11`  
 > **Target:** `gamemd.exe` — Yuri's Revenge 1.001  
 > **Last Updated:** `2026-09-21` (Extras-2 sweep; no version bump, no behavior change)
