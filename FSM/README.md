@@ -1,5 +1,8 @@
 # FSM — First Serious Mod
 
+> **Working title.** FSM stays for **First Serious Mod**; the final public
+> name has not been chosen yet. FSM — First serious mod, название пока не придумано.
+
 Research archive for the first serious attempt to use LuaAPI as a **runtime
 gameplay layer** (persistent, match-aware global systems with player
 decisions in the loop) — as opposed to small mechanic demos or INI-style
