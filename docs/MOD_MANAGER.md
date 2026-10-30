@@ -1,4 +1,4 @@
-# Mod Manager (injector_gui.cpp) — Load Order, Conflicts, Injection
+# LMM — Lua Mod Manager (injector_gui.cpp) — Layout, Load Order, Conflicts
 
 This document describes how the LuaAPI **Mod Manager** (the Win32 launcher,
 `injector_gui.cpp`) decides which mods run, in what order, and what actually
@@ -10,8 +10,9 @@ for writing mods — see [`API.md`](../API.md) for that.
 ## 1. What "order" actually means
 
 The card list in the Mod Manager can be reordered by dragging cards up and
-down. That order is written to `scripts/active_mods.txt`, one mod ID per
-line, top to bottom.
+down. That order is written to the active list, one mod ID per line, top to
+bottom: `mods/active_mods.txt` in the current layout, or
+`scripts/active_mods.txt` on an install that has no `mods/` folder yet.
 
 `scripts/init.lua` reads that file top to bottom and does two things with it,
 in the same order:
@@ -82,9 +83,10 @@ mod, say so in its `description`.
 
 ## 3. Persisted order vs. filesystem order
 
-On startup, `ScanMods()` re-scans `scripts/mods/` from disk. Filesystem
-enumeration order is not something the user controls and isn't guaranteed
-to be alphabetical on every system.
+On startup, `ScanMods()` re-scans the mod folders from disk — `mods/`
+first, then the legacy `scripts/mods/`. Filesystem enumeration order is not
+something the user controls and isn't guaranteed to be alphabetical on every
+system.
 
 To keep a user's drag-and-drop order stable across restarts:
 
@@ -97,6 +99,21 @@ To keep a user's drag-and-drop order stable across restarts:
 This means: reordering only "sticks" for mods that have been saved at least
 once via the **Save & Apply** button. A brand-new mod you haven't touched
 yet will show up wherever the filesystem happens to put it until you save.
+
+### Folder name is the mod ID
+
+One row in LMM is one folder on disk, and the **folder name is the ID** that
+`init.lua` loads and that `active_mods.txt` stores. `mod.json` may repeat the
+ID in its `"id"` field, but the folder name wins; if the two disagree the
+manager logs it and keeps using the folder name. That rule is what keeps two
+mods from ever sharing one toggle — and what makes renaming the folder the
+same as renaming the mod.
+
+Both layouts are scanned in one pass, so a half-migrated install lists every
+mod exactly once: a folder in `mods/` shadows a `scripts/mods/` folder with
+the same name, and a folder with no `main.lua` (an asset-only folder, for
+example) is ignored. The scanned roots are logged on every refresh
+(`Mods: N found in ...` in `injector_log.txt`).
 
 ---
 

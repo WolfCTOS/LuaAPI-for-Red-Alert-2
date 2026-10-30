@@ -3,15 +3,66 @@ print("[LuaAPI] Universal ModLoader Online!")
 -- Read enabled mod IDs from scripts/active_mods.txt (one per line, '#' comments).
 -- Uses debug.getinfo to anchor the path to this script's directory,
 -- avoiding CWD issues when CnCNet/Syringe sets CWD to the client directory.
+-- Layout: <game>\mods\<id>\main.lua is the current location; the older
+-- <game>\scripts\mods\<id>\main.lua is still accepted. The engine loads this
+-- file as <game>\scripts\init.lua and puts <game>\scripts\?.lua on package.path;
+-- the entries added below let require("mods.<id>.main") work in both layouts.
+
+local function toSlash(p) return (p:gsub("\\", "/")) end
+
+local SCRIPT_DIR = toSlash((debug.getinfo(1, "S").source:match("@?(.*[/\\])") or ""))
+local GAME_ROOT = SCRIPT_DIR:match("^(.*)scripts/$") or SCRIPT_DIR
+
+local MOD_DIRS = {}
+local function addModDir(dir)
+    if dir == "" then return end
+    for _, d in ipairs(MOD_DIRS) do
+        if d == dir then return end
+    end
+    MOD_DIRS[#MOD_DIRS + 1] = dir
+end
+addModDir(GAME_ROOT .. "mods")
+addModDir(SCRIPT_DIR .. "mods")
+
+local function addPackagePath(entry)
+    if entry == "" then return end
+    if not package.path:find(entry, 1, true) then
+        package.path = entry .. ";" .. package.path
+    end
+end
+
+-- The newest layout must win, so prepend in reverse order: the loop ends with
+-- GAME_ROOT's entry at the front of package.path.
+for i = #MOD_DIRS, 1, -1 do
+    local root = MOD_DIRS[i]
+    local parent = root:match("^(.*)mods/?$")
+    if parent then addPackagePath(parent .. "?.lua") end   -- mods.<id>.<module>
+    addPackagePath(root .. "/?.lua")                      -- sibling modules
+end
+
+local function findModMain(id)
+    for _, root in ipairs(MOD_DIRS) do
+        local path = root .. "/" .. id .. "/main.lua"
+        local f = io.open(path, "r")
+        if f then
+            f:close()
+            return path
+        end
+    end
+end
+
 local function loadActiveModList()
     local active = {}
-    local scriptDir = debug.getinfo(1, "S").source:match("@?(.*[/\\])") or ""
-    local f = io.open(scriptDir .. "active_mods.txt", "r")
-    if not f then
-        f = io.open("scripts/active_mods.txt", "r")
-    end
-    if not f then
-        f = io.open("active_mods.txt", "r")
+    local candidates = {
+        GAME_ROOT .. "mods/active_mods.txt",
+        SCRIPT_DIR .. "active_mods.txt",
+        "scripts/active_mods.txt",
+        "active_mods.txt",
+    }
+    local f
+    for _, path in ipairs(candidates) do
+        f = io.open(path, "r")
+        if f then break end
     end
 
     if f then
@@ -74,9 +125,29 @@ function OnUnitDestroyed(victim, killer)
 end
 
 for _, modName in ipairs(ACTIVE_MODS) do
-    local ok, mod = pcall(require, "mods." .. modName .. ".main")
+    -- Resolve the folder in either layout, then load it. require() is tried
+    -- first (it keeps package.loaded semantics); loadfile() covers folder
+    -- names that are not valid Lua module names.
+    local mainPath = findModMain(modName)
+    local ok, mod
+    if mainPath then
+        ok, mod = pcall(require, "mods." .. modName .. ".main")
+        if not ok or type(mod) ~= "table" then
+            local chunk, loadErr = loadfile(mainPath)
+            if chunk then
+                ok, mod = pcall(chunk)
+            else
+                ok, mod = false, loadErr
+            end
+        end
+    else
+        ok, mod = false, "main.lua not found in mods/ or scripts/mods/"
+    end
     if ok and mod then
-        table.insert(loadedMods, mod)
+        -- Keep the id next to the module: a mod that fails to load must
+        -- not shift the ids of the ones after it (timing/error labels
+        -- used to be attributed to the wrong mod).
+        table.insert(loadedMods, { name = modName, mod = mod })
         modTiming[modName] = modTiming[modName] or { total_ms = 0.0, max_ms = 0.0, calls = 0 }
         print(string.format("[LuaAPI] [+] Mod active: '%s'", modName))
     else
@@ -115,9 +186,9 @@ function OnTick(frame)
     -- per mod and REPORTED (E1): one broken mod neither stops the loader
     -- nor fails silently. Dedup by message (see modLastError) so the log
     -- gets one line per distinct error, not one per frame.
-    for idx, mod in ipairs(loadedMods) do
+    for _, entry in ipairs(loadedMods) do
+        local mod, modName = entry.mod, entry.name
         if mod and type(mod.Update) == "function" then
-            local modName = ACTIVE_MODS[idx]
             local start = os.clock()
             local ok, err = pcall(mod.Update, frame)
             if not ok then

@@ -11,7 +11,7 @@ It means LuaAPI is probably for singleplayer. Don't forget I always test my mods
 - GitHub Releases: <https://github.com/WolfCTOS/LuaAPI-for-Red-Alert-2/releases>
 
 **2. Extract** the archive into your Yuri's Revenge directory (where `gamemd.exe` lives).
-You should end up with `LuaAPI.dll`, `injector.exe` and a `scripts/` folder next to it.
+You should end up with `LuaAPI.dll`, `LMM.exe`, a `scripts/` folder and a `mods/` folder next to it.
 
 **3. Enable a mod.** Open `scripts/active_mods.txt` and make sure it lists the mod
 you want (one ID per line, `#` starts a comment). Default stack:
@@ -22,10 +22,10 @@ smart_ai
 radiation
 ```
 
-**4. Launch.** Run `injector.exe` and press **Launch** — it starts the game
+**4. Launch.** Run `LMM.exe` and press **Launch** — it starts the game
 with LuaAPI loaded.
-The injector is a small launcher: it starts the game and loads LuaAPI into it —
-LuaAPI does not load itself, the game must go through the injector. (If the
+LMM is the launcher/mod manager: it starts the game and loads LuaAPI into it —
+LuaAPI does not load itself, the game must go through LMM (or another injector). (If the
 game is already running, the injector picks up `gamemd.exe` — or
 `gamemd-spawn.exe` under CnCNet — instead.)
 
@@ -77,7 +77,7 @@ The project follows three core principles:
 | Property | Value |
 |---|---|
 | **Project Stage** | Beta (`0.2.0`) |
-| **Current Release Tag** | `v0.2.0` (Beta; `v0.2.0` was historical — see `FSM/MODDB_ALPHA_RELEASE.md`) |
+| **Current Release Tag** | `v2.0.0` (tag name predates the `0.2.0` renumber; `v1.0.0` was historical — see `FSM/MODDB_ALPHA_RELEASE.md`) |
 | **Current Focus** | Gate reset — `PROJECT/GATES.md` |
 | **Development API Line** | `0.2.0` |
 | **Game** | Yuri's Revenge `1.001` |
@@ -168,24 +168,30 @@ A typical LuaAPI installation looks like:
 Yuri's Revenge/
 ├── gamemd.exe
 ├── LuaAPI.dll
-├── injector.exe
+├── LMM.exe            (Lua Mod Manager)
 │
-└── scripts/
-    ├── init.lua
+├── scripts/
+│   └── init.lua       (loader; the only file the DLL reads)
+│
+└── mods/
     ├── active_mods.txt
-    │
-    └── mods/
-        ├── smart_ai/
-        ├── radiation/
-        ├── bounty_hunter/
-        ├── double_harvester_deploy/
-        └── dynamic_fow/
+    ├── smart_ai/
+    │   ├── main.lua
+    │   └── mod.json
+    ├── radiation/
+    ├── bounty_hunter/
+    ├── double_harvester_deploy/
+    └── dynamic_fow/
 ```
 
 > The default active stack is `bounty_hunter`, `smart_ai`, `radiation`
-> (see `scripts/active_mods.txt`). `double_harvester_deploy` and
-> `dynamic_fow` ship in `scripts/mods/` but are off by default — add
-> their IDs to `active_mods.txt` to try them.
+> (see `mods/active_mods.txt`). `double_harvester_deploy` and
+> `dynamic_fow` ship in `mods/` but are off by default — add their IDs
+> to `active_mods.txt` to try them.
+>
+> Older installations keep their mods in `scripts/mods/`. Both layouts
+> work: the loader and LMM scan `mods/` first, then `scripts/mods/`, and
+> a `mods/<id>` folder wins over `scripts/mods/<id>` with the same name.
 
 ---
 
@@ -199,8 +205,9 @@ The installation should contain:
 
 ```text
 LuaAPI.dll
-injector.exe
-scripts/
+LMM.exe
+scripts/init.lua
+mods/            (mod folders + active_mods.txt)
 ```
 
 ### 2. Enable a mod
@@ -208,10 +215,10 @@ scripts/
 Edit:
 
 ```text
-scripts/active_mods.txt
+mods/active_mods.txt
 ```
 
-Add one mod ID per line (use mods that exist under `scripts/mods/`):
+Add one mod ID per line (use mods that exist under `mods/`):
 
 ```text
 smart_ai
@@ -230,7 +237,7 @@ mods.<mod_id>.main
 Create:
 
 ```text
-scripts/mods/my_first_mod/main.lua
+mods/my_first_mod/main.lua
 ```
 
 A standard LuaAPI mod returns a table:
@@ -252,7 +259,7 @@ return MyMod
 ### 4. Launch the game
 
 Same as [For players](#for-players-download--play-in-5-minutes) step 4:
-run `injector.exe` and start Yuri's Revenge (LuaAPI loads itself only
+run `LMM.exe` and start Yuri's Revenge (LuaAPI loads itself only
 through the injector, never on a plain game start).
 
 Check `LuaAPI.log` (written next to `LuaAPI.dll`) for initialization and mod-loading messages.
@@ -265,11 +272,13 @@ stopping the other mods — no separate debugging setup needed.
 
 ## 🧱 Mod Anatomy
 
-Each mod lives under `scripts/mods/<mod_id>/`.
+Each mod lives under `mods/<mod_id>/`. The folder name **is** the mod ID
+written to `active_mods.txt`, so renaming a folder renames the mod.
 
 ```text
-scripts/mods/my_first_mod/
-└── main.lua
+mods/my_first_mod/
+├── main.lua     (entry point; returns the mod table)
+└── mod.json     (optional: name, version, author, description, conflicts)
 ```
 
 A mod may also contain additional files as required by the implementation.
@@ -470,7 +479,7 @@ game process (`gamemd.exe`, then `gamemd-spawn.exe`), so both the plain
 start and the CnCNet start are covered. Order of operations that is verified
 in practice:
 
-1. Run `injector.exe` and press **Launch** (starts the game with LuaAPI),
+1. Run `LMM.exe` and press **Launch** (starts the game with LuaAPI),
    or start the game the way you normally do (plain shortcut, Syringe
    batch file, or the CnCNet client) and let the injector pick the
    running process up.
@@ -637,7 +646,7 @@ build_release.bat
 ```
 
 (equivalent: `cmake --build build --config Release`). The build auto-deploys
-`LuaAPI.dll` + `injector.exe` next to the game. Full instructions, submodule
+`LuaAPI.dll` + `LMM.exe` next to the game. Full instructions, submodule
 setup and iteration workflow: [`AGENTS.md`](AGENTS.md).
 
 ---
@@ -739,7 +748,7 @@ If you are new to LuaAPI:
 **1.** Read [`TUTORIAL.md`](docs/TUTORIAL.md)  
 **2.** Use [`API.md`](API.md) as the technical reference  
 **3.** Study [`CAPABILITIES.md`](PROJECT/CAPABILITIES.md) for verified examples  
-**4.** Explore the sample mods under `scripts/mods/`
+**4.** Explore the sample mods under `mods/`
 
 > For Beta scope, check the API classification (Stable / Experimental /
 > Internal / Unverified / Blocked) in
