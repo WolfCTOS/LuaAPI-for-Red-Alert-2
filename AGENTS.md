@@ -9,6 +9,18 @@ Before touching hooks, engine integration, or combat systems, read:
 
 ---
 
+## Workspace boundary
+
+- The agent's working directory is `D:\Projects\LuaAPI`. It is the source repository.
+- File operations (read, write, create, copy, move, delete) are limited to that directory until the user explicitly authorizes leaving it.
+- Do not independently create external working copies, backup directories, clones, exports, or any other file outside the working directory. A backup, a clone or an export belongs inside the working directory.
+- Do not read from or write to the game installation or any other external directory without that explicit authorization — not for diagnostics, not for backups, not for verification.
+- If a task requires access outside the working directory, STOP and ask for explicit permission before acting. Do not improvise a substitute location.
+- The repository root and the launched game's directory are separate locations. Do not treat them as one directory, and do not assume that files deployed into the repository root are present in the game directory.
+- This boundary binds every agent and subagent, regardless of the task it receives.
+
+---
+
 ## Project methodology
 
 The repository is the source of truth for the current implementation.
@@ -138,6 +150,8 @@ The agent may:
 - inspect runtime logs;
 - update documentation when implementation/status actually changes.
 
+This list applies within the workspace boundary defined above.
+
 The agent must NOT:
 - invent project methodology;
 - create additional Gates;
@@ -154,9 +168,10 @@ When methodology is ambiguous, preserve the existing methodology instead of crea
 
 ## Repo layout gotcha
 
-The repo root IS a full Yuri's Revenge 1.001 install (`gamemd.exe`, `.mix`, `.mmx`, etc.).
-
-Those game assets are gitignored; don't confuse them with source.
+The repo root IS the source repository. In the original layout it doubled as a
+full Yuri's Revenge 1.001 install (`gamemd.exe`, `.mix`, `.mmx`, etc.); that is
+no longer true here — the game installation is a separate directory outside
+this repository. Game assets stay gitignored; don't confuse them with source.
 
 Only these directories contain project source/configuration:
 - `src/`
@@ -167,13 +182,19 @@ Only these directories contain project source/configuration:
 - `tools/`
 - `third_party/`
 
-The CMake build auto-deploys `LuaAPI.dll` + `injector.exe` to the repo root (the game directory).
+The CMake build auto-deploys `LuaAPI.dll` + `LMM.exe` (CMake target `injector`,
+output name `LMM` — the shipped "Lua Mod Manager" launcher) to
+`${CMAKE_SOURCE_DIR}` — the repository root — and copies `scripts/` into the
+build output directory. It does **not** update a game installation; deploying
+there is a separate, explicit step, and it is outside this repository's
+boundary.
 
-A fresh build overwrites the DLL/injector already in the game folder.
+A fresh build overwrites the `LuaAPI.dll` / `LMM.exe` already present in
+the repository root.
 
 If the `injector` deploy step fails with "Permission denied", a launcher
-(`injector.exe`) is still running and holding the file. Stop it
-(`Get-Process injector | Stop-Process -Force`) and rebuild — do not ask the
+(`LMM.exe`, process name `LMM`) is still running and holding the file. Stop it
+(`Get-Process LMM | Stop-Process -Force`) and rebuild — do not ask the
 user to close it.
 
 ---
@@ -192,14 +213,21 @@ Initialize git submodules first:
 
 MinHook IS used and linked. Ignore the stale "no longer linked, retained for reference" comment in `CMakeLists.txt`.
 
-There is no unit test framework.
+There is no unit test framework. Mod discovery/loading can still be checked
+without the game: `python tools/test_mod_layout.py` runs the real
+`scripts/init.lua` through a Lua runtime (needs `pip install lupa`) and
+covers `mods/<id>/`, legacy `scripts/mods/<id>/`, and the precedence rule
+when a folder exists in both.
 
 Primary verification is in-game:
-- run `injector.exe`;
+- run `LMM.exe` (the launcher, built from `src/injector_gui.cpp`);
 - launch Yuri's Revenge;
 - inspect `LuaAPI.log`.
 
-`LuaAPI.log` is written next to the DLL in the repo root.
+The game installation is outside this repository's boundary: obtain explicit
+user permission before touching it for a runtime check.
+
+`LuaAPI.log` is written next to the DLL that is running.
 
 Trace logging:
 - `LUAAPI_TRACE=1`
@@ -223,7 +251,7 @@ C++ changes require:
 - rebuild;
 - relaunch/reinject as appropriate.
 
-`injector.exe` must attach to `gamemd.exe`.
+`LMM.exe` must attach to `gamemd.exe`.
 
 `RA2MD.exe` is a launcher stub.
 
@@ -352,7 +380,7 @@ Coordinates:
 
 Mods live in:
 
-`scripts/mods/<id>/main.lua`
+`mods/<id>/main.lua` (current; `scripts/mods/<id>/main.lua` still loads as the legacy layout)
 
 Active IDs are listed one per line in:
 

@@ -4,8 +4,8 @@
 
 ### Project
 - LuaAPI: Lua 5.4 runtime injected into Yuri's Revenge 1.001 (gamemd.exe, 32-bit x86).
-- Layout: src/ (C++ DLL + injector), scripts/mods/<name>/main.lua (hot-swappable), docs/.
-- Build: cmake --build build --config Release; deploys LuaAPI.dll + injector.exe.
+- Layout: src/ (C++ DLL + injector), mods/<name>/main.lua (hot-swappable; scripts/mods/ still supported), docs/.
+- Build: cmake --build build --config Release; deploys LuaAPI.dll + LMM.exe (CMake target `injector`).
 - Injector must attach to gamemd.exe. RA2MD.exe is a launcher stub (VirtualProtect error 487 = wrong process).
 
 ### Architecture

@@ -62,7 +62,7 @@ After starting the game, inspect `LuaAPI.log` (written next to `LuaAPI.dll`) if 
 Create:
 
 ```text
-scripts/mods/my_first_mod/
+mods/my_first_mod/
 ```
 
 ### Step 2: Create `main.lua`
@@ -396,7 +396,7 @@ scripts/active_mods.txt
 The entry must exactly match the directory:
 
 ```text
-scripts/mods/my_first_mod/
+mods/my_first_mod/
 ```
 
 ```text
@@ -513,7 +513,7 @@ end
 
 - **[API Reference](../API.md)** — authoritative interface and callback contract.
 - **[Capabilities & Cookbook](../PROJECT/CAPABILITIES.md)** — verified mechanics and practical recipes.
-- **Sample mods in `scripts/mods/`** — working examples.
+- **Sample mods in `mods/`** — working examples.
 - **[Architecture Roadmap](../PROJECT/ROADMAP.md)** — development status and milestones.
 
 The recommended workflow is simple: start with a small script, test it in-game, verify the behavior, and document only what the current build actually supports.

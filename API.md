@@ -3,7 +3,7 @@
 > **Version:** `0.2.0` (Beta)
 > **Milestone:** `11`  
 > **Target:** `gamemd.exe` — Yuri's Revenge 1.001  
-> **Last Updated:** `2026-09-21` (Extras-2 sweep; no version bump, no behavior change)
+> **Last Updated:** `2026-10-22` (API version renumbered `2.0.0` → `0.2.0`; strings only, no behavior change)
 
 This document is the reference for the **currently implemented LuaAPI interface**.
 
@@ -1153,7 +1153,7 @@ Engine.ClearBarrelPitchOverride(unitId) -- clear one manual override
 Engine.ClearAllBarrelPitchOverrides()   -- clear all manual overrides
 Engine.SetPersistentBarrelPitch(typeId, deg)   -- persistent type-field path (M16 static experiment)
 Engine.ClearPersistentBarrelPitch(typeId)
-Engine.version -- string field on the Engine table (project version, `"2.0.0"`)
+Engine.version -- string field on the Engine table (project version, `"0.2.0"`)
 ```
 
 ---

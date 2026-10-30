@@ -6,6 +6,72 @@ The changelog follows the project's verified milestone history. Features are lis
 
 ---
 
+## [Unreleased] — LMM no longer freezes after the game closes (2026-10-22)
+
+### Fixed — launcher state
+
+- After quitting a game launched from LMM (RA2MD.EXE or the CnCNet client),
+  the dashboard could stay in its "injected / launching" state until the app
+  was restarted, leaving Launch/Inject disabled.
+- `IsPidAlive()` treated any `OpenProcess` failure other than an invalid PID
+  as "still running", so a game the launcher could not open (elevated) pinned
+  the state forever. It now falls back to the system process list.
+- `FindTargetProcess()` took a `TH32CS_SNAPMODULE` snapshot for every candidate
+  process; that call can block while a process is still loading, freezing the
+  launch worker. The process image name alone identifies the game.
+- The CnCNet launch worker now stops as soon as the client exits without
+  spawning the game instead of waiting the full 120 s, and a watchdog
+  re-enables the UI if a launch never reports back at all.
+
+---
+
+## [Unreleased] — Mods live in `mods\`, not `scripts\mods\` (2026-10-22)
+
+### Changed — on-disk layout (no DLL change)
+
+- Mods now live in **`<game>\mods\<id>\`** (`main.lua`, optional
+  `mod.json`, `active_mods.txt` next to them). The engine is untouched: the
+  DLL still loads exactly one file, `<game>\scripts\init.lua`, so the layout
+  change lives entirely in Lua and in the manager.
+- `scripts/init.lua` searches `mods\` first and falls back to
+  `scripts\mods\`, so old installs and new ones load the same way; a
+  `mods\<id>` folder wins over a `scripts\mods\<id>` with the same name.
+  Both roots are on `package.path`, so `require("mods.<id>.main")` and
+  `require("mods.<id>.<module>")` resolve in either layout.
+- LMM (`src/injector_gui.cpp`) scans both roots in one pass and lists every
+  mod exactly once; the folder name is the mod ID, so `mod.json` can no
+  longer make two folders share a toggle. New mods and `active_mods.txt` are
+  written to `mods\`.
+- Per-mod timing and `Update` errors are now keyed by the mod's own ID
+  instead of its index in the active list: a mod that fails to load no
+  longer shifts the error/timing labels of the mods after it.
+- Installations migrated in place (game folder and the Desktop package); the
+  sample/test mods in this repository stay in `scripts\mods\` and load
+  through the legacy fallback.
+- Docs updated: `README.md`, `AGENTS.md`, `docs/AGENTS.md`,
+  `docs/FRAMEWORK.md`, `docs/TUTORIAL.md`, `docs/MOD_MANAGER.md`.
+
+---
+
+## [Unreleased] — API version renumbered `2.0.0` → `0.2.0` (2026-10-22)
+
+### Changed — version strings only (no behavior change)
+
+- The LuaAPI interface version is now **`0.2.0`**: `Engine.version`
+  (`src/lua_engine.cpp`), in-game watermark, `API.md`, `docs/FRAMEWORK.md`,
+  `PROJECT/CAPABILITIES.md`, `PROJECT/AI_CONTEXT.md`,
+  `PROJECT/API_FREEZE_AUDIT.md`, `PROJECT/ROADMAP.md`, `README.md`, and the
+  bundled mod manifests (`"requires": ["LuaAPI 0.2.0"]`).
+- Rationale: the engine has never made a compatibility promise, so `0.x`
+  states that honestly, matching the launcher line (`0.4.0`). A future `1.0.0`
+  is the first release that promises stability.
+- Deliberately unchanged: historical entries below keep the old `2.0.0`
+  wording, the git tag `v2.0.0` keeps its name (tags are immutable; it predates
+  the renumber), and mod versions such as `bounty_hunter` `2.0.0` are a
+  different namespace.
+
+---
+
 ## [Unreleased] - `World.DetonateAt` added: a radiation bullet detonation binding (2026-09-30)
 
 ### Added - the engine can now be asked to build a radiation site

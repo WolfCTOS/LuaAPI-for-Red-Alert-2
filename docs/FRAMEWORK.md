@@ -1,7 +1,7 @@
 # 🧩 LuaAPI Gameplay Framework (Milestone 14)
 
 > **Target:** `gamemd.exe` — Yuri's Revenge 1.001  
-> **API Version:** `2.0.0`
+> **API Version:** `0.2.0`
 > **Milestone:** 14 — Lua Gameplay Framework
 
 This document describes the **Lua-side gameplay framework** built on top of the
@@ -38,7 +38,7 @@ Lua Gameplay Framework
 └── init          framework/init.lua — ⚠️ DOES NOT EXIST IN THE TREE (no
                   `Framework.update` driver, no `enableUnitEvents`)
         ↓
-Lua Mods         (scripts/mods/<id>/main.lua)
+Lua Mods         (mods/<id>/main.lua)
 ```
 
 Each component is small and independent. M14 intentionally does **not** add a

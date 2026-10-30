@@ -2,7 +2,7 @@
 
 > **Target Platform:** `gamemd.exe` — Yuri's Revenge 1.001  
 > **Repository:** https://github.com/WolfCTOS/LuaAPI-for-Red-Alert-2  
-> **Current Release:** `v2.0.0` (Beta; `v1.0.0` stands as the historical milestone tag; Alpha history — see `FSM/MODDB_ALPHA_RELEASE.md`)  
+> **Current Release:** `v0.2.0` (Beta; the git tag is still named `v2.0.0` — it predates the renumber; `v1.0.0` stands as the historical milestone tag; Alpha history — see `FSM/MODDB_ALPHA_RELEASE.md`)  
 > **Current Development:** Feature freeze — documentation/gate reset (`PROJECT/GATES.md`); next research track: Dynamic Unit Behavior (`FSM/DYNAMIC_UNIT_BEHAVIOR.md`)  
 > **Last Updated:** September 20, 2026
 

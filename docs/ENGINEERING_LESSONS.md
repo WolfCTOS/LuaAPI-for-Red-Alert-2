@@ -168,7 +168,7 @@ injector/GUI ──► gamemd.exe (CREATE_SUSPENDED)
                      │
         Lua state (main thread, lazy init) ◄── scripts/init.lua (ModLoader)
                      │
-        scripts/mods/<name>/main.lua   ← pure Lua gameplay modules
+        mods/<name>/main.lua            ← pure Lua gameplay modules
 ```
 
 The C++ host provides the native safety boundary while continuing to evolve as
