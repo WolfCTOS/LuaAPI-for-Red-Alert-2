@@ -1,4 +1,4 @@
-# FSM Feasibility Triage
+# Yuri's Echo Feasibility Triage
 
 Research-only triage for three Idea Lab candidates. No code written, no
 API extended, no mods or engine touched, no bugs fixed. Statuses used:
@@ -79,7 +79,7 @@ the gap — so prototypes start from evidence instead of assumptions.
   native death hook exists. Documented payload does not exist. Death
   detection must be ID-diff polling.
 - `OnPreDamage`: global reference collected, never invoked with damage
-  args (see `FSM/CAPABILITIES.md` conflict note).
+  args (see `Yuris-Echo/CAPABILITIES.md` conflict note).
 - ModLoader (`scripts/init.lua`): per-mod `pcall(require)` with
   `[+]/[-]` log lines, but `Update` errors are swallowed silently
   (`local ok, err = pcall(...)`, `err` unused) — mod bugs are invisible
@@ -117,7 +117,7 @@ the gap — so prototypes start from evidence instead of assumptions.
 - `PROJECT/ROADMAP.md` marked v1.0 "Production Release" done while the
   project operates as Alpha — a currency note was added to the ROADMAP
   header 2026-09-20 (historical tag; operative checklist is
-  `FSM/MODDB_ALPHA_RELEASE.md`); Milestone 4/7 boxes remain checked as
+  `Yuris-Echo/MODDB_ALPHA_RELEASE.md`); Milestone 4/7 boxes remain checked as
   historical records with audit notes appended, not as current claims.
 - Working tree is dirty (modified + untracked incl. game assets) —
   release needs file/commit hygiene (see ModDB doc).
@@ -133,7 +133,7 @@ track results by ID.
 ### Verified
 Composition counting (`GetTypeName` tallies), wave orders
 (`Attack/MoveTo/Stop`), ID tracking + re-resolution, frame timers,
-nearest-hostile-style attribution patterns — all FSM-VERIFIED via
+nearest-hostile-style attribution patterns — all YURIS-ECHO-VERIFIED via
 CA/RCA/harness. Decision math itself is harness-provable.
 
 ### Unknown
@@ -143,7 +143,7 @@ arbitration, production timing, and whether `CountTotal` reflects
 queued vs active units. These are semantic unknowns, not missing
 bindings.
 
-### Live Micro-Gate (2026-09-20 session, details: `FSM/QUEUEUNIT_GATE.md`)
+### Live Micro-Gate (2026-09-20 session, details: `Yuris-Echo/QUEUEUNIT_GATE.md`)
 First-ever live calls, temp probe mod (removed after the run),
 headless Africans-vs-YuriCountry match on Dannath Revisited:
 - Factory found: Soviet `NAHAND` barracks (Africans) at frame 900.
@@ -163,7 +163,7 @@ headless Africans-vs-YuriCountry match on Dannath Revisited:
   base, census AI production in-window. That test — not this one —
   decides between sink and mismatch-drop.
 
-### Live Micro-Gate v2 (same day, details: `FSM/QUEUEUNIT_GATE.md`)
+### Live Micro-Gate v2 (same day, details: `Yuris-Echo/QUEUEUNIT_GATE.md`)
 Faction-authentic retest, temp probe v2 (removed after the run):
 `NAHAND` + `NAWEAP` mature base; requested the AI's own fielded types
 (`E2` infantry, `HTNK` vehicles); AI-production census proved factory
@@ -195,7 +195,7 @@ names the exact unknown that failed.
 
 ### Status
 `BLOCKED` — for the production dependency. The sharper retest ran
-(`FSM/QUEUEUNIT_GATE.md`, v2): faction-authentic `E2`/`HTNK` requested
+(`Yuris-Echo/QUEUEUNIT_GATE.md`, v2): faction-authentic `E2`/`HTNK` requested
 from a mature Soviet base with working factory output in-window —
 accepted, zero attributable output (`E2` clean-negative; `HTNK`
 self-polluted by AI mass production). Whether accept-then-sink or
@@ -211,7 +211,7 @@ GetUnitsInRadius`, unit IDs + lifecycle discipline, order throttling,
 `UnitController`-style follow/engage/reassign/replace.
 
 ### Verified
-Every primitive is FSM-VERIFIED (probe `Attack`→`Stop` release with
+Every primitive is YURIS-ECHO-VERIFIED (probe `Attack`→`Stop` release with
 exact-frame asserts) or REPO-VERIFIED (`UnitController` tracks by ID
 with re-resolution). Change-detection getters (`GetMission/
 IsAttacking/GetTarget`) allow order-only-on-change.
@@ -253,7 +253,7 @@ Position APIs, play-area extents, `GetUnits`/`GetUnitsInRadius`,
 ownership, kill attribution, credits, HUD, AI objective weighting.
 
 ### Verified
-All except extents are FSM-VERIFIED (queries, attribution, credits,
+All except extents are YURIS-ECHO-VERIFIED (queries, attribution, credits,
 HUD, Director-style AI weighting patterns).
 
 ### Unknown

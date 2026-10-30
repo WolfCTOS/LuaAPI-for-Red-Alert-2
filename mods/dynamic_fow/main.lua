@@ -110,7 +110,7 @@
 
   SAFETY
     Hides ground, never reveals any - not the "fake vision" that
-    FSM/FEASIBILITY_TRIAGE.md:268 rules out. It does change gameplay, and it
+    Yuris-Echo/FEASIBILITY_TRIAGE.md:268 rules out. It does change gameplay, and it
     runs automatically, so this is opt-out by removing the mod.
 
   BOUNDS

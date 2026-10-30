@@ -557,7 +557,7 @@
   instrumentation dying. `ShortGame` excluded by a separate `shortgame=0`
   run that terminated identically. Engine function not identified — the
   repo holds no disassembly and no xrefs. Full record:
-  `FSM/HOUSE_LOSE_FORCED.md`; evidence row in `FSM/VERIFICATION.md`.
+  `Yuris-Echo/HOUSE_LOSE_FORCED.md`; evidence row in `Yuris-Echo/VERIFICATION.md`.
 - **Unchanged:** the DoD itself, the latch, per-house order silence, the
   base-liquidation pass (`Sell`), and the HUD notice. Surrender remains a
   SmartAI *decision*; defeat stays the engine's job — which is what this

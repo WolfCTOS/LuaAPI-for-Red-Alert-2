@@ -27,7 +27,7 @@ decisions; no code, no gameplay changes.
 - `docs/TUTORIAL.md`: stale claims fixed (global callback forms; NOT-WIRED
   `OnPreDamage`; `OnUnitDestroyed` placeholder + workable alternatives;
   reliably-dispatched `Update` used for the first-mod walkthrough).
-- `0xC0000005`: evidence row added to `FSM/VERIFICATION.md` (Launch-path
+- `0xC0000005`: evidence row added to `Yuris-Echo/VERIFICATION.md` (Launch-path
   stability). Criterion 1.4 closed as scoped: recommended CnCNet-spawner path
   has zero crash evidence across the documented session record; direct-Syringe
   crashes disclosed (2 logs in tree + 1 in the Gate1-plan decision doc; one
@@ -36,7 +36,7 @@ decisions; no code, no gameplay changes.
   (definition `src/lua_engine.cpp:1214`, zero callers); left OPEN as a
   runtime-gated item with a concrete closure dependency written into
   `PROJECT/GATES.md`.
-- `FSM/FEASIBILITY_TRIAGE.md` + `FSM/MODDB_ALPHA_RELEASE.md`: status lines
+- `Yuris-Echo/FEASIBILITY_TRIAGE.md` + `Yuris-Echo/MODDB_ALPHA_RELEASE.md`: status lines
   reconciled with the above (no history rewritten; checkmarks annotated).
 
 ## Out of Scope
@@ -104,7 +104,7 @@ Matches Expected: Gate 1 🟡 PARTIAL (2026-09-20 closure audit). Items 1, 2, 4,
 ## Next Action
 
 `DU-1: Dynamic Unit Behavior feasibility audit` — per
-`FSM/DYNAMIC_UNIT_BEHAVIOR.md`: resolve UNKNOWN Ares/Phobos-overlap cells
+`Yuris-Echo/DYNAMIC_UNIT_BEHAVIOR.md`: resolve UNKNOWN Ares/Phobos-overlap cells
 against authoritative sources, confirm primitive mapping, apply the
 7-question stress test to shortlisted candidates, and output one selected
 unit + behavior + falsifiable success criteria. Research only; no code.

@@ -116,7 +116,7 @@
 ## 9. Destruction detection capability
 
 * `OnUnitDestroyed` is NEVER dispatched (collects refs, nothing queues them;
-  `API.md:1043-1057`, `FSM/*` consensus). Do NOT use. SOURCE VERIFIED.
+  `API.md:1043-1057`, `Yuris-Echo/*` consensus). Do NOT use. SOURCE VERIFIED.
 * Proven alternative: ID-diff polling — snapshot `id → {hp, owner, pos}` each
   scan, treat disappearance as death (`command_authority/main.lua:370-395`).
   SOURCE VERIFIED. Death attribution via `nearestHostileUnit` or direct

@@ -152,7 +152,7 @@ or AI scrubbing of foreign queue items is unobservable live and,
 for planning purposes, equivalent: the contract a Director needs
 (request X → X appears) does not hold. Reopen only via the specified
 overturn test with a positive result.
-(`FSM/FEASIBILITY_TRIAGE.md` Counter-Composition section updated
+(`Yuris-Echo/FEASIBILITY_TRIAGE.md` Counter-Composition section updated
 accordingly; Aegis/Sector untouched.)
 
 ## Documentation Changes
@@ -174,13 +174,13 @@ Made in this task (minimal, style-preserving, no code touched):
   finding (no invocation site — more precise than "races"; M13
   pointer kept; marks untouched); Gate 9.2 annotated (v1.0 mark vs
   current Alpha operation + ModDB gate pointer).
-- `FSM/FEASIBILITY_TRIAGE.md`: Counter-Composition section only
+- `Yuris-Echo/FEASIBILITY_TRIAGE.md`: Counter-Composition section only
   (live micro-gate box + revised status; v2 run promoted the status
   to `BLOCKED` for the production dependency).
 
 ## Remaining Release Blockers
 
-Against `FSM/MODDB_ALPHA_RELEASE.md` (unchanged by this task except
+Against `Yuris-Echo/MODDB_ALPHA_RELEASE.md` (unchanged by this task except
 as noted):
 
 - Stale house cache / dead `ResetSession` — untouched (still open).

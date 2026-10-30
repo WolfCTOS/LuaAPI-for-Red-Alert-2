@@ -2,8 +2,8 @@
 
 > **Target Platform:** `gamemd.exe` — Yuri's Revenge 1.001  
 > **Repository:** https://github.com/WolfCTOS/LuaAPI-for-Red-Alert-2  
-> **Current Release:** `v0.2.0` (Beta; the git tag is still named `v2.0.0` — it predates the renumber; `v1.0.0` stands as the historical milestone tag; Alpha history — see `FSM/MODDB_ALPHA_RELEASE.md`)  
-> **Current Development:** Feature freeze — documentation/gate reset (`PROJECT/GATES.md`); next research track: Dynamic Unit Behavior (`FSM/DYNAMIC_UNIT_BEHAVIOR.md`)  
+> **Current Release:** `v0.2.0` (Beta; the git tag is still named `v2.0.0` — it predates the renumber; `v1.0.0` stands as the historical milestone tag; Alpha history — see `Yuris-Echo/MODDB_ALPHA_RELEASE.md`)  
+> **Current Development:** Feature freeze — documentation/gate reset (`PROJECT/GATES.md`); next research track: Dynamic Unit Behavior (`Yuris-Echo/DYNAMIC_UNIT_BEHAVIOR.md`)  
 > **Last Updated:** September 20, 2026
 
 This roadmap tracks the evolution of LuaAPI from runtime embedding to safe native bindings, CnCNet integration, advanced combat systems, and Lua-driven tactical gameplay.
@@ -32,7 +32,7 @@ Milestone 14 runs on two tracks: **Track A** — a Lua-side gameplay framework o
 | Phase 10 | Milestone 14 — Lua Gameplay Framework + Runtime Research | 🔵 LOGIC VERIFIED; ✅ 14.8 SHOWCASE VERIFIED / 🔬 RESEARCH ACTIVE |
 | Phase 11 | Milestone 16 — Dynamic Barrel Elevation | 🟢 LOGIC COMPLETE — awaiting separate-barrel-voxel asset |
 | Phase 12 | Feature freeze — documentation/gate reset | 🔵 IN PROGRESS (`PROJECT/GATES.md`) |
-| Phase 13 | Dynamic Unit Behavior research | ⚪ READY FOR RESEARCH (`FSM/DYNAMIC_UNIT_BEHAVIOR.md`, DU-1..DU-4) |
+| Phase 13 | Dynamic Unit Behavior research | ⚪ READY FOR RESEARCH (`Yuris-Echo/DYNAMIC_UNIT_BEHAVIOR.md`, DU-1..DU-4) |
 
 ---
 
@@ -228,7 +228,7 @@ Published LuaAPI for external C&C modding communities and testers.
 
 > Currency note (2026-09-20): despite the v1.0 mark above, the project
 > currently operates as a pre-public Alpha (see AGENTS.md status and
-> `FSM/MODDB_ALPHA_RELEASE.md`, which is the operative release
+> `Yuris-Echo/MODDB_ALPHA_RELEASE.md`, which is the operative release
 > checklist). Do not cite this milestone as evidence of a finished
 > public release.
 
@@ -282,7 +282,7 @@ Validated through `multi_turret_battleship`.
 
 > Doc-sync note: the mod is absent from `scripts/` (only a stale copy under
 > `build/Release/scripts/mods/`); re-verify on the current build before
-> showcasing (same condition as `FSM/MODDB_ALPHA_RELEASE.md` Small 3).
+> showcasing (same condition as `Yuris-Echo/MODDB_ALPHA_RELEASE.md` Small 3).
 
 ### [x] Gate 10.5 — Spawned Missile Decoupling
 

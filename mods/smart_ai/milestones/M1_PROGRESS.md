@@ -12,8 +12,8 @@
 ## M1 capability-gap table (audit 2026-09-23, read-only)
 
 Evidence: `scripts/mods/smart_ai/main.lua` (binding inventory below),
-`third_party/YRpp` headers, `API.md`, `FSM/QUEUEUNIT_GATE.md` (QueueUnit
-BLOCKED), `FSM/DYNAMIC_UNIT_BEHAVIOR.md` (order persistence limits),
+`third_party/YRpp` headers, `API.md`, `Yuris-Echo/QUEUEUNIT_GATE.md` (QueueUnit
+BLOCKED), `Yuris-Echo/DYNAMIC_UNIT_BEHAVIOR.md` (order persistence limits),
 `PROJECT/RUNTIME_BOUNDARY.md`. Zero C++ references to
 Team/TaskForce/Script/AITrigger/Production bindings (grep-verified).
 
@@ -50,7 +50,7 @@ PrintMessage.
 
 Tactics, balance, decision-making, formation API (idea-only), superweapon
 control, production WRITES, Vanilla AI changes, Ares/Phobos duplication
-(`FSM/DYNAMIC_UNIT_BEHAVIOR.md` boundary), roadmap changes, new LuaAPI
+(`Yuris-Echo/DYNAMIC_UNIT_BEHAVIOR.md` boundary), roadmap changes, new LuaAPI
 milestones from mod problems.
 
 ## Progress log
@@ -135,8 +135,8 @@ milestones from mod problems.
   counters prove `Lose()` returns and the detour is then never entered
   again (`HOOK_NOT_ENTERED`). Default is now
   `SmartAI.SURRENDER_ENGINE_CALL = false`; the bridge itself is unchanged
-  and still compiles. Evidence: `FSM/HOUSE_LOSE_FORCED.md`,
-  `FSM/VERIFICATION.md`. History above is preserved as written.
+  and still compiles. Evidence: `Yuris-Echo/HOUSE_LOSE_FORCED.md`,
+  `Yuris-Echo/VERIFICATION.md`. History above is preserved as written.
   **Consequence for the notes below:** every "match ended / log stops"
   observation in the 1v1 Experiment B runs now reads differently — the
   early end was never a crash and never an ambiguous silence; it was this

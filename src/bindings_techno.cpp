@@ -1989,7 +1989,7 @@ void LogTurretHvaFrameCounts() {
 //
 // READ-ONLY BY DESIGN. There is deliberately no setter, and none should be
 // added casually: granting vision, or writing shroud so that explored ground
-// re-grows, is exactly the "fake vision" that FSM/FEASIBILITY_TRIAGE.md:268
+// re-grows, is exactly the "fake vision" that Yuris-Echo/FEASIBILITY_TRIAGE.md:268
 // puts out of scope. Observation is fine; manufacturing vision is not.
 //
 // NOT OWNER-AWARE, and unable to be through this binding. The shroud bitfield
@@ -2137,7 +2137,7 @@ struct FogCellState {
 // so MP determinism is NOT claimed.
 //
 // SCOPE / SAFETY. This REMOVES information; it never grants any, so it is not
-// the "fake vision" that FSM/FEASIBILITY_TRIAGE.md:268 forbids (that clause is
+// the "fake vision" that Yuris-Echo/FEASIBILITY_TRIAGE.md:268 forbids (that clause is
 // about revealing). It does change gameplay, so the Lua mod is the gate and
 // this function is never called from C++. Cell pointers are validated and every
 // write is inside __try.

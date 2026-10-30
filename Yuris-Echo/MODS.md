@@ -1,4 +1,4 @@
-# FSM — Global Gameplay Mod Catalog
+# Yuri's Echo — Global Gameplay Mod Catalog
 
 One entry per experiment. Status words are load-bearing:
 ACTIVE EXPERIMENTAL / ARCHIVED / REMOVED / CONCEPT. A concept is never
@@ -22,7 +22,7 @@ described with implementation language (see Iron Curtain).
   neither could this: observation is not a system.
 - **Verification status:** none recoverable.
 - **Known problems:** the concept itself — telemetry without decisions
-  (`FSM/README.md`, `FSM/PRINCIPLES.md`). No code to fix; the failure is
+  (`Yuris-Echo/README.md`, `Yuris-Echo/PRINCIPLES.md`). No code to fix; the failure is
   architectural and is kept as a negative result.
 
 ## War Clock
@@ -92,7 +92,7 @@ described with implementation language (see Iron Curtain).
   configuration; this is a match-aware meta-layer).
 - **Verification status:** 44 + 36 + 30 harness checks green; two live
   sessions analyzed frame-by-frame (RCA + placement + log review);
-  MP-gate and several edges harness-only. See `FSM/VERIFICATION.md`.
+  MP-gate and several edges harness-only. See `Yuris-Echo/VERIFICATION.md`.
 - **Known problems:**
   1. `powerRepair → SetHealthRatio(1.0)` vs percent-scale binding
      (~1% HP) — open separate issue, deliberately unfixed.
@@ -133,7 +133,7 @@ described with implementation language (see Iron Curtain).
   pullback, owner-flip observation, frame-backwards restart guard).
 - **Verification status:** capture guard harness 15/15
   (`tools/tmp/smartai_capture_test.lua`); live: observer fired, pullback
-  decision never triggered in-window (`FSM/VERIFICATION.md`).
+  decision never triggered in-window (`Yuris-Echo/VERIFICATION.md`).
 - **Known problems:** rally order churn unthrottled per unit while breached.
 
 ## target_reselect
@@ -219,7 +219,7 @@ described with implementation language (see Iron Curtain).
 ## Iron Curtain experiment
 
 - **Name:** selective Iron Curtain (working title; see
-  `FSM/IRON_CURTAIN.md`)
+  `Yuris-Echo/IRON_CURTAIN.md`)
 - **Status:** CONCEPT / NOT IMPLEMENTED. No code, no harness, no
   bindings touched. Feasibility checks against current API are
   explicitly unresolved (several UNKNOWNs).
@@ -240,7 +240,7 @@ described with implementation language (see Iron Curtain).
   (psychic) — not expressible in static armor/warhead config.
 - **Verification status:** none (concept).
 - **Known problems:** live damage interception is not wired in current
-  source (see `FSM/CAPABILITIES.md` conflict note); psychic
+  source (see `Yuris-Echo/CAPABILITIES.md` conflict note); psychic
   identification has no payload; lethal blows can't be compensated
   post-hoc. Implementation must wait for the feasibility checks in
-  `FSM/IRON_CURTAIN.md`.
+  `Yuris-Echo/IRON_CURTAIN.md`.

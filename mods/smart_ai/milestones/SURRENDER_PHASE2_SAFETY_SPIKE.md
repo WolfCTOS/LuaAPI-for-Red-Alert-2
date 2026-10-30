@@ -27,7 +27,7 @@
 > trying `FlagToDie` — that is the same class of external state forcing.
 >
 > The document body below is preserved as written. Full record:
-> `FSM/HOUSE_LOSE_FORCED.md`; evidence row in `FSM/VERIFICATION.md`.
+> `Yuris-Echo/HOUSE_LOSE_FORCED.md`; evidence row in `Yuris-Echo/VERIFICATION.md`.
 > SmartAI default is now `SmartAI.SURRENDER_ENGINE_CALL = false`; defeat
 > is left to the engine.
 > Phase 1 (detect + latch + order silence) is LIVE VERIFIED and stays

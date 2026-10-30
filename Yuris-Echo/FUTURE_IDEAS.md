@@ -1,4 +1,4 @@
-# FSM — Future Ideas (archive, not a roadmap)
+# Yuri's Echo — Future Ideas (archive, not a roadmap)
 
 This file preserves future ideas and research directions so they are not
 lost. It is an archive of ideas and investigation boundaries — **not a
@@ -21,7 +21,7 @@ Concept:
   separate artificial anti-Iron-Curtain system.
 
 Current limitations (all confirmed against present API/repo; see
-`FSM/IRON_CURTAIN.md` §5 for the full analysis):
+`Yuris-Echo/IRON_CURTAIN.md` §5 for the full analysis):
 
 - Vanilla Iron Curtain activation is not confirmed through current LuaAPI
   (no superweapon namespace exists in bindings).
@@ -55,9 +55,9 @@ all of them resolve:
 7. Only then decide whether implementation without API expansion is
    possible.
 
-## FSM Design Direction
+## Yuri's Echo Design Direction
 
-FSM investigates not "which mods can be written" but how deep LuaAPI
+Yuri's Echo investigates not "which mods can be written" but how deep LuaAPI
 can act as a runtime gameplay layer. The following are recorded as
 future *categories of investigation* — not as supported capabilities.
 The later categories in particular are directions to probe, not claims:
@@ -93,7 +93,7 @@ Status: `CONCEPT / FEASIBILITY BLOCKED`
 
 `UNDEFINED`
 
-## A future FSM mod should ideally satisfy
+## A future Yuri's Echo mod should ideally satisfy
 
 - It is a gameplay system, not telemetry.
 - The player has a clear decision or interaction.
@@ -110,9 +110,9 @@ Status: `CONCEPT / FEASIBILITY BLOCKED`
 
 Standing references for what is actually established:
 
-- `FSM/CAPABILITIES.md`
-- `FSM/IRON_CURTAIN.md`
-- `FSM/VERIFICATION.md`
+- `Yuris-Echo/CAPABILITIES.md`
+- `Yuris-Echo/IRON_CURTAIN.md`
+- `Yuris-Echo/VERIFICATION.md`
 
 Separately noted: `OnPreDamage` remains an OPEN DISCREPANCY.
 Older documentation is not corrected as part of this task.
@@ -122,4 +122,4 @@ Older documentation is not corrected as part of this task.
 | Idea                    | Status     | Reason                                      |
 | ----------------------- | ---------- | ------------------------------------------- |
 | Iron Curtain            | BLOCKED    | Damage interception capability not verified |
-| New FSM gameplay system | UNEXPLORED | No concept yet                              |
+| New Yuri's Echo gameplay system | UNEXPLORED | No concept yet                              |

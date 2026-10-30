@@ -4,7 +4,7 @@
 > **Purpose:** single source of truth for the project-level gate model. Per-milestone
 > sub-gates (Gate 10.1, 14.8, …) remain historical records in `PROJECT/ROADMAP.md`;
 > experiment-specific gates live with their experiments
-> (`PROJECT/SHOWCASES/adaptive_ai_gate*.md`, `FSM/QUEUEUNIT_GATE.md`). This document
+> (`PROJECT/SHOWCASES/adaptive_ai_gate*.md`, `Yuris-Echo/QUEUEUNIT_GATE.md`). This document
 > is the **project lifecycle** the workflow refers to:
 >
 > ```text
@@ -14,7 +14,7 @@
 >
 > Evidence grades used everywhere in this file (never mixed, never upgraded by
 > enthusiasm): `SOURCE VERIFIED` / `HARNESS VERIFIED` / `LIVE VERIFIED` /
-> `PARTIAL` / `UNKNOWN` / `BLOCKED` / `ARCHIVED`. Full ledger: `FSM/VERIFICATION.md`.
+> `PARTIAL` / `UNKNOWN` / `BLOCKED` / `ARCHIVED`. Full ledger: `Yuris-Echo/VERIFICATION.md`.
 >
 > **Current mode: FEATURE FREEZE.** No new features until Gate 1 open items are
 > closed (decision log: `PROJECT/DECISIONS.md`, 2026-09-20).
@@ -33,16 +33,16 @@
 | 1.2 | Known active modules | Every entry in `scripts/active_mods.txt` either functions on the current build or is documented as inert with a decision (fix / drop). |
 | 1.3 | Lifecycle/session risks | Stale house-userdata cache across matches (`g_houseCache`, dead `ResetSession`) resolved in code **or** disclosed with a tested workaround. |
 | 1.4 | Known crashes | Intermittent `0xC0000005` retested on the recommended launch path; result documented either way. |
-| 1.5 | Dead experiments identified | Every archived/removed experiment recorded in `FSM/MODS.md` with status. |
-| 1.6 | Honest verification | Evidence ledger current: `FSM/VERIFICATION.md` rows match source/live reality. |
+| 1.5 | Dead experiments identified | Every archived/removed experiment recorded in `Yuris-Echo/MODS.md` with status. |
+| 1.6 | Honest verification | Evidence ledger current: `Yuris-Echo/VERIFICATION.md` rows match source/live reality. |
 | 1.7 | Reproducibility | Harnesses in `tools/tmp/` re-runnable; live-verification protocol (CnCNet spawner path) documented. |
-| 1.8 | Unsupported capabilities marked | Hard limits (no damage interception, no radar/fog, no superweapon API, …) listed publicly — `FSM/CAPABILITIES.md` UNKNOWN section. |
+| 1.8 | Unsupported capabilities marked | Hard limits (no damage interception, no radar/fog, no superweapon API, …) listed publicly — `Yuris-Echo/CAPABILITIES.md` UNKNOWN section. |
 
 ### Current status: ✅ **PASS (user-observed grade, 2026-09-22)**
 
-Closed by prior work: 1.5, 1.6, 1.8 (FSM archive); `API.md` `Attack`/
+Closed by prior work: 1.5, 1.6, 1.8 (Yuri's Echo archive); `API.md` `Attack`/
 `GetMission`/`SetHealthRatio`/`OnPreDamage` corrections (see
-`FSM/QUEUEUNIT_GATE.md` → Documentation Changes). Item 3 closed
+`Yuris-Echo/QUEUEUNIT_GATE.md` → Documentation Changes). Item 3 closed
 2026-09-22 by per-match reset code + three user-observed in-process
 matches (no log on disk — user-observed, not log-verified).
 
@@ -50,10 +50,10 @@ matches (no log on disk — user-observed, not log-verified).
 
 | Item | Previous | Evidence found (source-level, this audit) | Action | Final status |
 |---|---|---|---|---|
- | 1. README honesty | OPEN — `v1.0.0 Production Release` / `Milestone 11` / live `OnPreDamage` / mod-table event callbacks advertised | Confirmed all four claims in the header, Key Features, damage section, Event Model; all contradict `FSM/CAPABILITIES.md` conflict note + Alpha reality | README rewritten in place: Alpha stage (v1.0 = historical tag), `OnPreDamage` marked NOT WIRED with intended-contract block, callback model corrected to global-lookup, `OnUnitDestroyed` never-dispatched status disclosed, gate/ledger pointers added. History preserved (no retraction of the M4/M6 records themselves) | ✅ **CLOSED** |
+ | 1. README honesty | OPEN — `v1.0.0 Production Release` / `Milestone 11` / live `OnPreDamage` / mod-table event callbacks advertised | Confirmed all four claims in the header, Key Features, damage section, Event Model; all contradict `Yuris-Echo/CAPABILITIES.md` conflict note + Alpha reality | README rewritten in place: Alpha stage (v1.0 = historical tag), `OnPreDamage` marked NOT WIRED with intended-contract block, callback model corrected to global-lookup, `OnUnitDestroyed` never-dispatched status disclosed, gate/ledger pointers added. History preserved (no retraction of the M4/M6 records themselves) | ✅ **CLOSED** |
 | 2. `bounty_hunter` disposition | OPEN — inert mod in default stack | Triple-dead confirmed: (a) mod-table `OnPreDamage` never dispatched (global lookup only), (b) `OnPreDamage` itself not wired, (c) independently, `house_AddCredits(...)` matches no binding and `.Owner` is not Lua-exposed — `Update` is a no-op; syntax re-validated with lua_check after the header edit | **Decision recorded** (`PROJECT/DECISIONS.md`): removed from `scripts/active_mods.txt`; kept in tree as historical reference mod with an inert-status header (logic untouched); repair = candidate future cleanup, not done in a doc-only reset | ✅ **CLOSED** (config + decision; no behavior change — it had none) |
 | 3. Stale house cache / dead `ResetSession` | OPEN — Critical Blocker 1 | Re-verified in source: `ResetSession` defined (`src/lua_engine.cpp:1214`, clears `g_houseCache` via `ClearHouseCache`, closes VM) with **zero callers** in `src/` — the only references are comments (`bindings_house.cpp:46`, `event_hook.h:38`). Risk class unchanged | Documentation-only: status restated as a **runtime verification dependency** (see the honest statement below the table); not fixed (runtime work out of scope), not downgraded, not hidden | ✅ **PASS (user-observed, 2026-09-22)** — reset wired in code (see addendum below); three user-observed in-process matches, Lua functional throughout, no stale-state symptoms (no log on disk) |
-| 4. `0xC0000005` retest | OPEN — pending | Crash reproductions are non-repo artifacts recorded in-tree: 2 Syringe logs (`syringe.log.session183{2,4}.bak`, exit C0000005) + a third in `docs/decisions/SUPPLY_TANK_AMMO_GATE1_PLAN.md`, which also records **one crash with no LuaAPI injected** (not proven LuaAPI-caused; root UNKNOWN). Recommended CnCNet-spawner path: **zero crash evidence** across every documented live session 2026-09-09→20 + the 18k-frame benchmark | Evidence row added to `FSM/VERIFICATION.md` (Launch-path stability). Criterion 1.4 ("retested on the recommended path; result documented") closed **as scoped**: recommended path clean on record; Syringe path disclosed as an open unknown (root-cause hunt NOT a Gate-1 item) | ✅ **CLOSED (scoped)** — reopen if a crash ever reproduces on the recommended path |
+| 4. `0xC0000005` retest | OPEN — pending | Crash reproductions are non-repo artifacts recorded in-tree: 2 Syringe logs (`syringe.log.session183{2,4}.bak`, exit C0000005) + a third in `docs/decisions/SUPPLY_TANK_AMMO_GATE1_PLAN.md`, which also records **one crash with no LuaAPI injected** (not proven LuaAPI-caused; root UNKNOWN). Recommended CnCNet-spawner path: **zero crash evidence** across every documented live session 2026-09-09→20 + the 18k-frame benchmark | Evidence row added to `Yuris-Echo/VERIFICATION.md` (Launch-path stability). Criterion 1.4 ("retested on the recommended path; result documented") closed **as scoped**: recommended path clean on record; Syringe path disclosed as an open unknown (root-cause hunt NOT a Gate-1 item) | ✅ **CLOSED (scoped)** — reopen if a crash ever reproduces on the recommended path |
 | 5. Undocumented extras | OPEN — 4+ known undocumented bindings | Full sweep: `Engine.WeaponExists` (`lua_engine.cpp:394`), `Engine.SetHudMuted/IsHudMuted` (`:355/368`), global `WeaponOverride` Set/Get/Clear + `GetPrimaryWeapon` hook (`weapon_override.cpp:163–286`), `World.GetAircraft` (`bindings_techno.cpp:1541`), `World.GetSelectedUnits/GetSelectedTechnos` (`:1574/1602`); `Game.GetDebugHudText` already documented. Only `GetSelectedUnits` has a live consumer on record (Gate 12.2 showcase) | **Decision recorded** (`PROJECT/DECISIONS.md`): bounded list added to `API.md` as an "Implemented Extras" section; graded implemented + source-verified, UNVERIFIED LIVE unless a consumer exists; dev/diagnostic framing; sweep declared closed with this list | ✅ **CLOSED** |
  | 6. TUTORIAL review | OPEN — correctness unreviewed | Stale claims confirmed: table-method `OnScenarioStart` presented as working (never dispatched — same staleness class as damaged_fleet); live `OnPreDamage` examples; `OnUnitDestroyed` example implying a dispatched payload | Fixed in place (no rewrite): Step 2/4 use the reliably-dispatched `Update`; events section rewritten (global forms, NOT-WIRED `OnPreDamage`, never-dispatched `OnUnitDestroyed` + workable alternatives); Pitfall 2 + Quick Reference corrected. Tutorial examples now match `API.md` | ✅ **CLOSED** |
 | 7. Conversation→repo standing rule | done for Rhino attribution | — | Standing rule enforced at session hand-off | ✅ ongoing |
@@ -124,7 +124,7 @@ as history.
 > matches — and record the test evidence. Only then does 1.3 close.
 
 Carried note (not a Gate-1 criterion): README Installation/Quick-Start
-step-by-step correctness remains flagged in `FSM/MODDB_ALPHA_RELEASE.md`
+step-by-step correctness remains flagged in `Yuris-Echo/MODDB_ALPHA_RELEASE.md`
 (Installation/Documentation Gate territory, Gate 3).
 
 Everything else Gate 1 requires now holds: docs match source for the known
@@ -143,7 +143,7 @@ and adapt — on the live engine?
 
 | Capability | Status | Evidence |
 |---|---|---|
-| Observe world state (queries, ownership, alliance, position, health, type) | ✅ LIVE VERIFIED | CA/RCA probes; `FSM/CAPABILITIES.md` FSM-VERIFIED section |
+| Observe world state (queries, ownership, alliance, position, health, type) | ✅ LIVE VERIFIED | CA/RCA probes; `Yuris-Echo/CAPABILITIES.md` YURIS-ECHO-VERIFIED section |
 | Observe combat (mission/target read-back, post-hoc damage/HP-drop, disappearance diffing) | ✅ LIVE VERIFIED | `target_reselect` live 2026-09-10 (8 redirects, read-back); CA combat scans |
 | Maintain runtime state across a match | ✅ LIVE VERIFIED | CA `S.*` ledger + frame-backwards restart guard; caveat: savegame-restore UNKNOWN |
 | Issue unit orders (`Attack/MoveTo/Stop/Hunt`) | ✅ LIVE VERIFIED | RCA probe (`Attack`→damage→`Stop`); `SpawnUnit action="hunt"` |
@@ -156,12 +156,12 @@ and adapt — on the live engine?
 
 | Gap | Impact | Record |
 |---|---|---|
-| No live damage-event interception (`OnPreDamage` never invoked) | No reactive-armor/shield class systems | `FSM/CAPABILITIES.md` conflict note |
-| Production control fails live (`AI.QueueUnit` accepted-but-no-output, 2 runs) | No production-director systems | `FSM/QUEUEUNIT_GATE.md` — **BLOCKED** |
+| No live damage-event interception (`OnPreDamage` never invoked) | No reactive-armor/shield class systems | `Yuris-Echo/CAPABILITIES.md` conflict note |
+| Production control fails live (`AI.QueueUnit` accepted-but-no-output, 2 runs) | No production-director systems | `Yuris-Echo/QUEUEUNIT_GATE.md` — **BLOCKED** |
 | No order-lease/override primitive | Lua orders compete with vanilla AI re-selection | `PROJECT/RUNTIME_BOUNDARY.md` "second half" |
-| No production-complete / death-payload events (`OnUnitDestroyed` never dispatched) | Polling-only architectures | `FSM/FEASIBILITY_TRIAGE.md` audit |
-| No radar/fog/map-extents/superweapon/alliance-switch APIs | Sector/vision/recon designs must avoid them | `FSM/FEASIBILITY_TRIAGE.md` audit |
-| Savegame restore of Lua state unverified | Long-session systems | `FSM/CAPABILITIES.md` UNKNOWN |
+| No production-complete / death-payload events (`OnUnitDestroyed` never dispatched) | Polling-only architectures | `Yuris-Echo/FEASIBILITY_TRIAGE.md` audit |
+| No radar/fog/map-extents/superweapon/alliance-switch APIs | Sector/vision/recon designs must avoid them | `Yuris-Echo/FEASIBILITY_TRIAGE.md` audit |
+| Savegame restore of Lua state unverified | Long-session systems | `Yuris-Echo/CAPABILITIES.md` UNKNOWN |
 
 ### Current status: 🟡 **PARTIAL**
 
@@ -179,15 +179,15 @@ grade or it does not exist for planning purposes.
 
 ### Pass criteria
 
-Adopted verbatim from `FSM/MODDB_ALPHA_RELEASE.md` (Technical / Documentation /
+Adopted verbatim from `Yuris-Echo/MODDB_ALPHA_RELEASE.md` (Technical / Documentation /
 Showcase / Packaging / Installation gates + zero open Critical Blockers).
 Highlights:
 
 - Flagship + 2–4 small showcases, each with honest evidence grades; screenshots +
   ≥1 gameplay video; "Why LuaAPI?" page; clean-machine install test; public claims
-  match `FSM/VERIFICATION.md` (no harness→live inflation).
+  match `Yuris-Echo/VERIFICATION.md` (no harness→live inflation).
 - **Do not invent PASS states.** The authoritative checklist lives in
-  `FSM/MODDB_ALPHA_RELEASE.md` and is checked there, with evidence.
+  `Yuris-Echo/MODDB_ALPHA_RELEASE.md` and is checked there, with evidence.
 
 ### Current status: ❌ **NOT PASSED** (components ready, gate not passed)
 
@@ -200,14 +200,14 @@ Highlights:
   `target_reselect` (live-observed; ship as experimental).
 - Missing entirely: screenshots/video, clean-machine install test, packaging
   allowlist run, README/TUTORIAL review — and all four Critical Blockers
-  (`FSM/MODDB_ALPHA_RELEASE.md`) are open.
+  (`Yuris-Echo/MODDB_ALPHA_RELEASE.md`) are open.
 
 ---
 
 ## Research track: Dynamic Unit Behavior (DU gates)
 
 The active research direction. Full definition, boundary, and stress-tested
-matrix: **`FSM/DYNAMIC_UNIT_BEHAVIOR.md`**. Reconciliation with the lifecycle:
+matrix: **`Yuris-Echo/DYNAMIC_UNIT_BEHAVIOR.md`**. Reconciliation with the lifecycle:
 
 ```text
 Gate 1 (this file)          ← prerequisite for any new implementation work
@@ -239,4 +239,4 @@ Gate 3 (this file)
 | Gate 1 | ✅ PASS (user-observed) | All items closed; item 3 by reset code + 3 user-observed matches (no log — log run may upgrade grade) |
 | Gate 2 | 🟡 PARTIAL | Core loop live-verified; lease/production/damage-event gaps open |
 | Gate 3 | ❌ NOT PASSED | Flagship ready; release checklist + media + blockers open |
-| DU direction | READY FOR RESEARCH | `FSM/DYNAMIC_UNIT_BEHAVIOR.md`; next task = DU-1 audit |
+| DU direction | READY FOR RESEARCH | `Yuris-Echo/DYNAMIC_UNIT_BEHAVIOR.md`; next task = DU-1 audit |

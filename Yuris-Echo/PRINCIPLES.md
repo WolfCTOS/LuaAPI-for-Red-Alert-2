@@ -1,4 +1,4 @@
-# FSM — Technical Design Principles
+# Yuri's Echo — Technical Design Principles
 
 Each principle earns its place by a concrete incident in this folder's
 history (file/line refs where applicable). They are engineering rules
@@ -35,7 +35,7 @@ Retaliation doctrine (`main.lua:513-519`, schedule + execute): sabotage
 invites an announced, delayed, attributable answer — never a silent
 unprovoked EMP (the exact War Clock failure: "random EMPs are annoying").
 Iron Curtain keeps its psychic hole for the same reason
-(`FSM/IRON_CURTAIN.md`). If the opponent's correct response is "wait",
+(`Yuris-Echo/IRON_CURTAIN.md`). If the opponent's correct response is "wait",
 the mechanic is unfinished.
 
 ## 5. AI plays the same system where possible
@@ -62,7 +62,7 @@ exclusion, placement validation — required zero native changes, and the
 targeting RCA explicitly closed with "no extension proposed"
 (`docs/research/RHINO_RCA_REVISION.md` §7). Convenience is not
 necessity. The `OnPreDamage` gap is documented as a gap
-(`FSM/CAPABILITIES.md`), not worked around with wishful bindings.
+(`Yuris-Echo/CAPABILITIES.md`), not worked around with wishful bindings.
 
 ## 8. RCA/feasibility first, implementation second
 
@@ -70,7 +70,7 @@ Both CA fixes were diagnosed before being written (targeting RCA across
 two research docs; placement static RCA), each with an explicit
 hypothesis list adjudicated by evidence (H1–H7). Iron Curtain stays a
 concept until its five feasibility checks resolve
-(`FSM/IRON_CURTAIN.md` §5). Prototype to answer a question, not to
+(`Yuris-Echo/IRON_CURTAIN.md` §5). Prototype to answer a question, not to
 produce motion.
 
 ## 9. Harness verification ≠ live-game verification

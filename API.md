@@ -1417,7 +1417,7 @@ end
 These functions expose the engine's **own** fog-of-war state. Reads are
 observation; the single write (`SetCellShrouded`) only *removes* information
 (re-shroud), never grants vision — so it is not the "fake vision" that
-`FSM/FEASIBILITY_TRIAGE.md:268` puts out of scope (that clause is about
+`Yuris-Echo/FEASIBILITY_TRIAGE.md:268` puts out of scope (that clause is about
 revealing). Live consumer: `dynamic_fow` (v0.5+).
 
 Ground truth was established by static reverse engineering of `gamemd.exe` and is
@@ -1437,7 +1437,7 @@ with a single test on one bit of one field, and these bindings read exactly that
 >
 > > **Original stance (2026-09-26, superseded):** granting vision, or writing
 > > shroud so that explored ground grows back, is the "fake vision" that
-> > `FSM/FEASIBILITY_TRIAGE.md:268` puts out of scope. A *read* is observation
+> > `Yuris-Echo/FEASIBILITY_TRIAGE.md:268` puts out of scope. A *read* is observation
 > > and is fine; manufacturing vision is not. — Kept because the *reveal*
 > > half is still out of scope; only re-shroud was approved, via the
 > > consumer + capability above.

@@ -9,7 +9,7 @@
 > `src/bindings_house.cpp`, `src/bindings_production.cpp`,
 > `src/lua_engine.cpp` `CreateEngine`, `src/barrel_pitch.cpp`
 > `RegisterBindings`, `src/weapon_override.cpp`), then cross-checked
-> against `API.md`, `FSM/VERIFICATION.md`, `PROJECT/GATES.md` Gate 2,
+> against `API.md`, `Yuris-Echo/VERIFICATION.md`, `PROJECT/GATES.md` Gate 2,
 > and repo-wide consumer grep over `scripts/`.
 > Evidence grades are never upgraded: source/harness ≠ live.
 
@@ -109,7 +109,7 @@ Format: `API | Status | Evidence | Documentation | Known limitation | Beta recom
 | `Game.GetDebugHudText` | Internal | Static; zero consumers | Documented | Dev HUD helper | Internal |
 | `Input.WasKeyPressed(vk)` | Stable | Runtime (CA hotkeys; tesla T historically) | Documented (edge-trigger + 256-state) | Global edge state, reset per match (Gate 1.3 PASS user-observed) | **Beta core** with documented edge semantics |
 | `WeaponOverride.Set` / `Get` / `Clear` | Experimental | Static; zero consumers; hook degrades to vanilla w/ warning | Documented as dev/diagnostic | Per-session state; vet-key form must be read from source | Experimental dev tool |
-| `AI.QueueUnit` | Blocked | Runtime: accepted-but-no-output, 2 headless runs (`FSM/QUEUEUNIT_GATE.md`) | Honestly marked BLOCKED in `API.md` | No production-director systems possible | Do NOT promise |
+| `AI.QueueUnit` | Blocked | Runtime: accepted-but-no-output, 2 headless runs (`Yuris-Echo/QUEUEUNIT_GATE.md`) | Honestly marked BLOCKED in `API.md` | No production-director systems possible | Do NOT promise |
 | `AI.CountUnit` | Unverified | Static; zero consumers; no harness | Documented (Extras-2, BLOCKED-adjacent) | Factory-queue counts only | Do NOT promise |
 
 ### Lua-side framework (`scripts/framework/`, zero native bindings)

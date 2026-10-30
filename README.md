@@ -47,7 +47,7 @@ The project follows three core principles:
 - 🎮 **Lua controls gameplay behavior**
 - 🛡️ **Only implemented and tested functionality is documented as verified**
 
-> **Project Stage:** **Beta** (`0.2.0`; Alpha history: see `FSM/MODDB_ALPHA_RELEASE.md`)
+> **Project Stage:** **Beta** (`0.2.0`; Alpha history: see `Yuris-Echo/MODDB_ALPHA_RELEASE.md`)
 > **Current Release Tag:** `v0.2.0` — *Beta release (`v0.1.0` was a historical milestone tag, not a production claim)*
 > **Current Focus:** Documentation/gate reset (`PROJECT/GATES.md`); research: Dynamic Unit Behavior
 > **Development API Line:** `0.2.0`
@@ -77,7 +77,7 @@ The project follows three core principles:
 | Property | Value |
 |---|---|
 | **Project Stage** | Beta (`0.2.0`) |
-| **Current Release Tag** | `v2.0.0` (tag name predates the `0.2.0` renumber; `v1.0.0` was historical — see `FSM/MODDB_ALPHA_RELEASE.md`) |
+| **Current Release Tag** | `v2.0.0` (tag name predates the `0.2.0` renumber; `v1.0.0` was historical — see `Yuris-Echo/MODDB_ALPHA_RELEASE.md`) |
 | **Current Focus** | Gate reset — `PROJECT/GATES.md` |
 | **Development API Line** | `0.2.0` |
 | **Game** | Yuri's Revenge `1.001` |
@@ -362,7 +362,7 @@ Intended return values:
 | `number` | Incoming damage is replaced |
 | `0` | Damage is cancelled |
 
-Do not return negative damage values. Authoritative status: [`API.md`](API.md), Callback Model; evidence: `FSM/CAPABILITIES.md` conflict note.
+Do not return negative damage values. Authoritative status: [`API.md`](API.md), Callback Model; evidence: `Yuris-Echo/CAPABILITIES.md` conflict note.
 
 ---
 
@@ -684,7 +684,7 @@ When developing or contributing to LuaAPI:
   a permanent override primitive does not exist.
 
 Evidence grades for every claim: [`PROJECT/GATES.md`](PROJECT/GATES.md),
-[`FSM/VERIFICATION.md`](FSM/VERIFICATION.md).
+[`Yuris-Echo/VERIFICATION.md`](Yuris-Echo/VERIFICATION.md).
 
 ## ⚠️ Project Status
 
@@ -693,7 +693,7 @@ LuaAPI is a **Beta-stage** project under active development.
 The API and internal architecture may change as engine integration becomes safer and more complete.
 
 Project gates and their current statuses: [`PROJECT/GATES.md`](PROJECT/GATES.md).
-Evidence ledger (what is actually verified, at which level): [`FSM/VERIFICATION.md`](FSM/VERIFICATION.md).
+Evidence ledger (what is actually verified, at which level): [`Yuris-Echo/VERIFICATION.md`](Yuris-Echo/VERIFICATION.md).
 
 Use the documentation corresponding to the current API version.
 

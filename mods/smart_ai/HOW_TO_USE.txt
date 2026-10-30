@@ -134,5 +134,5 @@ mirror-country ownership regression T10-T12) + tools/tmp/
 smartai_officer_test.lua 23/23 (escort/garrison/churn/restart/rally/
 coordination T8-T10);
 live: observer fired x4, pullback decision never triggered in-window
-(see FSM/VERIFICATION.md). Guard + officers live effect: UNVERIFIED
+(see Yuris-Echo/VERIFICATION.md). Guard + officers live effect: UNVERIFIED
 (no live match run yet for the officer layer).

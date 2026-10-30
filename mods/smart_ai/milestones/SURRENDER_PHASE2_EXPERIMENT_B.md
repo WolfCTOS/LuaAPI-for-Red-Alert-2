@@ -22,8 +22,8 @@
 >
 > `Lose` is not called by SmartAI any more
 > (`SmartAI.SURRENDER_ENGINE_CALL = false`). Defeat belongs to the engine.
-> Full record: `FSM/HOUSE_LOSE_FORCED.md`; evidence row in
-> `FSM/VERIFICATION.md`. Run A/B/C/D status lines below are left as
+> Full record: `Yuris-Echo/HOUSE_LOSE_FORCED.md`; evidence row in
+> `Yuris-Echo/VERIFICATION.md`. Run A/B/C/D status lines below are left as
 > recorded.
 >
 > Status of the original probe: probe BUILT, runtime NOT PERFORMED (this

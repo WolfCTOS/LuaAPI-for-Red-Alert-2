@@ -45,7 +45,7 @@
 - Gate 2 PARTIAL (core loop live-verified; lease/production/damage-event gaps open).
 - Gate 3 NOT PASSED (flagship ready; release checklist + media + blockers open).
 - Feature freeze per `PROJECT/DECISIONS.md`; next research: DU-1 audit
-  (`FSM/DYNAMIC_UNIT_BEHAVIOR.md`). No new implementation before DU-1 exit.
+  (`Yuris-Echo/DYNAMIC_UNIT_BEHAVIOR.md`). No new implementation before DU-1 exit.
 - Actual `scripts/active_mods.txt` on disk (2026-09-21): `target_reselect`,
   `bounty_hunter`, `smart_ai`. (`barrel_elevation_diag` / `command_authority`
   are present but INACTIVE.) `bounty_hunter` is the rewritten v2 (ID-diff +

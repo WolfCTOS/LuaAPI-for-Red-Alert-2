@@ -17,7 +17,7 @@ It focuses on practical examples rather than API definitions:
 > ⚠️ **Important:** Only mechanics explicitly marked as **VERIFIED** should be treated as proven capabilities of the current implementation.
 >
 > **Evidence authority (2026-09-20):** per-claim evidence grades live in
-> [`FSM/VERIFICATION.md`](../FSM/VERIFICATION.md); the project gate model and
+> [`Yuris-Echo/VERIFICATION.md`](../Yuris-Echo/VERIFICATION.md); the project gate model and
 > pass/fail criteria live in [`PROJECT/GATES.md`](GATES.md). Where a case study
 > below and the ledger disagree, the ledger wins.
 
@@ -262,7 +262,7 @@ bindings, the spawned-missile decoupling, `BulletHook`, `EventHook`, and
 overhead). The record below stands as history: bindings WERE verified in
 their time, the showcase mod was already absent from the tree.  
 **Reference implementation:** `multi_turret_battleship` (absent; see
-`FSM/MODDB_ALPHA_RELEASE.md` Small 3)
+`Yuris-Echo/MODDB_ALPHA_RELEASE.md` Small 3)
 
 ### 🎯 Outcome
 

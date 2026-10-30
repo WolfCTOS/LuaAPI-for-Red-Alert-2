@@ -1,7 +1,7 @@
-# FSM — First Serious Mod
+# Yuri's Echo — First Serious Mod
 
-> **Working title.** FSM stays for **First Serious Mod**; the final public
-> name has not been chosen yet. FSM — First serious mod, название пока не придумано.
+> **Yuri's Echo** is the project name. It began as the “First Serious Mod”
+> research archive; that origin is kept here as historical context.
 
 Research archive for the first serious attempt to use LuaAPI as a **runtime
 gameplay layer** (persistent, match-aware global systems with player
@@ -16,19 +16,19 @@ one binding. None of them answers the real question:
 > Can LuaAPI carry a whole match-long gameplay system — economy, AI
 > opponent logic, player abilities, objectives — without native changes?
 
-`FSM/` records that attempt honestly: what was tried, what failed and why,
+`Yuris-Echo/` records that attempt honestly: what was tried, what failed and why,
 what was verified at which evidence level, and which principles survived.
 It is an archive, not a showcase. Marketing-style success claims do not
 belong here; retracted conclusions stay visible with pointers to what
 replaced them.
 
-Related records: `FSM/VERIFICATION.md` (evidence ledger),
-`FSM/CAPABILITIES.md` (capability map), `FSM/MODS.md` (mod catalog),
+Related records: `Yuris-Echo/VERIFICATION.md` (evidence ledger),
+`Yuris-Echo/CAPABILITIES.md` (capability map), `Yuris-Echo/MODS.md` (mod catalog),
 `docs/research/RHINO_RCA_RUNTIME.md` and `RHINO_RCA_REVISION.md`
 (the targeting RCA that reshaped the project).
 
 Related research direction: **Dynamic Unit Behavior**
-(`FSM/DYNAMIC_UNIT_BEHAVIOR.md`) — the continuation of the runtime-boundary
+(`Yuris-Echo/DYNAMIC_UNIT_BEHAVIOR.md`) — the continuation of the runtime-boundary
 question onto existing-unit behavior (observation/state/decisions/coordination),
 with a stress-tested candidate matrix and DU-1..DU-4 research gates. Hypothesis
 stage; nothing implemented.
@@ -40,7 +40,7 @@ the DU track, reconciles against).
 ## Project status
 
 - **Command Authority** (`scripts/mods/command_authority/`, v0.3.0) —
-  ACTIVE EXPERIMENTAL. The current FSM vehicle. Harness-verified
+  ACTIVE EXPERIMENTAL. The current Yuri's Echo vehicle. Harness-verified
   (44 + 36 + 30 checks); live sessions observed; two bugs found and fixed
   in Lua (Neutral-as-client, literal lastKillPos stacking). No C++/API
   changes required at any point.
@@ -51,7 +51,7 @@ the DU track, reconciles against).
   the harness `tools/tmp/war_clock_test.lua` survives, from which the
   mechanic is reconstructible (see below).
 - **Iron Curtain experiment** — CONCEPT / NOT IMPLEMENTED
-  (see `FSM/IRON_CURTAIN.md`). Feasibility against current API is
+  (see `Yuris-Echo/IRON_CURTAIN.md`). Feasibility against current API is
   explicitly unresolved in several points.
 
 ## Global gameplay mechanics already experimented
@@ -75,7 +75,7 @@ the DU track, reconciles against).
   and a meter change nothing about what the player should do next; there
   is no loop (no resource, no choice, no counterplay). It is a HUD
   feature, not a system.
-- Surviving lesson: `gameplay loop > telemetry` (see `FSM/PRINCIPLES.md`).
+- Surviving lesson: `gameplay loop > telemetry` (see `Yuris-Echo/PRINCIPLES.md`).
   No code survives to re-verify; the failure mode is architectural, not
   a bug.
 
@@ -128,7 +128,7 @@ the DU track, reconciles against).
 
 ## Principles that emerged
 
-Condensed here, stated technically in `FSM/PRINCIPLES.md`:
+Condensed here, stated technically in `Yuris-Echo/PRINCIPLES.md`:
 
 - Runtime state beats static event lists; loops beat telemetry; decisions
   beat passive effects; counterplay is part of the mechanic, not a patch.
@@ -145,7 +145,7 @@ Condensed here, stated technically in `FSM/PRINCIPLES.md`:
 
 ## Command Authority — what was actually verified
 
-(Evidence levels per claim; see `FSM/VERIFICATION.md` for the ledger.)
+(Evidence levels per claim; see `Yuris-Echo/VERIFICATION.md` for the ledger.)
 
 - **Runtime CP economy** (kill +5 nearest-hostile attribution, damage
   1-per-400 fractional bank, streak, directive +8): harness 44 checks +
@@ -157,7 +157,7 @@ Condensed here, stated technically in `FSM/PRINCIPLES.md`:
 - **Observed unit floods are attributable**: the "20–30 Rhino" match
   observation (2026-09-20) was traced to CA Director reinforcement pairs
   (SmartAI has zero spawn capability — verified by source grep; ledger:
-  `FSM/VERIFICATION.md`). Rule: attribute observed behavior only after a
+  `Yuris-Echo/VERIFICATION.md`). Rule: attribute observed behavior only after a
   capability check of the active stack.
 - **Player abilities** (Z/X/C/V, costs, blitz discount, refusal rules):
   harness; live Z-use observed via spawn correlation.

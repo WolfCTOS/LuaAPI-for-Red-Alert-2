@@ -1,4 +1,4 @@
-# FSM — Verification Ledger
+# Yuri's Echo — Verification Ledger
 
 Evidence levels are never mixed. Column meanings:
 
@@ -144,7 +144,7 @@ introduction commit — no removal record recoverable. |
 | Limitations | conflicts with `PROJECT/ROADMAP.md` Milestone 4 [x] and
 `API.md`/`PROJECT/CAPABILITIES.md` interception language — flagged
 here, not silently resolved. If a build wires it, this row and
-`FSM/IRON_CURTAIN.md` checks 3–5 must be revised. |
+`Yuris-Echo/IRON_CURTAIN.md` checks 3–5 must be revised. |
 
 ### `SetHealthRatio` percent-scale (open separate issue)
 | Level | Status |
@@ -169,7 +169,7 @@ validation on mismatched types; v2 (faction-authentic `E2`/`HTNK`,
 mature base, working factory in-window per AI-production census):
 accepted, zero attributable output (`E2` clean-negative; `HTNK`
 self-polluted by AI mass production). Full record:
-`FSM/QUEUEUNIT_GATE.md` |
+`Yuris-Echo/QUEUEUNIT_GATE.md` |
 | User-observed | n/a |
 | Limitations | sink-vs-AI-scrub indistinguishable live (equivalent for
 planning); overturn test specified (attributed APOC-class appearance,
@@ -212,7 +212,7 @@ real TypeID to `VALUABLE_TYPES` when supplied |
 - Framework (`scripts/framework/`, M14): "framework logic verified,
   in-game runtime pending" per `PROJECT/CAPABILITIES.md` (cited).
 - Iron Curtain concept: all levels NONE — concept only
-  (`FSM/IRON_CURTAIN.md`).
+  (`Yuris-Echo/IRON_CURTAIN.md`).
 
 ### Unit-count attribution ("20–30 Rhino" match observation, 2026-09-20)
 | Level | Status |
@@ -270,13 +270,13 @@ real TypeID to `VALUABLE_TYPES` when supplied |
   evidence of stability ON THAT PATH ONLY; it is NOT a disproval of the
   Syringe-path crash (root still UNKNOWN) and not a guarantee under all
   maps/mods/hardware. Formal repeated-test protocol (N clean-machine runs,
-  fixed checklist per `FSM/MODDB_ALPHA_RELEASE.md` Installation Gate) has
+  fixed checklist per `Yuris-Echo/MODDB_ALPHA_RELEASE.md` Installation Gate) has
   NOT been executed — that remains a Gate-3 release requirement.
 | **Status** | **Criterion 1.4 CLOSED as scoped** ("retested on the
   recommended launch path; result documented"): the recommended
   CnCNet-spawner path shows zero crash evidence across the documented
   session record; direct-Syringe launches remain intermittently crashy
   (root UNKNOWN, not proven LuaAPI-caused), disclosed in
-  `FSM/FEASIBILITY_TRIAGE.md` and now here. Reopen only if a crash
+  `Yuris-Echo/FEASIBILITY_TRIAGE.md` and now here. Reopen only if a crash
   reproduces on the recommended path. Syringe-path root-cause hunt stays a
   recorded OPEN unknown (not a Gate-1 item). |

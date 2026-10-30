@@ -1,9 +1,9 @@
-# FSM — LuaAPI Capability Map for Global Gameplay
+# Yuri's Echo — LuaAPI Capability Map for Global Gameplay
 
 Every entry names the existing API, its location, what it enables, where it
 was actually used, its limits, and multiplayer/determinism notes where
 known. Nothing here extends the API. Claims are graded:
-**FSM-VERIFIED** (used in CA/RCA/harness with evidence),
+**YURIS-ECHO-VERIFIED** (used in CA/RCA/harness with evidence),
 **REPO-VERIFIED** (other experiments' records, cited not re-proven),
 **UNEXPLORED** (exists in source, no serious use found),
 **UNKNOWN** (cannot be confirmed from current API/repo).
@@ -22,14 +22,14 @@ known. Nothing here extends the API. Claims are graded:
 > language. Related staleness: `PROJECT/CAPABILITIES.md` recipes use
 > mod-table `OnPreDamage` + `game_RegisterEvent` (no such binding exists)
 > and `Engine.PrintMessage(msg, colorIndex)` (current binding takes text
-> only). FSM code uses the global-callback / text-only forms.
+> only). Yuri's Echo code uses the global-callback / text-only forms.
 
-## FSM-VERIFIED (Command Authority / RCA probes / harnesses)
+## YURIS-ECHO-VERIFIED (Command Authority / RCA probes / harnesses)
 
 ### World unit queries
 - API: `World.GetUnits/GetAllUnits/GetBuildings/GetUnitsInRadius`
   (`src/bindings_techno.cpp:1772-1782`; `World.GetAircraft/GetWaypoint`
-  live in the same table but were NOT FSM-exercised).
+  live in the same table but were NOT Yuri's Echo-exercised).
 - Enables: whole-map scans, radius scans, building rosters.
 - Used in: CA `combatScan/ownUnits/directiveStart/powerSabotage`;
   RCA tracking; frontline foe scans. Harnesses stub all of them.
@@ -165,7 +165,7 @@ known. Nothing here extends the API. Claims are graded:
 ## REPO-VERIFIED (other experiments' records, cited)
 
 - Sub-turret API (`AddSubTurret/SetSplitTargets/FireSplitSalvo/...`):
-  battleship showcase + Gate 10 logs. Not FSM-exercised.
+  battleship showcase + Gate 10 logs. Not Yuri's Echo-exercised.
 - `unit:TakeDamage(amount, [warhead])` through the native pipeline with a
   fallback warhead chain (`bindings_techno.cpp:337-393`). Binding-level;
   note the binding comment: stock `Fire` is ~useless vs heavy armor.
@@ -190,7 +190,7 @@ known. Nothing here extends the API. Claims are graded:
 - `unit:IronCurtain(frames)` (`bindings_techno.cpp:1425`): native full
   invulnerability + tint via `ObjectClass::IronCurtain`. Implemented;
   live gameplay use unverified. (Different mechanic from the selective
-  Iron Curtain concept — see `FSM/IRON_CURTAIN.md`.)
+  Iron Curtain concept — see `Yuris-Echo/IRON_CURTAIN.md`.)
 - `SetHealthRatio` percent-scale behavior (binding divides by 100;
   contradicts `API.md`'s 0.35-style examples): usable with 0–100 scale,
   but the CA `1.0`→1% incident shows the trap. Open separate issue,
@@ -206,7 +206,7 @@ known. Nothing here extends the API. Claims are graded:
   (queue counts — still not completion callbacks).
 - `unit:IronCurtain(frames)` (`src/bindings_techno.cpp:1425`): native
   full invulnerability + tint. Implemented; live gameplay use
-  unverified. See `FSM/IRON_CURTAIN.md` for why it is not the selective
+  unverified. See `Yuris-Echo/IRON_CURTAIN.md` for why it is not the selective
   concept.
 - `game.*` legacy namespace (`GetWaypoint/GetUnitsInRadius` mirrors):
   present, unused; prefer `World.*`.

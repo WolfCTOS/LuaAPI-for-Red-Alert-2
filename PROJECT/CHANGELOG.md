@@ -142,8 +142,8 @@ Status: **IMPLEMENTED and COMPILED** (`729EF1B8`, 13:41:14). Not yet
 
 ### Added — engine finding, recorded for reuse
 
-- `FSM/HOUSE_LOSE_FORCED.md` (new): full record, including what is
-  explicitly NOT proven. Evidence row in `FSM/VERIFICATION.md`.
+- `Yuris-Echo/HOUSE_LOSE_FORCED.md` (new): full record, including what is
+  explicitly NOT proven. Evidence row in `Yuris-Echo/VERIFICATION.md`.
 - Reusable conclusion: **`HouseClass::Lose()` (and by extension
   `FlagToDie` / `Win` / `AcceptDefeat` / `ForceEnd`) must not be called
   from Lua.** These are engine-internal defeat transitions that expect the
@@ -435,8 +435,8 @@ Status: **IMPLEMENTED and COMPILED** (`729EF1B8`, 13:41:14). Not yet
   unreachable C++ dispatch branch, no native death hook). Touched: `API.md`
   (Callback Model), `scripts/init.lua` comment, `docs/TUTORIAL.md` (2×),
   `README.md` (Event Model), `PROJECT/ROADMAP.md` (M7 audit note, Gates
-  7.1/7.2), `PROJECT/GATES.md` (items 1/6, Gate 2 gaps), `FSM/MODDB_ALPHA_RELEASE.md`
-  (2×), `FSM/FEASIBILITY_TRIAGE.md`.
+  7.1/7.2), `PROJECT/GATES.md` (items 1/6, Gate 2 gaps), `Yuris-Echo/MODDB_ALPHA_RELEASE.md`
+  (2×), `Yuris-Echo/FEASIBILITY_TRIAGE.md`.
 - `OnScenarioStart` accuracy: it DOES fire (global, logical frame 1) —
   corrected the lumped "not wired" wording in `docs/FRAMEWORK.md`.
 - Absent-module honesty: `scripts/framework/init.lua`
@@ -451,13 +451,13 @@ Status: **IMPLEMENTED and COMPILED** (`729EF1B8`, 13:41:14). Not yet
   `debug_console` are not under `scripts/` (stale copies of three survive
   under `build/`). Annotated in `PROJECT/CAPABILITIES.md` (Case Studies
   4/5), `PROJECT/ROADMAP.md` (Gates 10.4/12.1/12.2/14.7/14.8),
-  `FSM/FEASIBILITY_TRIAGE.md`, `FSM/MODDB_ALPHA_RELEASE.md` (Small 3),
-  `FSM/MODS.md` (new catalog entries), showcase docs (current-status
+  `Yuris-Echo/FEASIBILITY_TRIAGE.md`, `Yuris-Echo/MODDB_ALPHA_RELEASE.md` (Small 3),
+  `Yuris-Echo/MODS.md` (new catalog entries), showcase docs (current-status
   notes; history preserved, nothing rewritten).
 - `smart_ai` accuracy: 232-line rally + capture-guard MVP (restart guard
   present), NOT squads/officers/escorts — rewrote
   `scripts/mods/smart_ai/HOW_TO_USE.txt`; synced
-  `FSM/FEASIBILITY_TRIAGE.md`, `FSM/MODDB_ALPHA_RELEASE.md` exclusions.
+  `Yuris-Echo/FEASIBILITY_TRIAGE.md`, `Yuris-Echo/MODDB_ALPHA_RELEASE.md` exclusions.
 - README: Quick Start no longer enables inert `bounty_hunter` /
   archived `shield_overload`; table-method `OnScenarioStart` examples
   fixed to dispatched forms; `PrintMessage` color-arg removed; added an
@@ -930,7 +930,7 @@ Status: **IMPLEMENTED and COMPILED** (`729EF1B8`, 13:41:14). Not yet
   `GetFogRegion(x,y,w,h)` (packed byte-per-cell string; 512×512 cap).
   Ground truth is `MapClass::IsLocationShrouded` @ `0x00586360`, i.e. the exact
   bit the engine itself tests. No setter, by design — granting vision is
-  "fake vision" and is out of scope per `FSM/FEASIBILITY_TRIAGE.md:268`.
+  "fake vision" and is out of scope per `Yuris-Echo/FEASIBILITY_TRIAGE.md:268`.
 - New mod `scripts/mods/fow_overlay/` — character-map HUD, per-region
   ever-seen memory, hotspot estimate. HUD off by default (`V` toggles) because
   a 19-line block at the scan cadence would flood the message list.

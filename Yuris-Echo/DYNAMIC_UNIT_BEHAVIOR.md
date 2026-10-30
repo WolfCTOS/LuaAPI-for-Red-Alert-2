@@ -1,4 +1,4 @@
-# 🔬 Dynamic Unit Behavior — Research Direction (FSM/DU)
+# 🔬 Dynamic Unit Behavior — Research Direction (Yuris-Echo/DU)
 
 > **Status:** READY FOR RESEARCH — hypothesis stage. Nothing implemented, nothing verified.
 > **Created:** 2026-09-20 (feature-freeze reset).
@@ -118,7 +118,7 @@ For every candidate, before it may enter DU-2:
 - Resolve `UNKNOWN` cells in the matrix against authoritative sources
   (ModEnc/Ares docs/Phobos docs/YRpp), not memory.
 - Confirm primitive coverage for the shortlisted candidates against
-  `FSM/CAPABILITIES.md` (all listed primitives are already LIVE VERIFIED —
+  `Yuris-Echo/CAPABILITIES.md` (all listed primitives are already LIVE VERIFIED —
   DU-1 verifies the *mapping*, not the bindings).
 - Apply the 7-question stress test to each shortlisted row; reject weak ideas
   explicitly (with reasons) in this file.
@@ -142,7 +142,7 @@ For every candidate, before it may enter DU-2:
 ### Gate DU-4 — Showcase
 
 - The DU-2/DU-3 success is packaged per the Gate 3 checklist
-  (`FSM/MODDB_ALPHA_RELEASE.md`): reproduction, install, media, limitations,
+  (`Yuris-Echo/MODDB_ALPHA_RELEASE.md`): reproduction, install, media, limitations,
   Ares/Phobos boundary statement, evidence-graded claims.
 
 ## Anti-patterns (from project history — binding)
@@ -156,8 +156,8 @@ For every candidate, before it may enter DU-2:
   (`PROJECT/RUNTIME_BOUNDARY.md` second-half boundary; miner_safety lesson).
 - Do not attribute observed behavior to SmartAI (or anything) without evidence —
   the 20–30-Rhino case was Command Authority Director reinforcements, not SmartAI
-  or factory production (`FSM/VERIFICATION.md`, attribution note 2026-09-20).
-- Harness PASS ≠ live claim (`FSM/PRINCIPLES.md` §9).
+  or factory production (`Yuris-Echo/VERIFICATION.md`, attribution note 2026-09-20).
+- Harness PASS ≠ live claim (`Yuris-Echo/PRINCIPLES.md` §9).
 
 ## Status
 

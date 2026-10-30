@@ -48,10 +48,10 @@ cannot condition on a match-state window with a damage-source exception.
 ## Potentially needed capabilities (existing API only)
 
 - Trigger/state/timers: `Input`/CP-like ledger/`Update` cadence —
-  FSM-VERIFIED patterns (CA powers).
-- Unit set tracking by ID + `IsAlive` re-resolution — FSM-VERIFIED
+  YURIS-ECHO-VERIFIED patterns (CA powers).
+- Unit set tracking by ID + `IsAlive` re-resolution — YURIS-ECHO-VERIFIED
   (CA `S.seen`, RCA tracking).
-- Damage observation: HP-drop polling — FSM-VERIFIED as observation.
+- Damage observation: HP-drop polling — YURIS-ECHO-VERIFIED as observation.
 - Damage modification: `unit:TakeDamage` (outgoing only — wrong
   direction), `SetHealthRatio` compensation (lossy, see §5.5),
   `unit:IronCurtain(frames)` (native FULL invulnerability +

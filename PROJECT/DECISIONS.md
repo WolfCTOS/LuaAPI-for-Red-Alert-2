@@ -49,11 +49,11 @@ Decision:
 3. The next research direction — Dynamic Unit Behavior (existing units,
    runtime decisions, no new intrinsic abilities) — is documented as a
    hypothesis with a stress-tested candidate matrix and DU-1..DU-4 research
-   gates in `FSM/DYNAMIC_UNIT_BEHAVIOR.md`. No implementation before the
+   gates in `Yuris-Echo/DYNAMIC_UNIT_BEHAVIOR.md`. No implementation before the
    DU-1 capability audit.
 4. Conversation-only findings must be moved into the appropriate repository
    document at session end (standing rule; first instance: the 20–30-Rhino
-   attribution recorded in `FSM/VERIFICATION.md`).
+   attribution recorded in `Yuris-Echo/VERIFICATION.md`).
 
 Reason:
 Evidence discipline degraded when the operative plan lived in chat context:
@@ -85,7 +85,7 @@ current build, for three independent reasons (all source-verified):
 (1) it defines `OnPreDamage` as a mod-table method, while the current build
 dispatches engine event callbacks via global lookup only (`API.md`, Callback
 Model); (2) `OnPreDamage` itself is not wired (collected, never invoked —
-`FSM/CAPABILITIES.md` conflict note); (3) its credit call
+`Yuris-Echo/CAPABILITIES.md` conflict note); (3) its credit call
 `house_AddCredits(ownerHouse, 50)` matches no binding (the API is the method
 `house:AddCredits`), and `lastDamagedTechno.Owner` is not a Lua-exposed field.
 The mod is silent in-game while being presented in-tree as the combat-economy
@@ -112,7 +112,7 @@ Alternatives considered:
 - Fix the mod now (rejected: code change during a documentation-only reset;
   also `OnPreDamage` remains unwired, so only the aftermath-polling variant
   would work — that is a new feature, not a doc fix).
-- Delete the mod (rejected: destroys the historical record the FSM archive
+- Delete the mod (rejected: destroys the historical record the Yuri's Echo archive
   references; the mod documents an era of the callback model).
 - Leave enabled with only a header (rejected: criterion 1.2 wants the default
   stack to be functional or explicitly decided; a silently loaded inert mod

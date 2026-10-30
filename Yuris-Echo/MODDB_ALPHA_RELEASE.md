@@ -10,7 +10,7 @@ changed to write this document — it judges the tree as it stands.
 Move LuaAPI from its current Alpha-state working tree to a real public
 Alpha without promising unverified capabilities as ready. Every section
 below is a checklist, not an essay. Items reference the audit in
-`FSM/FEASIBILITY_TRIAGE.md` ("Audit") where the evidence lives.
+`Yuris-Echo/FEASIBILITY_TRIAGE.md` ("Audit") where the evidence lives.
 
 ## What Alpha Means
 
@@ -19,7 +19,7 @@ below is a checklist, not an essay. Items reference the audit in
   unverified behavior as guaranteed; hide a known critical crash;
   require undocumented dev-only steps; ship docs that contradict source.
 - Harness PASS ≠ live claim — the Alpha page must use the same evidence
-  grades as `FSM/VERIFICATION.md` (no grade inflation for marketing).
+  grades as `Yuris-Echo/VERIFICATION.md` (no grade inflation for marketing).
 
 ## Technical Gate
 
@@ -206,7 +206,7 @@ is not enough — each item below meets the bar.
 - `SetHealthRatio` scale + CA repair path.
 - ROADMAP reconciliation as a standing docs task.
 - Demo video pipeline (record every showcase change).
-- Next experiments per `FSM/FEASIBILITY_TRIAGE.md` (QueueUnit
+- Next experiments per `Yuris-Echo/FEASIBILITY_TRIAGE.md` (QueueUnit
   micro-probe → Aegis/Sector prototypes).
 
 ## Final Checklist
@@ -220,5 +220,5 @@ is not enough — each item below meets the bar.
 - [ ] Known Limitations published alongside the download.
 - [ ] Zero open Critical Blockers (each either resolved or formally
   downgraded with a tested workaround + disclosure).
-- [ ] Evidence grades in all public text match `FSM/VERIFICATION.md`
+- [ ] Evidence grades in all public text match `Yuris-Echo/VERIFICATION.md`
   (no harness→live inflation).
