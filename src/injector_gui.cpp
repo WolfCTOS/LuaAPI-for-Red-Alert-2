@@ -1633,11 +1633,11 @@ void RecalcLayout() {
         g_geo.problemsY = qy + qbh + SS(40);
         g_geo.cncBtn = g_geo.launchBtn = g_geo.injectBtn = g_geo.reInjectBtn = RECT{};   // set by PaintDashboard
     } else if (g_view == View::Mods) {
-        // The title and the search field share one line; the list starts under
-        // them. This mirrors the compact manager layout.
-        int searchW = SS(280);
-        g_geo.search = RECT{ cx + cw - searchW, SS(12), cx + cw, SS(12) + SS(30) };
-        int listTop = SS(70);
+        // Search sits on its own line directly under the "Mods" title, then
+        // the list starts below it.
+        int searchTop = SS(54);
+        g_geo.search = RECT{ cx, searchTop, cx + cw, searchTop + SS(32) };
+        int listTop = g_geo.search.bottom + SS(16);
         int bottomY = h - pad - SS(52);
         // The compact design has no detail panel: the list always uses the
         // full content width.
