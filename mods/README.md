@@ -1,7 +1,12 @@
-# scripts/mods — каталог модов (рабочее дерево, 2026-09-21)
+# mods/ — каталог модов (рабочее дерево)
 
-Активный набор задаётся файлом `scripts/active_mods.txt` (сейчас:
-`target_reselect`, `bounty_hunter`, `smart_ai`).
+Одна папка = один мод: `mods/<id>/main.lua` (+ необязательный `mod.json`).
+Имя папки и есть ID мода (в `active_mods.txt`, в LMM и в `conflicts`).
+Старый `scripts/mods/` загрузчик и LMM всё ещё читают как fallback, но
+`mods/<id>` имеет приоритет над `scripts/mods/<id>`.
+
+Активный набор задаётся файлом `mods/active_mods.txt` (сейчас:
+`bounty_hunter`, `smart_ai`, `radiation`).
 Загрузчик (`scripts/init.lua`) грузит **только** перечисленные там моды.
 
 Сравнение с GitHub (`origin/main`, commit `ef0ce25`):
