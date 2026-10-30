@@ -196,7 +196,7 @@ const wchar_t* __fastcall Hooked_LoadString(
 
         g_versionBuffer =
             std::wstring(original ? original : L"") +
-            L" | LuaAPI v2.0.0";
+            L" | LuaAPI v0.2.0";
 
         return g_versionBuffer.c_str();
     }
@@ -583,7 +583,7 @@ lua_State* CreateEngine() {
 
     lua_newtable(L);
 
-    lua_pushliteral(L, "2.0.0");
+    lua_pushliteral(L, "0.2.0");
     lua_setfield(L, -2, "version");
 
     lua_pushcfunction(L, Engine_PrintMessage);
