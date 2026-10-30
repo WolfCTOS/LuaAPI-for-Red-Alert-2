@@ -36,10 +36,13 @@ $ProjectDir    = [System.IO.Path]::GetFullPath($ProjectDir)
 # --- Поиск injector.exe ---
 # Последовательный перебор папок: bin\Release, bin, build, корзина проекта, папка игры.
 $injectorPaths = @(
+    Join-Path $ProjectDir "build\Release\LMM.exe"
     Join-Path $ProjectDir "bin\Release\injector.exe"
     Join-Path $ProjectDir "bin\injector.exe"
     Join-Path $ProjectDir "build\injector.exe"
+    Join-Path $ProjectDir "LMM.exe"
     Join-Path $ProjectDir "injector.exe"
+    Join-Path $GameDir "LMM.exe"
     Join-Path $GameDir "injector.exe"
 )
 $injectorExe = $injectorPaths | Where-Object { Test-Path $_ } | Select-Object -First 1

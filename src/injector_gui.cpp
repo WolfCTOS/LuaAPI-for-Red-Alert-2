@@ -56,6 +56,12 @@ constexpr COLORREF Error = RGB(218, 54, 51);
 
 constexpr COLORREF Chip        = RGB(48, 54, 64);
 constexpr COLORREF Border      = RGB(58, 68, 80);
+// Neutral action buttons (Inject / Re-inject / Diagnostics / row icons).
+constexpr COLORREF Btn         = RGB(43, 52, 65);
+constexpr COLORREF BtnHover    = RGB(56, 66, 82);
+// Status pill for enabled mods: green text/outline on a very dark green tint.
+constexpr COLORREF PillOnBg    = RGB(20, 38, 27);
+constexpr COLORREF PillOffBg   = RGB(28, 34, 43);
 constexpr COLORREF Divider     = RGB(38, 45, 55);
 constexpr COLORREF Disabled    = RGB(52, 60, 72);
 constexpr COLORREF ScrollTrack = RGB(36, 43, 53);
@@ -89,7 +95,7 @@ constexpr COLORREF kOrange  = Tok::Warn;
 constexpr COLORREF kOk      = Tok::Ok;
 
 constexpr const wchar_t* kWindowClass = L"LuaAPIInjectorWnd";
-constexpr const wchar_t* kWindowTitle = L"RA2 Yuri's Revenge - LuaAPI";
+constexpr const wchar_t* kWindowTitle = L"RA2 Yuri's Revenge - Lua Mod Manager";
 #define IDI_APP_ICON 101
 
 constexpr int kDefaultClientW = 1100;
@@ -133,6 +139,7 @@ HFONT g_fontTitle = nullptr;
 HFONT g_fontH1    = nullptr;
 HFONT g_fontH2    = nullptr;
 HFONT g_fontBody  = nullptr;
+HFONT g_fontRow   = nullptr;
 HFONT g_fontCap   = nullptr;
 HFONT g_fontStat  = nullptr;
 
@@ -141,12 +148,14 @@ void RecreateFonts() {
     if (g_fontH1)    DeleteObject(g_fontH1);
     if (g_fontH2)    DeleteObject(g_fontH2);
     if (g_fontBody)  DeleteObject(g_fontBody);
+    if (g_fontRow)   DeleteObject(g_fontRow);
     if (g_fontCap)   DeleteObject(g_fontCap);
     if (g_fontStat)  DeleteObject(g_fontStat);
     g_fontTitle = CreateFontToken(Tok::FontTitle, FW_BOLD);
     g_fontH1    = CreateFontToken(Tok::FontH1,    FW_SEMIBOLD);
     g_fontH2    = CreateFontToken(Tok::FontH2,    FW_SEMIBOLD);
     g_fontBody  = CreateFontToken(Tok::FontBody,  FW_NORMAL);
+    g_fontRow   = CreateFontToken(Tok::FontBody,  FW_SEMIBOLD);
     g_fontCap   = CreateFontToken(Tok::FontCap,   FW_NORMAL);
     g_fontStat  = CreateFontToken(Tok::FontStat,  FW_BOLD);
 }
@@ -177,9 +186,13 @@ const wchar_t* Str_InjectBtn()  { return L10N(L"\u0412\u043D\u0435\u0434\u0440\u
 const wchar_t* Str_CncBtn()     { return L"CnCNet"; }
 const wchar_t* Str_ReInjectBtn(){ return L10N(L"\u041F\u043E\u0432\u0442\u043E\u0440\u043D\u043E \u0432\u043D\u0435\u0434\u0440\u0438\u0442\u044C", L"Re-inject"); }
 const wchar_t* Str_ApplyBtn()   { return L10N(L"\u041F\u0440\u0438\u043C\u0435\u043D\u0438\u0442\u044C", L"Apply Changes"); }
+const wchar_t* Str_Refresh()    { return L10N(L"\u041E\u0431\u043D\u043E\u0432\u0438\u0442\u044C", L"Refresh"); }
 const wchar_t* Str_OpenModsDir(){ return L10N(L"\u041F\u0430\u043F\u043A\u0430 \u043C\u043E\u0434\u043E\u0432", L"Open Mods Folder"); }
-const wchar_t* Str_OpenLogs()   { return L10N(L"\u0416\u0443\u0440\u043D\u0430\u043B\u044B", L"Open Logs"); }
+const wchar_t* Str_OpenLogs()   { return L10N(L"\u041B\u043E\u0433", L"Log"); }
 const wchar_t* Str_OpenFolder() { return L10N(L"\u041F\u0430\u043F\u043A\u0430 \u043C\u043E\u0434\u0430", L"Open Mod Folder"); }
+// Short labels for the row buttons: wide targets need a readable caption.
+const wchar_t* Str_RowFolder() { return L10N(L"\u041F\u0430\u043F\u043A\u0430", L"Folder"); }
+const wchar_t* Str_RowLua()    { return L"main.lua"; }
 const wchar_t* Str_OpenLua()    { return L10N(L"\u041E\u0442\u043A\u0440\u044B\u0442\u044C main.lua", L"Open main.lua"); }
 const wchar_t* Str_Explorer()   { return L10N(L"\u041F\u043E\u043A\u0430\u0437\u0430\u0442\u044C \u0432 \u043F\u0440\u043E\u0432\u043E\u0434\u043D\u0438\u043A\u0435", L"Show in Explorer"); }
 const wchar_t* Str_Enable()     { return L10N(L"\u0412\u043A\u043B\u044E\u0447\u0438\u0442\u044C", L"Enable"); }
@@ -196,7 +209,7 @@ std::wstring Str_Problems(int n) {
         : std::to_wstring(n) + L" problem" + (n == 1 ? L"" : L"s");
 }
 const wchar_t* Str_NoMods()     { return L10N(L"\u041C\u043E\u0434\u044B \u043D\u0435 \u0443\u0441\u0442\u0430\u043D\u043E\u0432\u043B\u0435\u043D\u044B", L"No mods installed"); }
-const wchar_t* Str_NoModsHint() { return L10N(L"\u041F\u043E\u043C\u0435\u0441\u0442\u0438\u0442\u0435 \u043F\u0430\u043F\u043A\u0438 \u0432 scripts/mods/ \u0438 \u043F\u0435\u0440\u0435\u0437\u0430\u043F\u0443\u0441\u0442\u0438\u0442\u0435", L"Place folders in scripts/mods/ and restart"); }
+const wchar_t* Str_NoModsHint() { return L10N(L"\u041F\u043E\u043C\u0435\u0441\u0442\u0438\u0442\u0435 \u043F\u0430\u043F\u043A\u0438 \u0432 mods/ \u0438 \u043D\u0430\u0436\u043C\u0438\u0442\u0435 \u00AB\u041E\u0431\u043D\u043E\u0432\u0438\u0442\u044C\u00BB (F5)", L"Place folders in mods/ and press Refresh (F5)"); }
 const wchar_t* Str_NoResults()  { return L10N(L"\u041D\u0438\u0447\u0435\u0433\u043E \u043D\u0435 \u043D\u0430\u0439\u0434\u0435\u043D\u043E", L"No mods match your search"); }
 const wchar_t* Str_SearchPh()   { return L10N(L"\u041F\u043E\u0438\u0441\u043A \u043C\u043E\u0434\u043E\u0432\u2026", L"Search mods\u2026"); }
 const wchar_t* Str_SelectHint() { return L10N(L"\u0412\u044B\u0431\u0435\u0440\u0438\u0442\u0435 \u043C\u043E\u0434\u2026", L"Select a mod to see its details"); }
@@ -216,8 +229,8 @@ const wchar_t* St_GamePath()    { return L10N(L"\u0420\u0430\u0441\u043F\u043E\u
 const wchar_t* St_Status()      { return L10N(L"\u0421\u0442\u0430\u0442\u0443\u0441", L"Status"); }
 
 std::wstring Str_VersionLine() {
-    return L10N(L"\u0412\u0435\u0440\u0441\u0438\u044F 1.3 \u2014 LuaAPI Engine",
-                L"Version 1.3 \u2014 LuaAPI Engine");
+    return L10N(L"\u0412\u0435\u0440\u0441\u0438\u044F 0.4.0 \u2014 Lua Mod Manager",
+                L"Version 0.4.0 \u2014 Lua Mod Manager");
 }
 
 // ---------------------------------------------------------------------------
@@ -226,7 +239,8 @@ std::wstring Str_VersionLine() {
 enum class View { Dashboard, Mods, Settings };
 
 struct ModEntry {
-    std::wstring dir;
+    std::wstring dir;    // folder name = mod id used by init.lua
+    std::wstring path;   // absolute folder path (mods\\ or scripts\\mods\\)
     std::wstring id;
     std::wstring name = L"?";
     std::wstring version = L"1.0.0";
@@ -268,17 +282,19 @@ struct DragState {
     int dragIndex = -1;
     POINT downPos{0, 0};
     int dragAnchorY = 0;
+    // Mod that was open in the detail card when the drag started, so the card
+    // can follow it through the reorder instead of jumping to a stale index.
+    std::wstring selectionId;
 };
 
 struct Geo {
     RECT sidebar, content, brand;
     RECT navDashboard, navMods, navSettings;
     RECT sidebarStatus;
-    RECT hero, launchBtn, injectBtn, cncBtn;
+    RECT hero, launchBtn, injectBtn, cncBtn, reInjectBtn;
     RECT statMods, statActive, statProbs;
     RECT quickAction1, quickAction2, quickAction3, quickAction4;
-    RECT search, list, inspector, applyBtn;
-    RECT inspectorBtns[4];
+    RECT search, list, inspector, applyBtn, refreshBtn;
     RECT langSeg;
     RECT diagBtn1, diagBtn2, diagBtn3;
     RECT aboutCard;
@@ -298,6 +314,9 @@ bool g_attachMode = false;
 bool g_runCnCNet = false;
 std::wstring g_attachTarget;
 bool g_launching = false;
+// When the current launch attempt started, so a launch that never sees a
+// game process cannot leave the buttons disabled forever.
+ULONGLONG g_launchStartedAt = 0;
 bool g_injecting = false;
 
 View g_view = View::Dashboard;
@@ -346,7 +365,11 @@ bool g_trackingMouse = false;
 bool g_down = false;
 View g_hoverNav = static_cast<View>(-1);
 int g_hoverRow = -1;
+int g_hoverQuickRow = -1;   // row whose action button is under the cursor
+int g_hoverQuickBtn = 0;    // 0 none, 1 folder, 2 main.lua
 bool g_hoverLaunch = false, g_hoverInject = false, g_hoverApply = false, g_hoverCnc = false;
+bool g_hoverRefresh = false;
+bool g_hoverReInject = false;
 bool g_hoverQA1 = false, g_hoverQA2 = false, g_hoverQA3 = false, g_hoverQA4 = false;
 bool g_hoverD1 = false, g_hoverD2 = false, g_hoverD3 = false;
 int g_hoverBtn = 0;  // inspector button index
@@ -354,8 +377,8 @@ int g_hoverBtn = 0;  // inspector button index
 DragState g_dragState;
 
 constexpr int kSidebarW = 224;
-constexpr int kRowH = 64;
-constexpr int kRowGap = 6;
+constexpr int kRowH = 62;
+constexpr int kRowGap = 4;
 constexpr int kScrollW = 6;
 constexpr int kInspectorW = 340;
 
@@ -426,16 +449,13 @@ void DrawCheckbox(HDC dc, const RECT& box, bool enabled) {
 }
 
 void DrawFolderIcon(HDC dc, const RECT& r, COLORREF color) {
-    HBRUSH brush = CreateSolidBrush(color);
-    HPEN pen = CreatePen(PS_SOLID, 1, color);
-    auto oldBrush = SelectObject(dc, brush);
-    auto oldPen = SelectObject(dc, pen);
-    RoundRect(dc, r.left + SS(2), r.top + SS(6), r.right - SS(2), r.bottom - SS(2), SS(3), SS(3));
-    Rectangle(dc, r.left + SS(2), r.top + SS(3), r.left + SS(10), r.top + SS(8));
-    SelectObject(dc, oldPen);
-    SelectObject(dc, oldBrush);
-    DeleteObject(pen);
-    DeleteObject(brush);
+    // Folder silhouette: a tab overlapping the body, drawn as two filled
+    // rounded rectangles. Works at 14–18 px without turning into a blob.
+    int tabW = (r.right - r.left) * 5 / 9;
+    FillRoundRect(dc, RECT{ r.left, r.top + SS(1), r.left + tabW, r.top + SS(7) },
+                  color, SS(2));
+    FillRoundRect(dc, RECT{ r.left, r.top + SS(5), r.right, r.bottom - SS(1) },
+                  color, SS(2));
 }
 
 void DrawPencilIcon(HDC dc, const RECT& r, COLORREF color) {
@@ -462,12 +482,58 @@ void DrawPencilIcon(HDC dc, const RECT& r, COLORREF color) {
     DeleteObject(brush);
 }
 
+// External-link / "open this file" glyph: a small frame with an arrow
+// escaping through its top-right corner.
+void DrawExternalIcon(HDC dc, const RECT& r, COLORREF color) {
+    HPEN pen = CreatePen(PS_SOLID, SS(2), color);
+    auto oldPen = SelectObject(dc, pen);
+    auto oldBrush = SelectObject(dc, GetStockObject(NULL_BRUSH));
+    int frameR = r.right - SS(2);
+    int frameB = r.bottom - SS(2);
+    int frameL = r.left + SS(1);
+    int frameT = r.top + SS(8);
+    MoveToEx(dc, frameL + SS(5), frameT, nullptr);
+    LineTo(dc, frameL, frameT);
+    LineTo(dc, frameL, frameB);
+    LineTo(dc, frameR, frameB);
+    LineTo(dc, frameR, frameB - SS(5));
+    int ax = r.left + SS(7), ay = r.bottom - SS(7);
+    int bx = r.right - SS(2), by = r.top + SS(2);
+    MoveToEx(dc, ax, ay, nullptr);
+    LineTo(dc, bx, by);
+    MoveToEx(dc, bx - SS(5), by, nullptr);
+    LineTo(dc, bx, by);
+    LineTo(dc, bx, by + SS(5));
+    SelectObject(dc, oldPen);
+    SelectObject(dc, oldBrush);
+    DeleteObject(pen);
+}
+
+// Brand mark: a rounded green tile with a dark lambda glyph. Drawn with
+// round-capped strokes so it stays crisp at every DPI instead of relying on
+// a font that may not carry U+039B.
+void DrawBrandLogo(HDC dc, const RECT& r) {
+    FillRoundRect(dc, r, Tok::Accent, SS(9));
+    LOGBRUSH lb{ BS_SOLID, RGB(10, 15, 12), 0 };
+    HPEN pen = ExtCreatePen(PS_GEOMETRIC | PS_SOLID | PS_ENDCAP_ROUND | PS_JOIN_ROUND,
+                            SS(4), &lb, 0, nullptr);
+    auto oldPen = SelectObject(dc, pen);
+    POINT pts[3] = {
+        { r.left + SS(11), r.bottom - SS(11) },
+        { (r.left + r.right) / 2, r.top + SS(10) },
+        { r.right - SS(11), r.bottom - SS(11) }
+    };
+    Polyline(dc, pts, 3);
+    SelectObject(dc, oldPen);
+    DeleteObject(pen);
+}
+
 std::wstring ToUpper(std::wstring s) {
     for (auto& c : s) c = towupper(c);
     return s;
 }
 
-std::wstring Str_AppVersion() { return L"v1.3"; }
+std::wstring Str_AppVersion() { return L"v0.4.0"; }
 
 // Muted professional avatar palette (white glyph on top).
 COLORREF AvatarColor(const std::wstring& id) {
@@ -570,6 +636,33 @@ std::wstring GetExeDirectory() {
     path.resize(len);
     size_t slash = path.find_last_of(L"\\/");
     return slash == std::wstring::npos ? L"." : path.substr(0, slash);
+}
+
+bool DirExists(const std::wstring& path) {
+    DWORD attrs = GetFileAttributesW(path.c_str());
+    return attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_DIRECTORY);
+}
+
+// Mod layout: <game>\mods\<id>\main.lua is the current one, while
+// <game>\scripts\mods\<id>\ is the legacy layout. Both are scanned (a new
+// folder shadows a legacy one with the same name) so a half-migrated install
+// still shows every mod. ModsDir() is where new mods and active_mods.txt go.
+std::vector<std::wstring> ModsRoots() {
+    std::wstring base = GetExeDirectory();
+    std::vector<std::wstring> roots;
+    if (DirExists(base + L"\\mods")) roots.push_back(base + L"\\mods");
+    if (DirExists(base + L"\\scripts\\mods")) roots.push_back(base + L"\\scripts\\mods");
+    if (roots.empty()) roots.push_back(base + L"\\mods");
+    return roots;
+}
+
+std::wstring ModsDir() { return ModsRoots().front(); }
+
+std::wstring ActiveModsPath() {
+    std::wstring base = GetExeDirectory();
+    std::wstring fresh = base + L"\\mods\\active_mods.txt";
+    if (FileExists(fresh) || DirExists(base + L"\\mods")) return fresh;
+    return base + L"\\scripts\\active_mods.txt";
 }
 
 std::wstring GetPrefsPath() { return GetExeDirectory() + L"\\injector.ini"; }
@@ -679,16 +772,13 @@ DWORD FindTargetProcess(std::wstring* outName = nullptr) {
     if (Process32FirstW(snapshot, &entry)) {
         do {
             for (size_t i = 0; i < kGameProcessNameCount && pid == 0; ++i) {
+                // FIX: the extra TH32CS_SNAPMODULE snapshot per candidate could
+                // block for a long time while a process is still loading (the
+                // launcher then froze in "Launching..." until restarted). The
+                // process image name alone identifies the game.
                 if (_wcsicmp(entry.szExeFile, kGameProcessNames[i]) != 0) continue;
-                HANDLE moduleSnap = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE, entry.th32ProcessID);
-                if (moduleSnap != INVALID_HANDLE_VALUE) {
-                    MODULEENTRY32W mod{}; mod.dwSize = sizeof(mod);
-                    if (Module32FirstW(moduleSnap, &mod) && _wcsicmp(mod.szModule, kGameProcessNames[i]) == 0) {
-                        pid = entry.th32ProcessID;
-                        found = kGameProcessNames[i];
-                    }
-                    CloseHandle(moduleSnap);
-                }
+                pid = entry.th32ProcessID;
+                found = kGameProcessNames[i];
             }
             if (pid) break;
         } while (Process32NextW(snapshot, &entry));
@@ -800,12 +890,31 @@ std::wstring HexWord(uintptr_t v) { wchar_t b[16]; swprintf(b, 16, L"0x%08X", st
 // ---------------------------------------------------------------------------
 // Game process discovery + liveness (polled on a timer; g_gamePid is the cache)
 // ---------------------------------------------------------------------------
+// True when the PID still appears in the system process list. Used as the
+// fallback for processes the launcher is not allowed to open (elevated game),
+// so a closed game can never pin the UI in "injected" forever.
+bool PidInProcessList(DWORD pid) {
+    HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snapshot == INVALID_HANDLE_VALUE) return true;   // unknown: assume alive
+    PROCESSENTRY32W entry{}; entry.dwSize = sizeof(entry);
+    bool found = false;
+    if (Process32FirstW(snapshot, &entry)) {
+        do {
+            if (entry.th32ProcessID == pid) { found = true; break; }
+        } while (Process32NextW(snapshot, &entry));
+    }
+    CloseHandle(snapshot);
+    return found;
+}
+
 bool IsPidAlive(DWORD pid) {
     HANDLE h = OpenProcess(SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
     if (!h) {
-        // An invalid PID means the process is gone. Other failures (e.g. an
-        // elevated game that the launcher can't open) should not be treated as death.
-        return GetLastError() != ERROR_INVALID_PARAMETER;
+        // An invalid PID means the process is gone. An access denial (elevated
+        // game) is not proof of life either: fall back to the process list so a
+        // finished game does not leave the launcher stuck in "injected".
+        if (GetLastError() == ERROR_INVALID_PARAMETER) return false;
+        return PidInProcessList(pid);
     }
     bool alive = (WaitForSingleObject(h, 0) == WAIT_TIMEOUT);
     if (!alive) { DWORD code = 0; if (GetExitCodeProcess(h, &code)) alive = (code == STILL_ACTIVE); }
@@ -815,6 +924,18 @@ bool IsPidAlive(DWORD pid) {
 
 void RefreshGameProcessState() {
     bool changed = false;
+    // Watchdog: a launch whose worker never reports back (hung process
+    // enumeration, a client that died before spawning the game, etc.) used to
+    // freeze the whole dashboard in "Launching..." until the app was
+    // restarted. Re-arm the interface after a bounded wait.
+    if (g_launching && g_launchStartedAt &&
+        GetTickCount64() - g_launchStartedAt > 150000) {
+        LogLine(L"Launch watchdog: no game process after 150 s; re-enabling the launcher");
+        g_launching = false;
+        g_launchStartedAt = 0;
+        SetStatusKey(StatusKey::GameNotFound);
+        changed = true;
+    }
     if (g_gamePid != 0) {
         if (IsPidAlive(g_gamePid)) return;
         LogLine(L"Game process PID " + std::to_wstring(g_gamePid) + L" no longer running; clearing state");
@@ -904,6 +1025,7 @@ void DoLaunchGame() {
         return;
     }
     g_launching = true;
+    g_launchStartedAt = GetTickCount64();
     g_statusKey = StatusKey::Ready;
     ShowToast(St_Launching());
     InvalidateRect(g_hwnd, nullptr, TRUE);
@@ -1124,6 +1246,7 @@ void DoLaunchCnCNet() {
         return;
     }
     g_launching = true;
+    g_launchStartedAt = GetTickCount64();
     g_statusKey = StatusKey::Ready;
     ShowToast(St_Launching());
     InvalidateRect(g_hwnd, nullptr, TRUE);
@@ -1148,7 +1271,8 @@ void DoLaunchCnCNetAsync(HWND hwnd, const std::wstring& clientPath) {
         PostMessageW(hwnd, WM_APP_LAUNCH_DONE, 0, 0);
         return;
     }
-    CloseHandle(pi.hThread); CloseHandle(pi.hProcess);
+    CloseHandle(pi.hThread);
+    HANDLE clientProcess = pi.hProcess;
     // Wait for the spawned game (gamemd-spawn.exe normally) and inject.
     // The spawner loads Syringe-side DLLs first — wait for them so MinHook
     // never races their prologue patching.
@@ -1156,11 +1280,22 @@ void DoLaunchCnCNetAsync(HWND hwnd, const std::wstring& clientPath) {
     std::wstring foundName;
     DWORD foundPid = 0;
     bool injected = false;
+    bool clientGone = false;
     for (int i = 0; i < 600; ++i) {
         Sleep(200);
         std::wstring nm;
         DWORD pid = FindTargetProcess(&nm);
-        if (!pid) continue;
+        if (!pid) {
+            // FIX: keep waiting only while the client is still alive. A client
+            // that exits without spawning the game used to leave the launcher
+            // in "Launching..." for the full 120 s.
+            if (clientProcess && WaitForSingleObject(clientProcess, 0) != WAIT_TIMEOUT) {
+                LogLine(L"CnCNet: client exited before the game appeared");
+                clientGone = true;
+                break;
+            }
+            continue;
+        }
         WaitForHookHostModules(pid);
         HANDLE process = OpenProcess(PROCESS_CREATE_THREAD | PROCESS_QUERY_INFORMATION | PROCESS_VM_OPERATION | PROCESS_VM_WRITE | PROCESS_VM_READ, FALSE, pid);
         if (!process) continue;
@@ -1170,9 +1305,12 @@ void DoLaunchCnCNetAsync(HWND hwnd, const std::wstring& clientPath) {
         if (ok) injected = true;
         break;
     }
+    if (clientProcess) CloseHandle(clientProcess);
     if (foundPid) {
         LogLine(L"CnCNet: game " + foundName + L" (PID " + std::to_wstring(foundPid) + L") injection " +
                 (injected ? L"OK" : L"FAILED: " + err));
+    } else if (clientGone) {
+        LogLine(L"CnCNet: client exited before spawning the game - nothing to inject");
     } else {
         LogLine(L"CnCNet: no game process appeared within 120 s");
     }
@@ -1237,9 +1375,9 @@ int RunAttachWait(const std::wstring& explicitName) {
 // ---------------------------------------------------------------------------
 // Mods — data
 // ---------------------------------------------------------------------------
-std::vector<std::wstring> LoadActiveModIds(const std::wstring& exeDir) {
+std::vector<std::wstring> LoadActiveModIds() {
     std::vector<std::wstring> ids;
-    std::ifstream file(exeDir + L"\\scripts\\active_mods.txt");
+    std::ifstream file(ActiveModsPath());
     std::string line; bool first = true;
     while (std::getline(file, line)) {
         if (first) { first = false; if (line.size() >= 3 && (unsigned char)line[0]==0xEF && (unsigned char)line[1]==0xBB && (unsigned char)line[2]==0xBF) line.erase(0,3); }
@@ -1288,46 +1426,59 @@ std::vector<std::wstring> JsonGetStringArray(const std::wstring& json, const wch
 void ScanMods() {
     g_mods.clear();
     g_scroll = 0;
-    std::wstring exeDir = GetExeDirectory();
-    auto activeIds = LoadActiveModIds(exeDir);
-    WIN32_FIND_DATAW fd{};
-    HANDLE find = FindFirstFileW((exeDir + L"\\scripts\\mods\\*").c_str(), &fd);
-    if (find == INVALID_HANDLE_VALUE) { RebuildVisible(); return; }
-    do {
-        if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) continue;
-        if (wcscmp(fd.cFileName, L".") == 0 || wcscmp(fd.cFileName, L"..") == 0) continue;
-        ModEntry entry{};
-        entry.dir = fd.cFileName;
-        entry.id = fd.cFileName;
-        std::wstring manifest = exeDir + L"\\scripts\\mods\\" + entry.dir + L"\\mod.json";
-        if (FileExists(manifest)) {
-            std::ifstream f(manifest);
-            std::stringstream ss; ss << f.rdbuf();
-            int size = MultiByteToWideChar(CP_UTF8, 0, ss.str().c_str(), -1, nullptr, 0);
-            if (size > 0) {
-                std::wstring wide(static_cast<size_t>(size), L'\0');
-                MultiByteToWideChar(CP_UTF8, 0, ss.str().c_str(), -1, &wide[0], size);
-                wide.resize(size - 1);
-                entry.id = JsonGetString(wide, L"id");
-                entry.name = JsonGetString(wide, L"name");
-                entry.version = JsonGetString(wide, L"version");
-                entry.author = JsonGetString(wide, L"author");
-                entry.description = JsonGetString(wide, L"description");
-                entry.conflicts = JsonGetStringArray(wide, L"conflicts");
-                entry.hasManifest = true;
-                if (entry.id.empty()) entry.id = entry.dir;
-                if (entry.name.empty()) entry.name = entry.id;
+    auto activeIds = LoadActiveModIds();
+    for (const auto& root : ModsRoots()) {
+        WIN32_FIND_DATAW fd{};
+        HANDLE find = FindFirstFileW((root + L"\\*").c_str(), &fd);
+        if (find == INVALID_HANDLE_VALUE) continue;
+        do {
+            if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) continue;
+            if (wcscmp(fd.cFileName, L".") == 0 || wcscmp(fd.cFileName, L"..") == 0) continue;
+            // The new layout shadows a legacy folder with the same id: one row per
+            // mod, never two toggles writing the same id into active_mods.txt.
+            bool shadowed = false;
+            for (const auto& seen : g_mods)
+                if (_wcsicmp(seen.id.c_str(), fd.cFileName) == 0) { shadowed = true; break; }
+            if (shadowed) continue;
+            ModEntry entry{};
+            entry.dir = fd.cFileName;
+            entry.id = fd.cFileName;
+            entry.path = root + L"\\" + entry.dir;
+            std::wstring manifest = entry.path + L"\\mod.json";
+            if (FileExists(manifest)) {
+                std::ifstream f(manifest);
+                std::stringstream ss; ss << f.rdbuf();
+                int size = MultiByteToWideChar(CP_UTF8, 0, ss.str().c_str(), -1, nullptr, 0);
+                if (size > 0) {
+                    std::wstring wide(static_cast<size_t>(size), L'\0');
+                    MultiByteToWideChar(CP_UTF8, 0, ss.str().c_str(), -1, &wide[0], size);
+                    wide.resize(size - 1);
+                    // Identity is the folder name: the loader and active_mods.txt
+                    // use it, so two folders can never end up sharing one toggle.
+                    std::wstring jsonId = JsonGetString(wide, L"id");
+                    if (!jsonId.empty() && _wcsicmp(jsonId.c_str(), entry.dir.c_str()) != 0)
+                        LogLine(L"Mods: folder '" + entry.dir + L"' declares id '" + jsonId +
+                                L"' in mod.json; the folder name is used for loading");
+                    entry.name = JsonGetString(wide, L"name");
+                    entry.version = JsonGetString(wide, L"version");
+                    entry.author = JsonGetString(wide, L"author");
+                    entry.description = JsonGetString(wide, L"description");
+                    entry.conflicts = JsonGetStringArray(wide, L"conflicts");
+                    entry.hasManifest = true;
+                    if (entry.id.empty()) entry.id = entry.dir;
+                    if (entry.name.empty()) entry.name = entry.id;
+                }
+            } else if (!FileExists(entry.path + L"\\main.lua")) {
+                continue;
             }
-        } else if (!FileExists(exeDir + L"\\scripts\\mods\\" + entry.dir + L"\\main.lua")) {
-            continue;
-        }
-        if (entry.name.empty()) entry.name = entry.id;
-        if (entry.author.empty()) entry.author = L"unknown";
-        for (const auto& id : activeIds)
-            if (_wcsicmp(entry.id.c_str(), id.c_str()) == 0) { entry.enabled = true; break; }
-        g_mods.push_back(entry);
-    } while (FindNextFileW(find, &fd));
-    FindClose(find);
+            if (entry.name.empty()) entry.name = entry.id;
+            if (entry.author.empty()) entry.author = L"unknown";
+            for (const auto& id : activeIds)
+                if (_wcsicmp(entry.id.c_str(), id.c_str()) == 0) { entry.enabled = true; break; }
+            g_mods.push_back(entry);
+        } while (FindNextFileW(find, &fd));
+        FindClose(find);
+    }
 
     if (!activeIds.empty()) {
         std::vector<ModEntry> ordered; std::vector<bool> used(g_mods.size(), false);
@@ -1337,12 +1488,17 @@ void ScanMods() {
         for (size_t i = 0; i < g_mods.size(); ++i) if (!used[i]) ordered.push_back(std::move(g_mods[i]));
         g_mods = std::move(ordered);
     }
+    // Diagnostics: which roots were scanned, so a stuck install
+    // (e.g. an empty mods/ shadowing a populated scripts/mods/) is visible.
+    std::wstring where;
+    for (const auto& root : ModsRoots())
+        where += (where.empty() ? L"" : L", ") + root;
+    LogLine(L"Mods: " + std::to_wstring(g_mods.size()) + L" found in " + where);
     RebuildVisible();
 }
 
 void SaveMods() {
-    std::wstring exeDir = GetExeDirectory();
-    std::wofstream out(exeDir + L"\\scripts\\active_mods.txt", std::ios::out | std::ios::trunc);
+    std::wofstream out(ActiveModsPath(), std::ios::out | std::ios::trunc);
     if (!out.is_open()) {
         MessageBoxW(g_hwnd, L"\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u0437\u0430\u043F\u0438\u0441\u0430\u0442\u044C active_mods.txt",
                     L"\u041E\u0448\u0438\u0431\u043A\u0430", MB_ICONERROR | MB_OK);
@@ -1359,7 +1515,7 @@ void SaveMods() {
 int EnabledModCount() { int n = 0; for (const auto& m : g_mods) if (m.enabled) ++n; return n; }
 
 bool ModHealthValid(const ModEntry& m) {
-    return FileExists(GetExeDirectory() + L"\\scripts\\mods\\" + m.dir + L"\\main.lua");
+    return FileExists(m.path + L"\\main.lua");
 }
 
 bool MatchesFilter(const ModEntry& m, const std::wstring& q) {
@@ -1451,15 +1607,22 @@ void RecalcLayout() {
         // right) overlapped by ~150px even at default width. Headline now
         // spans the full width on top; the three actions share one
         // responsive row below it, so nothing overlaps at any window size.
-        int heroH = SS(184);
+        // Hero is a compact single row: status text on the left, three
+        // content-sized action buttons on the right (rects measured and set
+        // in PaintDashboard, because only a DC knows the label widths).
+        // The status text is gone: the row under the title holds the three
+        // action buttons directly.
+        int heroH = SS(44);
         g_geo.hero = RECT{ cx, topY, cx + cw, topY + heroH };
-        int gap = SS(8);
-        int statW = (cw - gap * 2) / 3;
+        int gap = SS(12);
+        int statW = SS(220);
         int statY = g_geo.hero.bottom + SS(16);
         int statH = SS(88);
-        g_geo.statMods  = RECT{ cx, statY, cx + statW, statY + statH };
-        g_geo.statActive= RECT{ cx + statW + gap, statY, cx + statW*2 + gap, statY + statH };
-        g_geo.statProbs = RECT{ cx + statW*2 + gap*2, statY, cx + statW*3 + gap*2, statY + statH };
+        // Left-aligned with the action row above, so the whole page keeps one
+        // vertical guide instead of floating blocks.
+        g_geo.statActive = RECT{ cx, statY, cx + statW, statY + statH };
+        g_geo.statMods   = RECT{ cx + statW + gap, statY, cx + statW * 2 + gap, statY + statH };
+        g_geo.statProbs  = RECT{};   // problems are reported below, not as a tile
         int qy = statY + statH + SS(44);
         int qbw = (cw - gap * 3) / 4;
         int qbh = SS(38);
@@ -1468,43 +1631,25 @@ void RecalcLayout() {
         g_geo.quickAction3 = RECT{ cx + qbw*2 + gap*2, qy, cx + qbw*3 + gap*2, qy + qbh };
         g_geo.quickAction4 = RECT{ cx + qbw*3 + gap*3, qy, cx + qbw*4 + gap*3, qy + qbh };
         g_geo.problemsY = qy + qbh + SS(40);
-        // Hero action row (bottom of hero, three equal buttons).
-        int pad2 = SS(24);
-        int btnH2 = SS(40);
-        int btnGap = SS(12);
-        int btnW2 = (cw - pad2 * 2 - btnGap * 2) / 3;
-        int by2 = g_geo.hero.bottom - pad2 - btnH2;
-        g_geo.cncBtn    = RECT{ cx + pad2, by2, cx + pad2 + btnW2, by2 + btnH2 };
-        g_geo.launchBtn = RECT{ cx + pad2 + btnW2 + btnGap, by2, cx + pad2 + btnW2 * 2 + btnGap, by2 + btnH2 };
-        g_geo.injectBtn = RECT{ cx + pad2 + btnW2 * 2 + btnGap * 2, by2, cx + pad2 + btnW2 * 3 + btnGap * 2, by2 + btnH2 };
+        g_geo.cncBtn = g_geo.launchBtn = g_geo.injectBtn = g_geo.reInjectBtn = RECT{};   // set by PaintDashboard
     } else if (g_view == View::Mods) {
-        int topY = pad;
+        // The title and the search field share one line; the list starts under
+        // them. This mirrors the compact manager layout.
         int searchW = SS(280);
-        g_geo.search = RECT{ cx + cw - searchW, topY, cx + cw, topY + SS(34) };
-        int listTop = topY + SS(56);
+        g_geo.search = RECT{ cx + cw - searchW, SS(12), cx + cw, SS(12) + SS(30) };
+        int listTop = SS(70);
         int bottomY = h - pad - SS(52);
-        int inspectorW = SS(kInspectorW);
-        int midGap = SS(12);
-        int listRight = cx + cw - inspectorW - midGap;
-        g_geo.list = RECT{ cx, listTop, listRight, bottomY };
-        g_geo.inspector = RECT{ listRight + midGap, listTop, cx + cw, bottomY };
+        // The compact design has no detail panel: the list always uses the
+        // full content width.
+        g_geo.list = RECT{ cx, listTop, cx + cw, bottomY };
+        g_geo.inspector = RECT{};
         int barTop = h - pad - SS(40);
-        g_geo.applyBtn = RECT{ cx + cw - SS(200), barTop, cx + cw, h - pad };
-        // inspector action buttons (3, at bottom of inspector)
-        int ipad = SS(16);
-        int ibtnH = SS(36);
-        int ibtnGap = SS(8);
-        int ix = g_geo.inspector.left + ipad;
-        int iw = (g_geo.inspector.right - g_geo.inspector.left) - ipad * 2;
-        int iy = g_geo.inspector.bottom - ipad - ibtnH;
-        g_geo.inspectorBtns[0] = RECT{ ix, iy, ix + iw, iy + ibtnH };
-        int iy2 = iy - ibtnH - ibtnGap;
-        g_geo.inspectorBtns[1] = RECT{ ix, iy2, ix + iw, iy2 + ibtnH };
-        int iy3 = iy2 - ibtnH - ibtnGap;
-        g_geo.inspectorBtns[2] = RECT{ ix, iy3, ix + iw, iy3 + ibtnH };
-        for (int k = 3; k < 4; ++k) g_geo.inspectorBtns[k] = RECT{};
+        // Bottom bar: actions on the left, the active counter on the right.
+        int refreshW = SS(140);
+        g_geo.refreshBtn = RECT{ cx, barTop, cx + refreshW, h - pad };
+        g_geo.applyBtn   = RECT{ cx + refreshW + SS(8), barTop, cx + refreshW + SS(8) + SS(170), h - pad };
     } else {
-        int topY = SS(56);   // below the "Settings" title
+        int topY = SS(52);   // right under the "Settings" title
         int labelH = SS(26);
         int sectGap = SS(30);
         int sy = topY;
@@ -1521,12 +1666,55 @@ void RecalcLayout() {
         g_geo.diagBtn1 = RECT{ cx, dy, cx + SS(170), dy + bh };
         g_geo.diagBtn2 = RECT{ cx + SS(182), dy, cx + SS(352), dy + bh };
         g_geo.diagBtn3 = RECT{ cx + SS(364), dy, cx + SS(534), dy + bh };
-        // About card anchored to lower content area
-        int cardY = h - pad - SS(96);
-        g_geo.aboutCard = RECT{ cx, cardY, cx + cw, cardY + SS(84) };
+        // Version info lives quietly at the bottom edge of the window.
+        g_geo.aboutCard = RECT{ g_geo.content.left + SS(24), h - SS(44),
+                                g_geo.content.right - SS(24), h - SS(14) };
+        // Sections sit directly under the title; the version caption stays
+        // pinned to the bottom edge.
     }
 
     ClampScroll();
+}
+
+// Rescan the mods folder (and active_mods.txt) without restarting the launcher.
+// askDirty=true is the explicit user action (button / F5) and may prompt;
+// askDirty=false is the silent refresh on window activation, which never
+// touches a list holding unsaved toggles.
+void RefreshModsList(bool askDirty) {
+    if (g_dirty) {
+        if (!askDirty) return;
+        std::wstring q = g_isRussian
+            ? L"\u041D\u0435\u0441\u043E\u0445\u0440\u0430\u043D\u0451\u043D\u043D\u044B\u0435 \u0438\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u044F \u0431\u0443\u0434\u0443\u0442 \u043F\u043E\u0442\u0435\u0440\u044F\u043D\u044B. \u041E\u0431\u043D\u043E\u0432\u0438\u0442\u044C \u0441\u043F\u0438\u0441\u043E\u043A?"
+            : L"Unsaved changes will be lost. Reload the mod list?";
+        if (MessageBoxW(g_hwnd, q.c_str(), L"Lua Mod Manager", MB_ICONWARNING | MB_YESNO) != IDYES)
+            return;
+    }
+    int keepScroll = g_scroll;
+    int keepSel = g_selected;
+    std::wstring keepSelId;
+    if (keepSel >= 0 && keepSel < static_cast<int>(g_visible.size())) {
+        int gi = g_visible[keepSel];
+        if (gi >= 0 && gi < static_cast<int>(g_mods.size())) keepSelId = g_mods[gi].id;
+    }
+    g_dirty = false;
+    ScanMods();
+    RecalcLayout();
+    g_selected = -1;
+    if (!keepSelId.empty()) {
+        for (size_t i = 0; i < g_visible.size(); ++i) {
+            int gi = g_visible[i];
+            if (gi >= 0 && gi < static_cast<int>(g_mods.size()) &&
+                _wcsicmp(g_mods[gi].id.c_str(), keepSelId.c_str()) == 0) {
+                g_selected = static_cast<int>(i);
+                break;
+            }
+        }
+    }
+    // A refresh never opens the detail card by itself: it stays closed unless
+    // the same mod was already open before the rescan.
+    g_scroll = keepScroll;
+    ClampScroll();
+    InvalidateRect(g_hwnd, nullptr, TRUE);
 }
 
 bool PointIn(const RECT& r, POINT p) { return PtInRect(&r, p) != FALSE; }
@@ -1537,7 +1725,7 @@ int RowIndexAt(POINT pt) {
     if (pt.y < l.top || pt.y > l.bottom || pt.x < l.left || pt.x > l.right) return -1;
     int rowStep = RowStep();
     int rowH = SS(kRowH);
-    int yPos = l.top + SS(4) - g_scroll;
+    int yPos = l.top - g_scroll;
     for (size_t i = 0; i < g_visible.size(); ++i) {
         RECT rc = { l.left, yPos, l.right - SS(kScrollW + 4), yPos + rowH };
         if (pt.y >= rc.top && pt.y <= rc.bottom) return static_cast<int>(i);
@@ -1550,12 +1738,50 @@ int RowCheckAt(POINT pt, int* outIdx) {
     int idx = RowIndexAt(pt);
     if (idx < 0) return 0;
     RECT l = g_geo.list;
-    int rowH = SS(kRowH);
-    int yPos = l.top + SS(4) - g_scroll + idx * RowStep();
-    int sz = SS(18);
-    int cy = yPos + rowH / 2;
-    RECT box{ l.left + SS(16), cy - sz/2, l.left + SS(16) + sz, cy + sz/2 };
+    int yPos = l.top - g_scroll + idx * RowStep();
+    int sz = SS(16);
+    int cy = yPos + SS(kRowH) / 2;
+    RECT box{ l.left + SS(14), cy - sz/2, l.left + SS(14) + sz, cy + sz/2 };
     if (pt.x >= box.left && pt.x <= box.right) { if (outIdx) *outIdx = idx; return 1; }
+    return 0;
+}
+
+// Left edge of a row's text block: checkbox, avatar, then the name.
+int RowTextX(const RECT& row) { return row.left + SS(90); }
+
+// Right-aligned controls on the upper text line: version, ON/OFF pill,
+// folder icon and external-link icon. All are 30px square (the pill is 20px
+// tall) so they stay easy to hit without making the compact row taller.
+void RowActionRects(const RECT& row, RECT& folder, RECT& lua) {
+    int icon = SS(30);
+    int y = row.top + (SS(kRowH) - icon) / 2;
+    int right = row.right - SS(8);
+    lua    = RECT{ right - icon, y, right, y + icon };
+    folder = RECT{ lua.left - SS(6) - icon, y, lua.left - SS(6), y + icon };
+}
+
+RECT RowPillRect(const RECT& row) {
+    int w = SS(38), h = SS(20);
+    RECT folder, lua;
+    RowActionRects(row, folder, lua);
+    int right = folder.left - SS(8);
+    int y = row.top + (SS(kRowH) - h) / 2;
+    return RECT{ right - w, y, right, y + h };
+}
+
+RECT RowVersionRect(const RECT& row) {
+    RECT pill = RowPillRect(row);
+    int y = row.top + (SS(kRowH) - SS(20)) / 2;
+    return RECT{ pill.left - SS(70), y, pill.left - SS(8), y + SS(20) };
+}
+
+int RowStatusAt(POINT pt, int* outIdx) {
+    int idx = RowIndexAt(pt);
+    if (idx < 0) return 0;
+    RECT l = g_geo.list;
+    int yPos = l.top - g_scroll + idx * RowStep();
+    RECT row{ l.left, yPos, l.right - SS(kScrollW + 4), yPos + SS(kRowH) };
+    if (PointIn(RowPillRect(row), pt)) { if (outIdx) *outIdx = idx; return 1; }
     return 0;
 }
 
@@ -1564,13 +1790,12 @@ int RowQuickAt(POINT pt, int* outIdx) {
     if (idx < 0) return 0;
     RECT l = g_geo.list;
     int rowH = SS(kRowH);
-    int yPos = l.top + SS(4) - g_scroll + idx * RowStep();
-    int iconW = SS(26);
-    int cy = yPos + rowH / 2;
-    RECT pencil{ l.right - SS(kScrollW + 4) - SS(10) - iconW, cy - iconW/2, l.right - SS(kScrollW + 4) - SS(10), cy + iconW/2 };
-    RECT folder{ pencil.left - SS(6) - iconW, pencil.top, pencil.left - SS(6), pencil.bottom };
-    if (pt.x >= folder.left && pt.x <= folder.right && pt.y >= folder.top && pt.y <= folder.bottom) { if (outIdx) *outIdx = idx; return 1; }
-    if (pt.x >= pencil.left && pt.x <= pencil.right && pt.y >= pencil.top && pt.y <= pencil.bottom) { if (outIdx) *outIdx = idx; return 2; }
+    int yPos = l.top - g_scroll + idx * RowStep();
+    RECT rc{ l.left, yPos, l.right - SS(kScrollW + 4), yPos + rowH };
+    RECT folder, lua;
+    RowActionRects(rc, folder, lua);
+    if (PointIn(folder, pt)) { if (outIdx) *outIdx = idx; return 1; }
+    if (PointIn(lua, pt)) { if (outIdx) *outIdx = idx; return 2; }
     return 0;
 }
 
@@ -1578,7 +1803,7 @@ std::wstring ModDirFor(int visIdx) {
     if (visIdx < 0 || visIdx >= static_cast<int>(g_visible.size())) return L"";
     int gi = g_visible[visIdx];
     if (gi < 0 || gi >= static_cast<int>(g_mods.size())) return L"";
-    return GetExeDirectory() + L"\\scripts\\mods\\" + g_mods[gi].dir;
+    return g_mods[gi].path;
 }
 const ModEntry* ModFor(int visIdx) {
     if (visIdx < 0 || visIdx >= static_cast<int>(g_visible.size())) return nullptr;
@@ -1597,7 +1822,7 @@ int GlobalIndexFor(int visIdx) {
 
 void EnsureVisible(int visIdx) {
     if (visIdx < 0 || visIdx >= static_cast<int>(g_visible.size())) return;
-    int rowTop = g_geo.list.top + SS(4) + visIdx * RowStep() - g_scroll;
+    int rowTop = g_geo.list.top + visIdx * RowStep() - g_scroll;
     int rowBot = rowTop + SS(kRowH);
     if (rowTop < g_geo.list.top) g_scroll -= (g_geo.list.top - rowTop);
     else if (rowBot > g_geo.list.bottom) g_scroll += (rowBot - g_geo.list.bottom);
@@ -1607,7 +1832,13 @@ void EnsureVisible(int visIdx) {
 void OpenPath(const std::wstring& path, const wchar_t* verb = L"open") {
     ShellExecuteW(g_hwnd, verb, path.c_str(), nullptr, nullptr, SW_SHOW);
 }
-void OpenModsDir() { OpenPath(GetExeDirectory() + L"\\scripts\\mods", L"explore"); }
+void OpenModsDir() {
+    // First run on a fresh install: the folder may not exist yet, and Explorer
+    // refuses to open a missing path, so create it before revealing it.
+    std::wstring dir = ModsDir();
+    CreateDirectoryW(dir.c_str(), nullptr);
+    OpenPath(dir, L"explore");
+}
 void OpenLogs() {
     std::wstring p = GetExeDirectory() + L"\\injector_log.txt";
     if (FileExists(p)) OpenPath(p); else OpenPath(GetExeDirectory(), L"explore");
@@ -1624,11 +1855,16 @@ void ToggleModEnable(int visIdx) {
     g_dirty = true;
     InvalidateRect(g_hwnd, nullptr, TRUE);
 }
-void SelectMod(int visIdx) { g_selected = visIdx; InvalidateRect(g_hwnd, nullptr, TRUE); }
+void SelectMod(int visIdx) {
+    // Clicking the same mod again closes the detail card.
+    g_selected = (visIdx == g_selected) ? -1 : visIdx;
+    RecalcLayout();
+    InvalidateRect(g_hwnd, nullptr, TRUE);
+}
 void SetView(View v) {
     if (g_view == v) return;
     g_view = v;
-    if (v == View::Mods && g_selected < 0 && !g_visible.empty()) g_selected = 0;
+    // No auto-selection: the detail card opens only when a mod is clicked.
     RecalcLayout();
     InvalidateRect(g_hwnd, nullptr, TRUE);
 }
@@ -1695,18 +1931,16 @@ void PaintSidebar(HDC dc) {
     SelectObject(dc, oldPen); DeleteObject(pen);
 
     RECT br = g_geo.brand;
-    int mono = SS(40);
-    RECT logo{ br.left, br.top, br.left + mono, br.top + mono };
-    FillRoundRect(dc, logo, kGreen, SS(9));
-    DrawTextR(dc, L"\u03BB", logo, g_fontH1, RGB(10, 14, 10),
-              DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-    int tx = logo.right + SS(12);
-    DrawTextR(dc, L"LUA ENGINE", RECT{ tx, br.top, br.right, br.top + SS(26) },
+    // Brand mark + wordmark, with the version chip hanging under the name.
+    RECT logo{ br.left, br.top, br.left + SS(40), br.top + SS(40) };
+    DrawBrandLogo(dc, logo);
+    DrawTextR(dc, L"LUA ENGINE",
+              RECT{ logo.right + SS(14), br.top + SS(1), br.right, br.top + SS(27) },
               g_fontTitle, kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-    DrawTextR(dc, Str_Subtitle(), RECT{ tx, br.top + SS(28), br.right, br.top + SS(46) },
-              g_fontCap, kDim, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-    RECT chip{ tx, br.top + SS(48), tx + TextWidth(dc, Str_AppVersion(), g_fontCap) + SS(16), br.top + SS(64) };
-    DrawChip(dc, chip, Str_AppVersion(), kGreen, Tok::Surface);
+    RECT chip{ logo.right + SS(14), br.top + SS(29),
+               logo.right + SS(14) + TextWidth(dc, Str_AppVersion(), g_fontCap) + SS(16),
+               br.top + SS(47) };
+    DrawChip(dc, chip, Str_AppVersion(), kGreen, Tok::SidebarBg);
 
     struct NavIt { RECT rc; View view; const wchar_t* label; };
     NavIt items[3] = { { g_geo.navDashboard, View::Dashboard, Str_NavDashboard() },
@@ -1717,74 +1951,89 @@ void PaintSidebar(HDC dc) {
         bool hovered = (g_hoverNav == it.view);
         if (activeSel) FillRoundRect(dc, it.rc, Tok::Surface2, SS(6));
         else if (hovered) FillRoundRect(dc, it.rc, Tok::Surface, SS(6));
-        RECT icon{ it.rc.left + SS(16), it.rc.top + SS(12), it.rc.left + SS(34), it.rc.top + SS(30) };
-        FillRoundRect(dc, icon, activeSel ? kGreen : kFaint, SS(4));
+        RECT icon{ it.rc.left + SS(16), it.rc.top + SS(11), it.rc.left + SS(34), it.rc.top + SS(29) };
+        FillRoundRect(dc, icon, activeSel ? kGreen : RGB(110, 119, 129), SS(4));
         DrawTextR(dc, it.label, RECT{ it.rc.left + SS(46), it.rc.top, it.rc.right, it.rc.bottom },
-                  g_fontBody, (activeSel || hovered) ? kText : kDim, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+                  g_fontBody, (activeSel || hovered) ? kText : RGB(190, 198, 208),
+                  DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     }
 
-    RECT fs = g_geo.sidebarStatus;
-    GameInfo gi = ComputeGameInfo();
-    FillRoundRect(dc, fs, Tok::Surface, SS(8), Tok::Border, true);
-    int dotCy = (fs.top + fs.bottom) / 2;
-    DrawCircle(dc, fs.left + SS(18), dotCy, SS(5), gi.color);
-    DrawTextR(dc, gi.headline, RECT{ fs.left + SS(32), fs.top + SS(8), fs.right - SS(10), fs.top + SS(26) },
-              g_fontBody, gi.color, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-    DrawTextR(dc, gi.sub, RECT{ fs.left + SS(32), fs.top + SS(28), fs.right - SS(10), fs.bottom - SS(6) },
-              g_fontCap, kDim, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
 }
 
 void PaintDashboard(HDC dc) {
     PaintContentTitle(dc, Str_NavDashboard(), L"");
     GameInfo gi = ComputeGameInfo();
     RECT h = g_geo.hero;
-    FillRoundRect(dc, h, Tok::Surface, Tok::RadiusCard, Tok::Border, true);
 
-    // Headline block spans the full hero width; buttons live in their own
-    // row (rects from RecalcLayout) so text and buttons never overlap.
-    DrawTextR(dc, gi.headline, RECT{ h.left + SS(24), h.top + SS(24), h.right - SS(24), h.top + SS(66) },
-              g_fontH1, gi.color, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-    if (!gi.sub.empty())
-        DrawTextR(dc, gi.sub, RECT{ h.left + SS(24), h.top + SS(70), h.right - SS(24), h.top + SS(96) },
-                  g_fontBody, kDim, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    // Action buttons sit right under the title, side by side, each only as
+    // wide as its own label plus the glyph. Rects are cached for hit-testing.
+    {
+        // 18 (left inset) + 16 (glyph) + 10 (gap) + 10 (right inset) = 54;
+        // add slack so DrawTextR never ellipsizes the label.
+        int bh = SS(40);
+        int gapb = SS(10);
+        int bwCnc = TextWidth(dc, Str_CncBtn(), g_fontBody) + SS(74);
+        int bwLau = TextWidth(dc, Str_LaunchBtn(), g_fontBody) + SS(74);
+        int bwInj = TextWidth(dc, Str_InjectBtn(), g_fontBody) + SS(74);
+        int bwRe  = TextWidth(dc, Str_ReInjectBtn(), g_fontBody) + SS(74);
+        int by = h.top + (h.bottom - h.top - bh) / 2;
+        int x = h.left;
+        g_geo.cncBtn    = RECT{ x, by, x + bwCnc, by + bh };
+        x += bwCnc + gapb;
+        g_geo.launchBtn = RECT{ x, by, x + bwLau, by + bh };
+        x += bwLau + gapb;
+        g_geo.injectBtn = RECT{ x, by, x + bwInj, by + bh };
+        x += bwInj + gapb;
+        g_geo.reInjectBtn = RECT{ x, by, x + bwRe, by + bh };
+    }
 
     DrawActionButton(dc, g_geo.cncBtn, Str_CncBtn(), Glyph::Cnc, Tok::Inject, Tok::InjectHov,
                g_hoverCnc, g_down && g_hoverCnc, (!g_launching && !g_injecting), g_fontBody);
     DrawActionButton(dc, g_geo.launchBtn, Str_LaunchBtn(), Glyph::Play, Tok::Launch, Tok::LaunchHov,
                g_hoverLaunch, g_down && g_hoverLaunch, gi.canLaunch, g_fontBody);
-    DrawActionButton(dc, g_geo.injectBtn, Str_InjectBtn(), Glyph::Inject, Tok::Inject, Tok::InjectHov,
+    DrawActionButton(dc, g_geo.injectBtn, Str_InjectBtn(), Glyph::Inject, Tok::Btn, Tok::BtnHover,
                g_hoverInject, g_down && g_hoverInject, gi.canInject, g_fontBody);
+    DrawActionButton(dc, g_geo.reInjectBtn, Str_ReInjectBtn(), Glyph::Inject, Tok::Btn, Tok::BtnHover,
+               g_hoverReInject, g_down && g_hoverReInject, (!g_injecting && g_gamePid != 0), g_fontBody);
 
     int pad = SS(24);
     int enabled = EnabledModCount();
-    PaintStatTile(dc, g_geo.statMods, std::to_wstring(g_mods.size()), Str_StatsMods(), kDim);
     PaintStatTile(dc, g_geo.statActive, std::to_wstring(enabled), Str_StatsActive(), kGreen);
-    PaintStatTile(dc, g_geo.statProbs, std::to_wstring(TotalProblems()), Str_StatsProblems(), kOrange);
+    PaintStatTile(dc, g_geo.statMods, std::to_wstring(g_mods.size()), Str_StatsMods(), kDim);
 
     // Quick actions
     int qy = g_geo.quickAction1.top;
     DrawTextR(dc, Str_QuickActions(), RECT{ g_geo.content.left + pad, qy - SS(30), g_geo.content.right - pad, qy - SS(6) },
               g_fontH2, kFaint, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    // Two actions, each as wide as its label (rects cached for hit-testing).
+    {
+        int bh = g_geo.quickAction1.bottom - g_geo.quickAction1.top;
+        int qw1 = TextWidth(dc, Str_OpenModsDir(), g_fontBody) + SS(24);
+        int qw2 = TextWidth(dc, Str_OpenLogs(), g_fontBody) + SS(24);
+        RECT r1{ g_geo.content.left + SS(24), g_geo.quickAction1.top,
+                 g_geo.content.left + SS(24) + qw1, g_geo.quickAction1.top + bh };
+        RECT r2{ r1.right + SS(10), r1.top, r1.right + SS(10) + qw2, r1.bottom };
+        g_geo.quickAction1 = r1;
+        g_geo.quickAction2 = r2;
+        g_geo.quickAction3 = RECT{};
+        g_geo.quickAction4 = RECT{};
+    }
     DrawButton(dc, g_geo.quickAction1, Str_OpenModsDir(), Tok::Surface2, Tok::SurfaceHov,
                g_hoverQA1, g_down && g_hoverQA1, true, g_fontBody);
     DrawButton(dc, g_geo.quickAction2, Str_OpenLogs(), Tok::Surface2, Tok::SurfaceHov,
                g_hoverQA2, g_down && g_hoverQA2, true, g_fontBody);
-    DrawButton(dc, g_geo.quickAction3, Str_ReInjectBtn(), Tok::Surface2, Tok::SurfaceHov,
-               g_hoverQA3, g_down && g_hoverQA3, (!g_injecting && g_gamePid != 0), g_fontBody);
-    DrawButton(dc, g_geo.quickAction4, Str_NavSettings(), Tok::Surface2, Tok::SurfaceHov,
-               g_hoverQA4, g_down && g_hoverQA4, true, g_fontBody);
 
-    // Problems
-    int py = g_geo.problemsY;
-    DrawTextR(dc, Str_ProblemsTitle(), RECT{ g_geo.content.left + pad, py, g_geo.content.right - pad, py + SS(26) },
-              g_fontH2, kFaint, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    // Problems are reported only when something is actually wrong; on a
+    // healthy install the section is not drawn at all.
     auto conflicts = DetectConflicts();
     bool anyProblem = !conflicts.empty();
     for (auto& m : g_mods) if (!ModHealthValid(m)) { anyProblem = true; break; }
-
-    int py2 = py + SS(30);
-    RECT pr{ g_geo.content.left + pad, py2, g_geo.content.right - pad, py2 + SS(120) };
     if (anyProblem) {
+        int py = g_geo.problemsY;
+        DrawTextR(dc, Str_ProblemsTitle(), RECT{ g_geo.content.left + pad, py, g_geo.content.right - pad, py + SS(26) },
+                  g_fontH2, kFaint, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        int py2 = py + SS(30);
+        RECT pr{ g_geo.content.left + pad, py2, g_geo.content.right - pad, py2 + SS(120) };
         int lineMax = 2, li = 0, total = static_cast<int>(conflicts.size());
         for (auto& m : g_mods) if (!ModHealthValid(m)) ++total;
         for (auto& c : conflicts) {
@@ -1809,52 +2058,62 @@ void PaintDashboard(HDC dc) {
             DrawTextR(dc, more, RECT{ pr.left, pr.top + li * SS(26), pr.right, pr.top + (li + 1) * SS(26) },
                       g_fontCap, kDim, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
         }
-    } else {
-        DrawTextR(dc, std::wstring(L"\u2713 ") + Str_NoProblems(), pr, g_fontBody, kGreen, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     }
 }
 
-void PaintRow(HDC dc, const RECT& row, const ModEntry& m, bool selected, bool hovered, int problems) {
-    if (selected) FillRoundRect(dc, row, Tok::Surface2, SS(6), Tok::Accent, true);
-    else if (hovered) FillRoundRect(dc, row, kHover, SS(6), Tok::Border, true);
-    else FillRoundRect(dc, row, Tok::Surface, SS(6), Tok::Border, true);
+// Compact square action button used on the right side of a mod row.
+void DrawIconAction(HDC dc, const RECT& r, int kind, bool hovered) {
+    FillRoundRect(dc, r, hovered ? Tok::SurfaceHov : Tok::Surface2, SS(5), Tok::Border, true);
+    int inset = SS(8);
+    RECT ic{ r.left + inset, r.top + inset, r.right - inset, r.bottom - inset };
+    COLORREF icCol = hovered ? kText : RGB(178, 186, 196);
+    if (kind == 1) DrawFolderIcon(dc, ic, icCol);
+    else DrawExternalIcon(dc, ic, icCol);
+}
 
-    int cy = (row.top + row.bottom) / 2;
-    int sz = SS(18);
-    RECT box{ row.left + SS(16), cy - sz/2, row.left + SS(16) + sz, cy + sz/2 };
+// ON / OFF pill. State is carried by the pill as well as the checkbox, so a
+// row reads correctly even when the checkbox is outside the eye's focus.
+void DrawModStatus(HDC dc, const RECT& r, bool on) {
+    COLORREF fg = on ? kGreen : kDim;
+    FillRoundRect(dc, r, on ? Tok::PillOnBg : Tok::PillOffBg,
+                  (r.bottom - r.top) / 2, on ? Tok::Accent : Tok::Border, true);
+    DrawTextR(dc, on ? L"ON" : L"OFF", r, g_fontCap, fg,
+              DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+}
+
+void PaintRow(HDC dc, const RECT& row, const ModEntry& m, int rowIdx, bool selected, bool hovered, int problems) {
+    // Neutral row surfaces: the green checkbox + ON pill carry the state, so
+    // enabled rows stay visually identical to disabled ones.
+    COLORREF fill = selected ? Tok::Surface2 : (hovered ? Tok::CardHover : Tok::Surface);
+    FillRoundRect(dc, row, fill, SS(6), Tok::Border, true);
+
+    int cy = row.top + SS(kRowH) / 2;
+    int sz = SS(16);
+    RECT box{ row.left + SS(14), cy - sz/2, row.left + SS(14) + sz, cy + sz/2 };
     DrawCheckbox(dc, box, m.enabled);
 
     int av = SS(32);
-    RECT avr{ box.right + SS(12), cy - av / 2, box.right + SS(12) + av, cy + av / 2 };
+    RECT avr{ row.left + SS(48), cy - av / 2, row.left + SS(48) + av, cy + av / 2 };
     DrawAvatar(dc, avr, m.name, AvatarColor(m.id));
 
-    int nx = avr.right + SS(12);
-    int iconW = SS(26) * 2 + SS(6);
-    int right = row.right - SS(kScrollW + 4) - SS(10);
-    std::wstring st = m.enabled ? (g_isRussian ? L"ВКЛ" : L"ON")
-                                : (g_isRussian ? L"ВЫКЛ" : L"OFF");
-    int pillW = TextWidth(dc, st, g_fontCap) + SS(18);
-    int verW = TextWidth(dc, L"v" + m.version, g_fontCap);
-    int metaX = right - iconW - SS(10) - pillW - SS(8) - verW;
-    RECT verR{ metaX, cy - SS(10), metaX + verW, cy + SS(10) };
-    DrawTextR(dc, L"v" + m.version, verR, g_fontCap, kDim, DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
-    RECT pill{ verR.right + SS(8), cy - SS(11), verR.right + SS(8) + pillW, cy + SS(11) };
-    DrawChip(dc, pill, st, m.enabled ? kGreen : kDim, Tok::Surface2);
-    int nameEnd = verR.left - SS(10);
+    int nx = RowTextX(row);
+    RECT verR = RowVersionRect(row);
+    int right = verR.left - SS(8);
+    DrawTextR(dc, L"v" + m.version, verR, g_fontCap, kDim,
+              DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
+    DrawModStatus(dc, RowPillRect(row), m.enabled);
 
-    DrawTextR(dc, m.name, RECT{ nx, row.top + SS(8), nameEnd, cy + SS(4) },
-              g_fontBody, kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    RECT folder, lua;
+    RowActionRects(row, folder, lua);
+    DrawIconAction(dc, folder, 1, g_hoverQuickRow == rowIdx && g_hoverQuickBtn == 1);
+    DrawIconAction(dc, lua, 2, g_hoverQuickRow == rowIdx && g_hoverQuickBtn == 2);
+
+    DrawTextR(dc, m.name, RECT{ nx, row.top + SS(8), right, row.top + SS(29) },
+              g_fontRow, kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     std::wstring desc = m.description.empty() ? m.id : m.description;
-    DrawTextR(dc, desc, RECT{ nx, cy + SS(4), nameEnd, row.bottom - SS(6) },
+    DrawTextR(dc, desc, RECT{ nx, row.top + SS(29), right, row.top + SS(48) },
               g_fontCap, kDim, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
 
-    int pxl = row.right - SS(kScrollW + 4) - SS(10) - SS(26);
-    RECT pencil{ pxl, cy - SS(13), pxl + SS(26), cy + SS(13) };
-    RECT folder{ pencil.left - SS(6) - SS(26), pencil.top, pencil.left - SS(6), pencil.bottom };
-    FillRoundRect(dc, folder, Tok::Surface2, Tok::RadiusBtn, Tok::Border, true);
-    DrawFolderIcon(dc, folder, kDim);
-    FillRoundRect(dc, pencil, Tok::Surface2, Tok::RadiusBtn, Tok::Border, true);
-    DrawPencilIcon(dc, pencil, kDim);
     // Conflict badge: amber dot on the avatar corner.
     if (problems > 0) {
         DrawCircle(dc, avr.right - SS(2), avr.top + SS(2), SS(5), kOrange);
@@ -1867,9 +2126,38 @@ void PaintInspector(HDC dc, int modIdx) {
     int pad = SS(16);
     int ix = ins.left + pad;
     int iw = (ins.right - ins.left) - pad * 2;
-    int yy = ins.top + pad;
 
     int av = SS(40);
+    int chipH = SS(22);
+    int probs = ProblemsForIndex(modIdx, DetectConflicts());
+    auto conflicts = DetectConflicts();
+    int conflictRows = 0;
+    for (auto& c : conflicts) if (c.first == modIdx || c.second == modIdx) ++conflictRows;
+
+    // Measure the description first: it wraps, so its height decides where the
+    // status line and the buttons land.
+    int descH = 0;
+    if (!sel.description.empty()) {
+        auto oldFont = SelectObject(dc, g_fontBody);
+        RECT calc{ ix, 0, ix + iw, 0 };
+        DrawTextW(dc, sel.description.c_str(), -1, &calc, DT_LEFT | DT_WORDBREAK | DT_CALCRECT);
+        SelectObject(dc, oldFont);
+        descH = std::max(SS(18), static_cast<int>(calc.bottom - calc.top));
+    }
+
+    // Vertical extent of the content (the card has no buttons of its own any
+    // more; actions live on the rows themselves).
+    int statusH = probs > 0 ? (SS(24) + SS(6)) : 0;
+    int contentBottom = ins.top + pad + av + SS(12) + chipH + SS(12) + SS(14)
+                        + descH + SS(14) + statusH;
+    if (conflictRows > 0) contentBottom += SS(28) + conflictRows * SS(26) + SS(6);
+
+    // The card is as tall as its content instead of the whole list column.
+    int cardBottom = std::min(static_cast<int>(ins.bottom), contentBottom + pad);
+    FillRoundRect(dc, RECT{ ins.left, ins.top, ins.right, cardBottom },
+                  Tok::Surface, Tok::RadiusCard, Tok::Border, true);
+
+    int yy = ins.top + pad;
     RECT avr{ ix, yy, ix + av, yy + av };
     DrawAvatar(dc, avr, sel.name, AvatarColor(sel.id));
     DrawTextR(dc, sel.name, RECT{ avr.right + SS(12), yy, ix + iw, yy + SS(26) },
@@ -1879,10 +2167,8 @@ void PaintInspector(HDC dc, int modIdx) {
               g_fontCap, kDim, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     yy += av + SS(12);
 
-    int probs = ProblemsForIndex(modIdx, DetectConflicts());
     std::wstring stTxt = sel.enabled ? (g_isRussian ? L"ВКЛЮЧЁН" : L"ENABLED")
                                      : (g_isRussian ? L"ВЫКЛЮЧЕН" : L"DISABLED");
-    int chipH = SS(22);
     int stW = TextWidth(dc, stTxt, g_fontCap) + SS(20);
     RECT stR{ ix, yy, ix + stW, yy + chipH };
     DrawChip(dc, stR, stTxt, sel.enabled ? kGreen : kDim, Tok::Surface2);
@@ -1899,18 +2185,18 @@ void PaintInspector(HDC dc, int modIdx) {
     SelectObject(dc, oldPen); DeleteObject(pen);
 
     yy += SS(14);
-    DrawTextR(dc, sel.description, RECT{ ix, yy, ix + iw, yy + SS(80) }, g_fontBody, kDim, DT_LEFT | DT_WORDBREAK);
+    if (descH > 0)
+        DrawTextR(dc, sel.description, RECT{ ix, yy, ix + iw, yy + descH }, g_fontBody, kDim, DT_LEFT | DT_WORDBREAK);
+    yy += descH + SS(14);
 
-    yy += SS(96);
-    DrawTextR(dc, probs > 0 ? (std::wstring(L"\u26A0 ") + Str_Problems(probs)) : (std::wstring(L"\u2713 ") + Str_NoProblems()),
-              RECT{ ix, yy, ix + iw, yy + SS(24) }, g_fontBody, probs > 0 ? kOrange : kGreen,
-              DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    if (probs > 0) {
+        DrawTextR(dc, std::wstring(L"\u26A0 ") + Str_Problems(probs),
+                  RECT{ ix, yy, ix + iw, yy + SS(24) }, g_fontBody, kOrange,
+                  DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        yy += SS(30);
+    }
 
-    yy += SS(30);
-    auto conflicts = DetectConflicts();
-    bool hasConf = false;
-    for (auto& c : conflicts) if (c.first == modIdx || c.second == modIdx) { hasConf = true; break; }
-    if (hasConf) {
+    if (conflictRows > 0) {
         DrawTextR(dc, Str_ConflictsTitle(), RECT{ ix, yy, ix + iw, yy + SS(22) }, g_fontH2, kOrange, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
         yy += SS(28);
         for (auto& c : conflicts) {
@@ -1923,37 +2209,10 @@ void PaintInspector(HDC dc, int modIdx) {
         yy += SS(6);
     }
 
-    // Action buttons (rects computed in RecalcLayout).
-    // FIX: buttons 0/1 used to run the identical OpenModLua action under two
-    // different labels ("Edit" vs "Open main.lua"). Now all three are distinct:
-    // top = open folder, middle = open main.lua, bottom = enable/disable.
-    const wchar_t* labels[3] = { sel.enabled ? Str_Disable() : Str_Enable(), Str_OpenLua(), Str_OpenFolder() };
-    for (int k = 2; k >= 0; --k) {
-        RECT b = g_geo.inspectorBtns[k];
-        bool hovered = (g_hoverBtn == k);
-        FillRoundRect(dc, b, hovered ? kHover : Tok::Surface2, Tok::RadiusBtn, Tok::Border, true);
-        if (k == 0) {
-            // Power glyph + left-aligned label for the toggle action.
-            int isz = SS(15);
-            int icy = (b.top + b.bottom) / 2;
-            RECT gr{ b.left + SS(16), icy - isz / 2, b.left + SS(16) + isz, icy + isz / 2 };
-            DrawGlyph(dc, gr, Glyph::Power, sel.enabled ? kOrange : kGreen);
-            DrawTextR(dc, labels[k], RECT{ gr.right + SS(10), b.top, b.right - SS(10), b.bottom },
-                      g_fontBody, kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-        } else {
-            DrawTextR(dc, labels[k], RECT{ b.left + SS(10), b.top, b.right - SS(10), b.bottom },
-                      g_fontBody, kText, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-        }
-    }
 }
 
 void PaintMods(HDC dc) {
-    int countAll = static_cast<int>(g_mods.size());
-    int countVis = static_cast<int>(g_visible.size());
-    std::wstring rightHint = std::to_wstring(countAll) + L" " + L10N(L"\u043C\u043E\u0434\u043E\u0432", L"mods");
-    if (!g_searchQuery.empty())
-        rightHint += L"  \u00B7  " + std::to_wstring(countVis) + L" " + L10N(L"\u043F\u043E\u043A\u0430\u0437\u0430\u043D\u043E", L"shown");
-    PaintContentTitle(dc, Str_NavMods(), rightHint);
+    PaintContentTitle(dc, Str_NavMods(), L"");
 
     RECT s = g_geo.search;
     FillRoundRect(dc, s, g_hoverSearch ? kHover : Tok::Surface, Tok::RadiusBtn,
@@ -1993,7 +2252,7 @@ void PaintMods(HDC dc) {
     } else {
         int rowStep = RowStep();
         int rowH = SS(kRowH);
-        int yPos = l.top + SS(4) - g_scroll;
+        int yPos = l.top - g_scroll;
         auto conflicts = DetectConflicts();
         for (size_t i = 0; i < g_visible.size(); ++i) {
             const ModEntry& m = g_mods[g_visible[i]];
@@ -2004,9 +2263,9 @@ void PaintMods(HDC dc) {
                 bool isDrag = g_dragState.dragging && g_dragState.dragIndex == idx;
                 if (isDrag) {
                     RECT dr = rc; dr.left += SS(4); dr.top -= SS(2); dr.right += SS(2); dr.bottom += SS(2);
-                    PaintRow(dc, dr, m, true, true, probs);
+                    PaintRow(dc, dr, m, idx, true, true, probs);
                 } else {
-                    PaintRow(dc, rc, m, (g_selected == idx), (g_hoverRow == idx) && !isDrag, probs);
+                    PaintRow(dc, rc, m, idx, (g_selected == idx), (g_hoverRow == idx) && !isDrag, probs);
                 }
             }
             yPos += rowStep;
@@ -2020,37 +2279,26 @@ void PaintMods(HDC dc) {
         int maxScroll = totalH - listH;
         int trackH = listH - SS(8);
         int trackX = l.right - kScrollW;
-        int trackY = l.top + SS(4);
+        int trackY = l.top;
         FillRoundRect(dc, RECT{trackX, trackY, trackX + kScrollW, trackY + trackH}, Tok::ScrollTrack, 3);
         int thumbH = std::max(SS(20), trackH * listH / totalH);
         int thumbY = trackY + (maxScroll ? (g_scroll * (trackH - thumbH) / maxScroll) : 0);
         FillRoundRect(dc, RECT{trackX, thumbY, trackX + kScrollW, thumbY + thumbH}, Tok::ScrollThumb, 3);
     }
 
-    // Inspector
-    FillRoundRect(dc, g_geo.inspector, Tok::Surface, Tok::RadiusCard, Tok::Border, true);
-    int selIdx = GlobalIndexFor(g_selected);
-    if (selIdx >= 0) PaintInspector(dc, selIdx);
-    else {
-        RECT ins = g_geo.inspector;
-        int cx = (ins.left + ins.right) / 2;
-        int cyy = (ins.top + ins.bottom) / 2 - SS(20);
-        DrawCircleOutline(dc, cx, cyy, SS(24), kFaint);
-        DrawTextR(dc, L"i", RECT{ cx - SS(24), cyy - SS(24), cx + SS(24), cyy + SS(24) },
-                  g_fontH2, kFaint, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-        DrawTextR(dc, Str_SelectHint(), RECT{ ins.left + SS(16), cyy + SS(32), ins.right - SS(16), cyy + SS(80) },
-                  g_fontBody, kDim, DT_CENTER | DT_VCENTER);
-    }
-
-    // Bottom bar
+    // Bottom bar: the rule sits a little above the action row so it reads as
+    // the end of the list instead of hugging the buttons.
     RECT bar{ g_geo.content.left + SS(24), l.bottom + SS(10), g_geo.content.right - SS(24), g_geo.applyBtn.bottom };
+    int dividerY = g_geo.refreshBtn.top - SS(10);
     HPEN pen2 = CreatePen(PS_SOLID, 1, Tok::Divider);
     auto oldPen2 = SelectObject(dc, pen2);
-    MoveToEx(dc, bar.left, bar.top, nullptr); LineTo(dc, bar.right, bar.top);
+    MoveToEx(dc, bar.left, dividerY, nullptr); LineTo(dc, bar.right, dividerY);
     SelectObject(dc, oldPen2); DeleteObject(pen2);
     DrawTextR(dc, Str_ActiveCount(EnabledModCount(), static_cast<int>(g_mods.size())),
-              RECT{ bar.left, bar.top, bar.left + SS(300), bar.bottom }, g_fontBody, kDim,
-              DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+              RECT{ bar.right - SS(300), bar.top, bar.right, bar.bottom }, g_fontBody, kDim,
+              DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
+    DrawButton(dc, g_geo.refreshBtn, Str_Refresh(), Tok::Btn, Tok::BtnHover,
+               g_hoverRefresh, g_down && g_hoverRefresh, true, g_fontBody);
     DrawButton(dc, g_geo.applyBtn, Str_ApplyBtn(), Tok::Accent, Tok::AccentHover,
                g_hoverApply, g_down && g_hoverApply, g_dirty, g_fontBody);
 }
@@ -2091,20 +2339,21 @@ void PaintSettings(HDC dc) {
     // Diagnostics
     DrawTextR(dc, St_SettingsDiag(), RECT{ cx, g_geo.diagY, cx + cw, g_geo.diagY + SS(26) }, g_fontH2, kFaint,
               DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-    DrawButton(dc, g_geo.diagBtn1, Str_OpenLogs(), Tok::Surface2, Tok::SurfaceHov,
+    DrawButton(dc, g_geo.diagBtn1, Str_OpenLogs(), Tok::Btn, Tok::BtnHover,
                g_hoverD1, g_down && g_hoverD1, true, g_fontBody);
-    DrawButton(dc, g_geo.diagBtn2, Str_OpenModsDir(), Tok::Surface2, Tok::SurfaceHov,
+    DrawButton(dc, g_geo.diagBtn2, Str_OpenModsDir(), Tok::Btn, Tok::BtnHover,
                g_hoverD2, g_down && g_hoverD2, true, g_fontBody);
-    DrawButton(dc, g_geo.diagBtn3, Str_ReInjectBtn(), Tok::Inject, Tok::InjectHov,
+    DrawButton(dc, g_geo.diagBtn3, Str_ReInjectBtn(), Tok::Btn, Tok::BtnHover,
                g_hoverD3, g_down && g_hoverD3, (!g_injecting && g_gamePid != 0), g_fontBody);
 
-    // About
+    // Version info is plain dim footer text along the bottom edge: no card,
+    // no frame, so it stops reading as yet another empty box.
+    const wchar_t* aboutL2 = L"RA2 Yuri's Revenge v1.001 \u00B7 Lua 5.4";
     RECT a = g_geo.aboutCard;
-    FillRoundRect(dc, a, Tok::Surface, Tok::RadiusCard, Tok::Border, true);
-    DrawTextR(dc, Str_VersionLine(), RECT{ a.left + SS(16), a.top + SS(14), a.right - SS(16), a.top + SS(40) },
-              g_fontBody, kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-    DrawTextR(dc, L"RA2 Yuri's Revenge v1.001 \u00B7 Lua 5.4", RECT{ a.left + SS(16), a.top + SS(42), a.right - SS(16), a.top + SS(66) },
-              g_fontCap, kDim, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    DrawTextR(dc, Str_VersionLine(), RECT{ a.left, a.top, a.right, a.top + SS(15) },
+              g_fontCap, kFaint, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    DrawTextR(dc, aboutL2, RECT{ a.left, a.top + SS(15), a.right, a.bottom },
+              g_fontCap, kFaint, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
 }
 
 void PaintAll(HDC dc) {
@@ -2146,6 +2395,7 @@ void PaintAll(HDC dc) {
 // Interaction
 // ---------------------------------------------------------------------------
 void OnLeftDown(POINT pt) {
+    if (g_view == View::Mods && PointIn(g_geo.refreshBtn, pt)) { RefreshModsList(true); return; }
     if (!(g_view == View::Mods && PointIn(g_geo.search, pt)))
         g_searchFocused = false;
     // Sidebar nav
@@ -2169,31 +2419,23 @@ void OnLeftDown(POINT pt) {
         int actIdx = -1;
         int act = RowQuickAt(pt, &actIdx);
         if (act != 0) { if (act == 1) OpenModFolder(actIdx); else OpenModLua(actIdx); return; }
-        // Row checkbox toggle
+        // Row checkbox / ON-OFF pill toggle
         int chkIdx = -1;
         if (RowCheckAt(pt, &chkIdx)) { ToggleModEnable(chkIdx); return; }
-        // Inspector buttons: 0 = bottom (enable/disable), 1 = middle (main.lua), 2 = top (folder)
-        for (int k = 0; k < 3; ++k) {
-            if (PointIn(g_geo.inspectorBtns[k], pt)) {
-                if (GlobalIndexFor(g_selected) < 0) return;
-                if (k == 0) ToggleModEnable(g_selected);
-                else if (k == 1) OpenModLua(g_selected);
-                else OpenModFolder(g_selected);
-                return;
-            }
-        }
+        if (RowStatusAt(pt, &chkIdx)) { ToggleModEnable(chkIdx); return; }
         // Apply
         if (PointIn(g_geo.applyBtn, pt)) { SaveMods(); return; }
         // Row select / drag
         int idx = RowIndexAt(pt);
         if (idx >= 0) {
-            SelectMod(idx);
+            // The detail card toggles on release, so starting a drag does not
+            // open or close it by accident.
             g_dragState.pendingClick = true;
             g_dragState.pendingIndex = idx;
             g_dragState.downPos = pt;
             g_dragState.dragging = false;
             g_dragState.dragIndex = -1;
-            if (g_searchQuery.empty() || idx == g_selected) {}
+            g_dragState.selectionId.clear();
             SetCapture(g_hwnd);
             return;
         }
@@ -2206,8 +2448,7 @@ void OnLeftDown(POINT pt) {
         if (PointIn(g_geo.cncBtn, pt)) { if (!g_launching && !g_injecting) DoLaunchCnCNet(); return; }
         if (PointIn(g_geo.quickAction1, pt)) { OpenModsDir(); return; }
         if (PointIn(g_geo.quickAction2, pt)) { OpenLogs(); return; }
-        if (PointIn(g_geo.quickAction3, pt)) { if (g_gamePid != 0 && !g_injecting) DoInjectAttach(); return; }
-        if (PointIn(g_geo.quickAction4, pt)) { SetView(View::Settings); return; }
+        if (PointIn(g_geo.reInjectBtn, pt)) { if (g_gamePid != 0 && !g_injecting) DoInjectAttach(); return; }
         return;
     }
 
@@ -2231,7 +2472,8 @@ void OnContextMenu(POINT screenPt) {
     ScreenToClient(g_hwnd, &cpt);
     int idx = RowIndexAt(cpt);
     if (idx < 0) return;
-    SelectMod(idx);
+    // Right-clicking the open mod must not collapse its card.
+    if (idx != g_selected) SelectMod(idx);
     const ModEntry* m = ModFor(idx);
     if (!m) return;
 
@@ -2306,6 +2548,11 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         RefreshGameProcessState();
         return 0;
     }
+    case WM_ACTIVATE:
+        // Coming back from Explorer after adding/removing a mod folder must
+        // not need a launcher restart. Skip while there are unsaved toggles.
+        if (LOWORD(wParam) != WA_INACTIVE) RefreshModsList(false);
+        return 0;
     case WM_SIZE:
         g_clientW = LOWORD(lParam);
         g_clientH = HIWORD(lParam);
@@ -2324,13 +2571,13 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                                PointIn(g_geo.navSettings, pt) || PointIn(g_geo.launchBtn, pt) ||
                                PointIn(g_geo.injectBtn, pt) || PointIn(g_geo.cncBtn, pt) ||
                                (inMods && PointIn(g_geo.applyBtn, pt)) ||
+                               (inMods && PointIn(g_geo.refreshBtn, pt)) ||
                                PointIn(g_geo.quickAction1, pt) || PointIn(g_geo.quickAction2, pt) ||
-                               PointIn(g_geo.quickAction3, pt) || PointIn(g_geo.quickAction4, pt) ||
+                               PointIn(g_geo.reInjectBtn, pt) ||
                                PointIn(g_geo.diagBtn1, pt) || PointIn(g_geo.diagBtn2, pt) ||
                                PointIn(g_geo.diagBtn3, pt) || (inMods && PointIn(g_geo.search, pt)) ||
                                (inSettings && PointIn(g_geo.langSeg, pt)) ||
                                (inMods && RowIndexAt(pt) >= 0);
-            if (inMods) for (int k = 0; k < 3; ++k) if (PointIn(g_geo.inspectorBtns[k], pt)) interactive = true;
             if (interactive) { SetCursor(LoadCursor(nullptr, IDC_HAND)); return TRUE; }
         }
         return DefWindowProcW(hwnd, msg, wParam, lParam);
@@ -2349,9 +2596,10 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         break;
     case WM_KEYDOWN:
         if (wParam == VK_F11) { ToggleFullscreen(); return 0; }
+        if (wParam == VK_F5) { RefreshModsList(true); return 0; }
         if (wParam == VK_ESCAPE) {
             if (g_searchFocused) { g_searchQuery.clear(); g_searchFocused = false; RebuildVisible(); InvalidateRect(hwnd, nullptr, TRUE); return 0; }
-            if (g_view == View::Mods && g_selected >= 0) { g_selected = -1; InvalidateRect(hwnd, nullptr, TRUE); return 0; }
+            if (g_view == View::Mods && g_selected >= 0) { g_selected = -1; RecalcLayout(); InvalidateRect(hwnd, nullptr, TRUE); return 0; }
             if (g_fullscreen) { ToggleFullscreen(); return 0; }
         }
         if (wParam == VK_RETURN && g_view == View::Mods && g_selected >= 0) { OpenModFolder(g_selected); return 0; }
@@ -2407,6 +2655,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                     g_dragState.pendingClick = false;
                     g_dragState.dragIndex = g_dragState.pendingIndex;
                     g_dragState.dragAnchorY = pt.y;
+                    if (const ModEntry* open = ModFor(g_selected)) g_dragState.selectionId = open->id;
                     InvalidateRect(hwnd, nullptr, TRUE);
                 }
             }
@@ -2438,10 +2687,14 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         bool hI = g_view == View::Dashboard && PointIn(g_geo.injectBtn, pt);
         bool hC = g_view == View::Dashboard && PointIn(g_geo.cncBtn, pt);
         bool hA = g_view == View::Mods && PointIn(g_geo.applyBtn, pt);
+        bool hR = g_view == View::Mods && PointIn(g_geo.refreshBtn, pt);
+        if (hR != g_hoverRefresh) { g_hoverRefresh = hR; InvalidateRect(hwnd, nullptr, TRUE); }
         bool hQ1 = g_view == View::Dashboard && PointIn(g_geo.quickAction1, pt);
         bool hQ2 = g_view == View::Dashboard && PointIn(g_geo.quickAction2, pt);
         bool hQ3 = g_view == View::Dashboard && PointIn(g_geo.quickAction3, pt);
-        bool hQ4 = g_view == View::Dashboard && PointIn(g_geo.quickAction4, pt);
+        bool hQ4 = false;
+        bool hRe = g_view == View::Dashboard && PointIn(g_geo.reInjectBtn, pt);
+        if (hRe != g_hoverReInject) { g_hoverReInject = hRe; InvalidateRect(hwnd, nullptr, TRUE); }
         bool hD1 = g_view == View::Settings && PointIn(g_geo.diagBtn1, pt);
         bool hD2 = g_view == View::Settings && PointIn(g_geo.diagBtn2, pt);
         bool hD3 = g_view == View::Settings && PointIn(g_geo.diagBtn3, pt);
@@ -2460,11 +2713,17 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         if (g_view == View::Mods) {
             int row = RowIndexAt(pt);
             if (row != g_hoverRow) { g_hoverRow = row; InvalidateRect(hwnd, nullptr, TRUE); }
-            int btn = -1;
-            for (int k = 0; k < 3; ++k) if (PointIn(g_geo.inspectorBtns[k], pt)) { btn = k; break; }
-            if (btn != g_hoverBtn) { g_hoverBtn = btn; InvalidateRect(hwnd, nullptr, TRUE); }
+            // Highlight the row action button under the cursor.
+            int qi = -1;
+            int qa = RowQuickAt(pt, &qi);
+            if (qa != g_hoverQuickBtn || qi != g_hoverQuickRow) {
+                g_hoverQuickBtn = qa; g_hoverQuickRow = qi;
+                InvalidateRect(hwnd, nullptr, TRUE);
+            }
         } else {
-            if (g_hoverRow != -1) { g_hoverRow = -1; InvalidateRect(hwnd, nullptr, TRUE); }
+            bool stale = g_hoverRow != -1 || g_hoverQuickRow != -1 || g_hoverQuickBtn != 0;
+            g_hoverRow = -1; g_hoverQuickRow = -1; g_hoverQuickBtn = 0;
+            if (stale) InvalidateRect(hwnd, nullptr, TRUE);
         }
         if (!g_trackingMouse) {
             TRACKMOUSEEVENT tme{ sizeof(tme), TME_LEAVE, hwnd, 0 };
@@ -2495,7 +2754,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         g_hoverLaunch = g_hoverInject = g_hoverCnc = g_hoverApply = false;
         g_hoverQA1 = g_hoverQA2 = g_hoverQA3 = g_hoverQA4 = false;
         g_hoverD1 = g_hoverD2 = g_hoverD3 = false;
-        g_hoverSearch = false; g_hoverRow = -1; g_hoverBtn = -1;
+        g_hoverSearch = false; g_hoverRow = -1; g_hoverBtn = -1; g_hoverRefresh = false;
+        g_hoverQuickRow = -1; g_hoverQuickBtn = 0;
         g_down = false;
         HideTooltip(hwnd);
         InvalidateRect(hwnd, nullptr, TRUE);
@@ -2520,18 +2780,30 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         g_down = false;
         bool pending = g_dragState.pendingClick;
         bool dragging = g_dragState.dragging;
+        std::wstring openId = g_dragState.selectionId;
         if (pending && !dragging) {
             int idx = g_dragState.pendingIndex;
             if (idx >= 0 && idx < static_cast<int>(g_visible.size())) {
-                // already selected on down; no-op toggled via checkbox area
+                // A click on a row opens its detail card; the same row closes it.
+                SelectMod(idx);
             }
         }
         if (dragging) {
             g_dirty = true;
-            // FIX: keep the selection on the dragged mod instead of the row
-            // it vacated (drag only starts unfiltered, so visible == global
-            // indices here).
-            g_selected = g_dragState.dragIndex;
+            // Keep the card on the mod that was open before the drag rather
+            // than on whatever index it happened to occupy afterwards.
+            g_selected = -1;
+            if (!openId.empty()) {
+                for (size_t i = 0; i < g_visible.size(); ++i) {
+                    int gi = g_visible[i];
+                    if (gi >= 0 && gi < static_cast<int>(g_mods.size()) &&
+                        _wcsicmp(g_mods[gi].id.c_str(), openId.c_str()) == 0) {
+                        g_selected = static_cast<int>(i);
+                        break;
+                    }
+                }
+            }
+            RecalcLayout();
         }
         g_dragState = DragState{};
         ReleaseCapture();
@@ -2550,7 +2822,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         if (g_view == View::Mods) {
             POINT pt{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
             int idx = RowIndexAt(pt);
-            if (idx >= 0 && RowCheckAt(pt, nullptr) == 0) { SelectMod(idx); OpenModFolder(idx); return 0; }
+            // Double-click opens the folder; it must not toggle the card that the
+            // first click of the pair already toggled.
+            if (idx >= 0 && RowCheckAt(pt, nullptr) == 0 && RowStatusAt(pt, nullptr) == 0) { OpenModFolder(idx); return 0; }
         }
         g_down = true;
         return 0;
@@ -2593,6 +2867,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         return 0;
     case WM_APP_LAUNCH_DONE: {
         g_launching = false;
+        g_launchStartedAt = 0;
         auto* res = reinterpret_cast<LaunchResult*>(lParam);
         bool ok = res ? res->ok : false;
         DWORD pid = res ? res->pid : 0;
@@ -2775,6 +3050,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
     DeleteObject(g_fontH1);
     DeleteObject(g_fontH2);
     DeleteObject(g_fontBody);
+    DeleteObject(g_fontRow);
     DeleteObject(g_fontCap);
     DeleteObject(g_fontStat);
     return static_cast<int>(msg.wParam);

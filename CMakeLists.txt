@@ -59,6 +59,9 @@ configure_file(src/injector_icon.rc.in
     ${CMAKE_CURRENT_BINARY_DIR}/injector_icon.rc @ONLY)
 add_executable(injector WIN32 src/injector_gui.cpp
     ${CMAKE_CURRENT_BINARY_DIR}/injector_icon.rc)
+# Shipped as LMM.exe ("Lua Mod Manager"). The CMake target stays `injector`
+# so existing build/scripts keep working.
+set_target_properties(injector PROPERTIES OUTPUT_NAME "LMM")
 target_compile_definitions(injector PRIVATE UNICODE _UNICODE)
 target_link_libraries(injector PRIVATE user32 gdi32 shell32 dwmapi uxtheme)
 
