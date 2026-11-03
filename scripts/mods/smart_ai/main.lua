@@ -1042,45 +1042,15 @@ end
 SmartAI.prov = {
     counter = 0,
     log = {},   -- unitId -> { frame, command_id, command_type, target_id, target_type, reason }
+    byHouse = {}, -- house -> cumulative { commands_issued, logging_errors }
+    logging_errors = 0,
     frame = 0,  -- set by SmartAI.Update at the start of each tick
 }
 
 -- Log a structured command event at the point of issuance.
 -- All parameters are strings/numbers; nil fields are logged as "-".
 -- Returns true if the event was emitted, false on logging failure.
--- Stored as SmartAI.logCommand to avoid adding a local to the main chunk
--- (Lua limits each chunk/function to 200 local variables).
-SmartAI.logCommand = function(issuer, system, command_type,
-    unit_id, unit_type, house, target_id, target_type, target_owner,
-    reason, extra)
-    local ok = pcall(function()
-        SmartAI.prov.counter = SmartAI.prov.counter + 1
-        local body = string.format(
-            "command_id=%d issuer=%s system=%s command_type=%s "
-            .. "unit_id=%s unit_type=%s house=%s "
-            .. "target_id=%s target_type=%s target_owner=%s "
-            .. "reason=%s%s",
-            SmartAI.prov.counter, tostring(issuer), tostring(system),
-            tostring(command_type),
-            tostring(unit_id or "-"), tostring(unit_type or "-"),
-            tostring(house or "-"),
-            tostring(target_id or "-"), tostring(target_type or "-"),
-            tostring(target_owner or "-"), tostring(reason),
-            extra and (" " .. tostring(extra)) or "")
-        dlog("COMMAND", SmartAI.prov.frame, body)
-    end)
-    if not ok then return false end
-
-    -- Track for outcome correlation (per unit, most recent command wins)
-    if unit_id and type(unit_id) == "number" then
-        SmartAI.prov.log[unit_id] = {
-            frame = SmartAI.prov.frame, command_id = SmartAI.prov.counter,
-            command_type = command_type, target_id = target_id,
-            target_type = target_type, reason = reason,
-        }
-    end
-    return true
-end
+-- The method is defined below dlog so it captures the local logger correctly.
 
 -- Wrap orderMove with provenance logging.
 -- issuer/system/reason/extra are optional context from the call site.
@@ -1097,34 +1067,8 @@ end
 
 -- ---------------------------------------------------------------------------
 -- Target evaluation logging (observability upgrade).
--- Records target accept/reject decisions at key selection points so a log
--- reader can determine why a particular target was (or was not) chosen.
--- Uses event-based logging: only logs when a target is selected or when a
--- candidate passes the basic filter but is rejected for a specific reason.
--- Does not log every candidate every frame to avoid log spam.
+-- The logger method is defined below dlog to capture the local logger.
 -- ---------------------------------------------------------------------------
-SmartAI.logTargetEval = function(evaluator_id, evaluator_type, evaluator_owner,
-    target_id, target_type, target_owner, accepted, reason, score, extra)
-    local ok = pcall(function()
-        local body = string.format(
-            "eval_id=%s eval_type=%s eval_owner=%s "
-            .. "target_id=%s target_type=%s target_owner=%s "
-            .. "accepted=%s reason=%s score=%s%s",
-            tostring(evaluator_id), tostring(evaluator_type),
-            tostring(evaluator_owner or "-"),
-            tostring(target_id or "-"), tostring(target_type or "-"),
-            tostring(target_owner or "-"),
-            tostring(accepted), tostring(reason),
-            tostring(score or "-"),
-            extra and (" " .. tostring(extra)) or "")
-        dlog("TARGET_EVAL", SmartAI.prov.frame, body)
-    end)
-    return ok
-end
-
-
-
-
 
 
 -- Mission read helpers (defensive: GetMission may return a numeric code
@@ -1246,7 +1190,7 @@ local function orderAttack(e, target, issuer, system, reason, extra)
             end
         end
         -- Provenance log (best-effort; never blocks the command)
-        pcall(logCommand, issuer or "UNKNOWN", system or "UNKNOWN",
+        pcall(SmartAI.logCommand, issuer or "UNKNOWN", system or "UNKNOWN",
             "ATTACK", e.id, e.t, e.on and e.on,
             tgtId, tgtType, tgtOwner,
             reason or "unspecified", extra)
@@ -1304,7 +1248,7 @@ local function orderHarvest(e, x, y, issuer, system, reason, extra)
     if type(e.u.HarvestAt) ~= "function" then return false end
     local ok, res = pcall(e.u.HarvestAt, e.u, x, y)
     if ok then
-        pcall(logCommand, issuer or "UNKNOWN", system or "UNKNOWN",
+        pcall(SmartAI.logCommand, issuer or "UNKNOWN", system or "UNKNOWN",
             "HARVEST", e.id, e.t, e.on and e.on,
             nil, nil, nil,
             reason or "unspecified", string.format("dest=%d,%d", x, y))
@@ -1315,7 +1259,7 @@ end
 local function orderDestroy(e, amount, issuer, system, reason, extra)
     local ok, res = pcall(e.u.TakeDamage, e.u, amount)
     if ok then
-        pcall(logCommand, issuer or "UNKNOWN", system or "UNKNOWN",
+        pcall(SmartAI.logCommand, issuer or "UNKNOWN", system or "UNKNOWN",
             "DESTROY", e.id, e.t, e.on and e.on,
             nil, nil, nil,
             reason or "unspecified",
@@ -1381,6 +1325,77 @@ local function dlogChange(tag, frame, key, msg, cmp, force)
     return false
 end
 
+-- Log a structured command event at the point of issuance.
+-- dlog is defined above, so this closure resolves the intended local logger.
+SmartAI.logCommand = function(issuer, system, command_type,
+    unit_id, unit_type, house, target_id, target_type, target_owner,
+    reason, extra)
+    local houseKey = tostring(house or "-")
+    local ok = pcall(function()
+        SmartAI.prov.counter = SmartAI.prov.counter + 1
+        local body = string.format(
+            "command_id=%d issuer=%s system=%s command_type=%s "
+            .. "unit_id=%s unit_type=%s house=%s "
+            .. "target_id=%s target_type=%s target_owner=%s "
+            .. "reason=%s%s",
+            SmartAI.prov.counter, tostring(issuer), tostring(system),
+            tostring(command_type),
+            tostring(unit_id or "-"), tostring(unit_type or "-"),
+            houseKey,
+            tostring(target_id or "-"), tostring(target_type or "-"),
+            tostring(target_owner or "-"), tostring(reason),
+            extra and (" " .. tostring(extra)) or "")
+        dlog("COMMAND", SmartAI.prov.frame, body)
+    end)
+    if not ok then
+        SmartAI.prov.logging_errors = (SmartAI.prov.logging_errors or 0) + 1
+        local stats = SmartAI.prov.byHouse[houseKey] or
+            { commands_issued = 0, logging_errors = 0 }
+        stats.logging_errors = stats.logging_errors + 1
+        SmartAI.prov.byHouse[houseKey] = stats
+        return false
+    end
+
+    local stats = SmartAI.prov.byHouse[houseKey] or
+        { commands_issued = 0, logging_errors = 0 }
+    stats.commands_issued = stats.commands_issued + 1
+    SmartAI.prov.byHouse[houseKey] = stats
+
+    -- Track for outcome correlation (per unit, most recent command wins).
+    if unit_id and type(unit_id) == "number" then
+        SmartAI.prov.log[unit_id] = {
+            frame = SmartAI.prov.frame, command_id = SmartAI.prov.counter,
+            command_type = command_type, target_id = target_id,
+            target_type = target_type, reason = reason,
+        }
+    end
+    return true
+end
+
+-- Target evaluation logging. dlog is lexically visible here.
+SmartAI.logTargetEval = function(evaluator_id, evaluator_type, evaluator_owner,
+    target_id, target_type, target_owner, accepted, reason, score, extra)
+    local ok = pcall(function()
+        local body = string.format(
+            "eval_id=%s eval_type=%s eval_owner=%s "
+            .. "target_id=%s target_type=%s target_owner=%s "
+            .. "accepted=%s reason=%s score=%s%s",
+            tostring(evaluator_id), tostring(evaluator_type),
+            tostring(evaluator_owner or "-"),
+            tostring(target_id or "-"), tostring(target_type or "-"),
+            tostring(target_owner or "-"),
+            tostring(accepted), tostring(reason),
+            tostring(score or "-"),
+            extra and (" " .. tostring(extra)) or "")
+        dlog("TARGET_EVAL", SmartAI.prov.frame, body)
+    end)
+    if not ok then
+        SmartAI.prov.logging_errors = (SmartAI.prov.logging_errors or 0) + 1
+    end
+    return ok
+end
+
+
 -- ---------------------------------------------------------------------------
 -- Audit heartbeat (observability): per-house subsystem coverage, change-gated
 -- via dlogChange so a steady tick does not spam LuaAPI.log. Called from
@@ -1400,6 +1415,23 @@ SmartAI.logAuditHeartbeat = function(house, commander_status, officer_status,
         tostring(commands_issued), tostring(rejected_decisions),
         tostring(logging_errors))
     return dlogChange("AUDIT_HEARTBEAT", SmartAI.prov.frame, h, body)
+end
+
+-- Keep SmartAI.Update's local-variable count unchanged.
+SmartAI.logHouseAuditHeartbeat = function(aiHouse)
+    local house = tostring(aiHouse and aiHouse:GetName() or "-")
+    local stats = SmartAI.prov.byHouse[house] or {}
+    return SmartAI.logAuditHeartbeat(
+        house, "complete", "complete", "event_logged", "instrumented",
+        stats.commands_issued or 0, "not_instrumented",
+        SmartAI.prov.logging_errors or 0)
+end
+
+SmartAI.resetProvenance = function()
+    SmartAI.prov.counter = 0
+    SmartAI.prov.log = {}
+    SmartAI.prov.byHouse = {}
+    SmartAI.prov.logging_errors = 0
 end
 
 local function liveId(u)
@@ -1759,7 +1791,12 @@ function SmartAI.Update(frame)
     -- Command Authority). Resets both the legacy scan gate and the
     -- capture-guard state so a new match starts clean.
     if frame < lastScanFrame then lastScanFrame = 0 end
-    if frame < guardLastFrame then guardReset(); officerReset(); diagLast = {} end
+    if frame < guardLastFrame then
+        guardReset()
+        officerReset()
+        diagLast = {}
+        SmartAI.resetProvenance()
+    end
     guardLastFrame = frame
 
     if frame - lastScanFrame < tickScanEvery() then return end
@@ -2010,19 +2047,11 @@ function SmartAI.Update(frame)
                 Engine.PrintMessage(alert)
                 print("[LuaAPI] " .. alert)
             end
-            -- AUDIT HEARTBEAT: report this house's execution status
-            SmartAI.logAuditHeartbeat(
-                tostring(aiHouse and aiHouse:GetName() or "-"),
-                "complete", -- commander_status: this tick's commander decisions were processed
-                "complete", -- officer_status: this tick's officer decisions were processed
-                "complete", -- target_evaluation_status: target eval ran via TARGET_EVAL events
-                "complete", -- command_issuance_status: all command wrappers logged via SMARTAI_COMMAND
-                0,          -- commands_issued: counted per house below
-                0,          -- rejected_decisions: counted per house below
-                0           -- logging_errors: counted per house below
-            )
             ::next_surrender::
         end
+        -- AUDIT HEARTBEAT runs for every AI house, including surrendered
+        -- houses and the deferred-surrender path above.
+        SmartAI.logHouseAuditHeartbeat(aiHouse)
     end
 
     -- BUILDLAW enforcement, FINAL rule (v3): sell IFF all hold —
