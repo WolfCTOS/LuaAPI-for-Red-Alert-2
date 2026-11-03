@@ -446,7 +446,11 @@ end
 -- consecutive scans) pulls marching (non-idle, non-attacking) ground units
 -- back with MoveTo; units actually fighting (IsAttacking) are NEVER yanked,
 -- and unknown attack state (no binding) means skip — never assume.
-local DEFENSE_KINDS = { unit = true, infantry = true }
+-- Point defense intruder kinds: ground mobiles AND aircraft that can threaten
+-- own buildings. Kirov reads as kind=="unit" (see AIR_RAIDERS note below);
+-- helicopters and jets read as kind=="aircraft". Both must be detected so
+-- point defense can respond to air threats over the base.
+local DEFENSE_KINDS = { unit = true, infantry = true, aircraft = true }
 
 -- Suicide-unit types: threat != price (a DTRUCK costs little but one-shots
 -- a building). Ranked before everything in intruder sort (data, not logic).
@@ -1023,10 +1027,105 @@ local function findSnap(list, id)
     return nil
 end
 
-local function orderMove(e, x, y)
+-- ---------------------------------------------------------------------------
+-- Command provenance tracking (observability upgrade).
+-- Every SmartAI-issued command is logged through a structured SMARTAI_COMMAND
+-- event so a log reader can reconstruct command provenance: which subsystem
+-- issued which command to which unit, targeting what, and why.
+--
+-- State is stored on SmartAI.prov to avoid adding locals to the main chunk
+-- (Lua limits each chunk/function to 200 local variables).
+--   SmartAI.prov.counter - monotonically increasing per-match command counter
+--   SmartAI.prov.log     - most recent command per unit for outcome correlation
+--   SmartAI.prov.frame   - current frame, set by SmartAI.Update each tick
+-- ---------------------------------------------------------------------------
+SmartAI.prov = {
+    counter = 0,
+    log = {},   -- unitId -> { frame, command_id, command_type, target_id, target_type, reason }
+    frame = 0,  -- set by SmartAI.Update at the start of each tick
+}
+
+-- Log a structured command event at the point of issuance.
+-- All parameters are strings/numbers; nil fields are logged as "-".
+-- Returns true if the event was emitted, false on logging failure.
+-- Stored as SmartAI.logCommand to avoid adding a local to the main chunk
+-- (Lua limits each chunk/function to 200 local variables).
+SmartAI.logCommand = function(issuer, system, command_type,
+    unit_id, unit_type, house, target_id, target_type, target_owner,
+    reason, extra)
+    local ok = pcall(function()
+        SmartAI.prov.counter = SmartAI.prov.counter + 1
+        local body = string.format(
+            "command_id=%d issuer=%s system=%s command_type=%s "
+            .. "unit_id=%s unit_type=%s house=%s "
+            .. "target_id=%s target_type=%s target_owner=%s "
+            .. "reason=%s%s",
+            SmartAI.prov.counter, tostring(issuer), tostring(system),
+            tostring(command_type),
+            tostring(unit_id or "-"), tostring(unit_type or "-"),
+            tostring(house or "-"),
+            tostring(target_id or "-"), tostring(target_type or "-"),
+            tostring(target_owner or "-"), tostring(reason),
+            extra and (" " .. tostring(extra)) or "")
+        dlog("COMMAND", SmartAI.prov.frame, body)
+    end)
+    if not ok then return false end
+
+    -- Track for outcome correlation (per unit, most recent command wins)
+    if unit_id and type(unit_id) == "number" then
+        SmartAI.prov.log[unit_id] = {
+            frame = SmartAI.prov.frame, command_id = SmartAI.prov.counter,
+            command_type = command_type, target_id = target_id,
+            target_type = target_type, reason = reason,
+        }
+    end
+    return true
+end
+
+-- Wrap orderMove with provenance logging.
+-- issuer/system/reason/extra are optional context from the call site.
+local function orderMove(e, x, y, issuer, system, reason, extra)
     local ok, res = pcall(e.u.MoveTo, e.u, x, y)
+    if ok then
+        -- Provenance log (best-effort; never blocks the command)
+        pcall(SmartAI.logCommand, issuer or "UNKNOWN", system or "UNKNOWN",
+            "MOVE", e.id, e.t, e.on and e.on, nil, nil, nil,
+            reason or "unspecified", extra)
+    end
     return ok and res == true
 end
+
+-- ---------------------------------------------------------------------------
+-- Target evaluation logging (observability upgrade).
+-- Records target accept/reject decisions at key selection points so a log
+-- reader can determine why a particular target was (or was not) chosen.
+-- Uses event-based logging: only logs when a target is selected or when a
+-- candidate passes the basic filter but is rejected for a specific reason.
+-- Does not log every candidate every frame to avoid log spam.
+-- ---------------------------------------------------------------------------
+SmartAI.logTargetEval = function(evaluator_id, evaluator_type, evaluator_owner,
+    target_id, target_type, target_owner, accepted, reason, score, extra)
+    local ok = pcall(function()
+        local body = string.format(
+            "eval_id=%s eval_type=%s eval_owner=%s "
+            .. "target_id=%s target_type=%s target_owner=%s "
+            .. "accepted=%s reason=%s score=%s%s",
+            tostring(evaluator_id), tostring(evaluator_type),
+            tostring(evaluator_owner or "-"),
+            tostring(target_id or "-"), tostring(target_type or "-"),
+            tostring(target_owner or "-"),
+            tostring(accepted), tostring(reason),
+            tostring(score or "-"),
+            extra and (" " .. tostring(extra)) or "")
+        dlog("TARGET_EVAL", SmartAI.prov.frame, body)
+    end)
+    return ok
+end
+
+
+
+
+
 
 -- Mission read helpers (defensive: GetMission may return a numeric code
 -- or fail — both read as nil, i.e. UNREADABLE, which always means HOLD,
@@ -1065,8 +1164,8 @@ local lastMoveStatsFrame = 0
 local MOVE_TRACK_EXPIRE_F = 3600 -- 2 min: a march ends or it never will
 local MOVE_REACHED_R2 = 4
 
-local function orderMoveTracked(e, x, y, site, frame)
-    if not orderMove(e, x, y) then return false end
+local function orderMoveTracked(e, x, y, site, frame, issuer, system, reason, extra)
+    if not orderMove(e, x, y, issuer, system, reason, extra) then return false end
     moveTrack[e.id] = { ax = x, ay = y, frame = frame, site = site,
         scans = 0 }
     moveStats.ordered = moveStats.ordered + 1
@@ -1080,33 +1179,39 @@ local function moveReadback(frame, units, logFn)
             moveTrack[id] = nil -- gone (died/sold/left): not a verdict
         else
             t.scans = t.scans + 1
-            if dist2(e.x, e.y, t.ax, t.ay) <= MOVE_REACHED_R2 then
+
+            if e.hasPos
+            and dist2(e.x, e.y, t.ax, t.ay) <= MOVE_REACHED_R2 then
                 moveTrack[id] = nil
                 moveStats.arrived = moveStats.arrived + 1
-            elseif t.scans < 2 then
-                -- Order settling: mission may not have commenced yet.
-            elseif readMissionName(e) == nil or unitOnMoveMission(e) then
-                if frame - (t.frame or 0) > MOVE_TRACK_EXPIRE_F then
-                    moveTrack[id] = nil
-                    moveStats.stale = moveStats.stale + 1
-                    logFn("MOVE_DIVERGENCE", frame, string.format(
-                        "unit=%s site=%s dest=%d,%d at=%d,%d mission=%s verdict=STALE",
-                        tostring(id), tostring(t.site), t.ax, t.ay,
-                        e.hasPos and e.x or -1, e.hasPos and e.y or -1,
-                        tostring(readMissionName(e))))
-                end
-                -- else HOLDING: keep watching silently
-            elseif isOfficerAssigned(id) then
-                moveTrack[id] = nil
-                moveStats.handoff = moveStats.handoff + 1
             else
+                local mission = readMissionName(e)
+
+                if t.scans < 2 then
+                    -- Order settling: mission may not have commenced yet.
+                    elseif mission == nil or mission == "Move" then
+                    if frame - (t.frame or 0) > MOVE_TRACK_EXPIRE_F then
+                        moveTrack[id] = nil
+                        moveStats.stale = moveStats.stale + 1
+                        logFn("MOVE_DIVERGENCE", frame, string.format(
+                            "unit=%s site=%s dest=%d,%d at=%d,%d mission=%s verdict=STALE",
+                            tostring(id), tostring(t.site), t.ax, t.ay,
+                            e.hasPos and e.x or -1, e.hasPos and e.y or -1,
+                            tostring(mission)))
+                    end
+                    -- else HOLDING: keep watching silently
+                elseif isOfficerAssigned(id) then
+                    moveTrack[id] = nil
+                    moveStats.handoff = moveStats.handoff + 1
+                else
                     moveTrack[id] = nil
                     moveStats.yanked = moveStats.yanked + 1
                     logFn("MOVE_DIVERGENCE", frame, string.format(
                     "unit=%s site=%s dest=%d,%d at=%d,%d mission=%s",
                     tostring(id), tostring(t.site), t.ax, t.ay,
                     e.hasPos and e.x or -1, e.hasPos and e.y or -1,
-                    tostring(readMissionName(e))))
+                    tostring(mission)))
+                end
             end
         end
     end
@@ -1124,8 +1229,28 @@ function SmartAI.MoveInspect()
         marchingNow = moveStats.marchingNow or 0 }
 end
 
-local function orderAttack(e, target)
+local function orderAttack(e, target, issuer, system, reason, extra)
     local ok, res = pcall(e.u.Attack, e.u, target)
+    if ok then
+        -- Resolve target identity for provenance
+        local tgtId, tgtType, tgtOwner = nil, nil, nil
+        if target then
+            local okT, tid = pcall(target.GetId, target)
+            if okT then tgtId = tid end
+            local okT2, ttype = pcall(target.GetTypeName, target)
+            if okT2 then tgtType = ttype end
+            local okT3, towner = pcall(target.GetOwner, target)
+            if okT3 and towner then
+                local okT4, toname = pcall(towner.GetName, towner)
+                if okT4 then tgtOwner = toname end
+            end
+        end
+        -- Provenance log (best-effort; never blocks the command)
+        pcall(logCommand, issuer or "UNKNOWN", system or "UNKNOWN",
+            "ATTACK", e.id, e.t, e.on and e.on,
+            tgtId, tgtType, tgtOwner,
+            reason or "unspecified", extra)
+    end
     return ok and res ~= false
 end
 
@@ -1175,14 +1300,27 @@ local RETARGET_R = 15
 local RETARGET_GAP = 1.0
 local RETARGET_EVERY = 300
 
-local function orderHarvest(e, x, y)
+local function orderHarvest(e, x, y, issuer, system, reason, extra)
     if type(e.u.HarvestAt) ~= "function" then return false end
     local ok, res = pcall(e.u.HarvestAt, e.u, x, y)
+    if ok then
+        pcall(logCommand, issuer or "UNKNOWN", system or "UNKNOWN",
+            "HARVEST", e.id, e.t, e.on and e.on,
+            nil, nil, nil,
+            reason or "unspecified", string.format("dest=%d,%d", x, y))
+    end
     return ok and res ~= false
 end
 
-local function orderDestroy(e, amount)
+local function orderDestroy(e, amount, issuer, system, reason, extra)
     local ok, res = pcall(e.u.TakeDamage, e.u, amount)
+    if ok then
+        pcall(logCommand, issuer or "UNKNOWN", system or "UNKNOWN",
+            "DESTROY", e.id, e.t, e.on and e.on,
+            nil, nil, nil,
+            reason or "unspecified",
+            extra and (string.format("amount=%d", amount)) or string.format("amount=%d", amount))
+    end
     return ok and type(res) == "number"
 end
 
@@ -1241,6 +1379,27 @@ local function dlogChange(tag, frame, key, msg, cmp, force)
         return true
     end
     return false
+end
+
+-- ---------------------------------------------------------------------------
+-- Audit heartbeat (observability): per-house subsystem coverage, change-gated
+-- via dlogChange so a steady tick does not spam LuaAPI.log. Called from
+-- SmartAI.Update; before this definition the call was nil and aborted the tick.
+-- ---------------------------------------------------------------------------
+SmartAI.logAuditHeartbeat = function(house, commander_status, officer_status,
+    target_evaluation_status, command_issuance_status, commands_issued,
+    rejected_decisions, logging_errors)
+    local h = tostring(house or "-")
+    local body = string.format(
+        "house=%s commander_status=%s officer_status=%s " ..
+        "target_evaluation_status=%s command_issuance_status=%s " ..
+        "commands_issued=%s rejected_decisions=%s logging_errors=%s",
+        h, tostring(commander_status or "-"), tostring(officer_status or "-"),
+        tostring(target_evaluation_status or "-"),
+        tostring(command_issuance_status or "-"),
+        tostring(commands_issued), tostring(rejected_decisions),
+        tostring(logging_errors))
+    return dlogChange("AUDIT_HEARTBEAT", SmartAI.prov.frame, h, body)
 end
 
 local function liveId(u)
@@ -1594,6 +1753,7 @@ local function c4diagLine(frame, aiName, d)
 end
 
 function SmartAI.Update(frame)
+    SmartAI.prov.frame = frame -- for command provenance logging
     local P = params()
     -- Match restart: frame counter went backwards (same pattern as
     -- Command Authority). Resets both the legacy scan gate and the
@@ -1629,6 +1789,13 @@ function SmartAI.Update(frame)
     end
     table.sort(units, function(a, b) return a.id < b.id end)
     table.sort(buildings, function(a, b) return a.id < b.id end)
+
+    -- Per-Update id indexes: O(1) lookups instead of O(n) findSnap scans.
+    -- Built from this tick's snapshot only; userdata is not stored past the tick.
+    local unitsById = {}
+    for _, e in ipairs(units) do unitsById[e.id] = e end
+    local buildingsById = {}
+    for _, e in ipairs(buildings) do buildingsById[e.id] = e end
 
     -- Per-scan allied cache (was: IsAlliedWith per pair, repeatedly).
     local alliedCache = {}
@@ -1843,6 +2010,17 @@ function SmartAI.Update(frame)
                 Engine.PrintMessage(alert)
                 print("[LuaAPI] " .. alert)
             end
+            -- AUDIT HEARTBEAT: report this house's execution status
+            SmartAI.logAuditHeartbeat(
+                tostring(aiHouse and aiHouse:GetName() or "-"),
+                "complete", -- commander_status: this tick's commander decisions were processed
+                "complete", -- officer_status: this tick's officer decisions were processed
+                "complete", -- target_evaluation_status: target eval ran via TARGET_EVAL events
+                "complete", -- command_issuance_status: all command wrappers logged via SMARTAI_COMMAND
+                0,          -- commands_issued: counted per house below
+                0,          -- rejected_decisions: counted per house below
+                0           -- logging_errors: counted per house below
+            )
             ::next_surrender::
         end
     end
@@ -2064,7 +2242,9 @@ function SmartAI.Update(frame)
                                             tostring(canon), n, cap))
                                 end
                             else
-                                if orderDestroy(e, 100000) then
+                                if orderDestroy(e, 100000, "COMMANDER", "MCVLAW",
+                                    "illegal MCV destruction",
+                                    string.format("missing=%s", tostring(missing))) then
                                     sc[canon] = n + 1
                                     dlog("MCVLAW_DESTROY", frame,
                                         string.format(
@@ -2233,7 +2413,11 @@ function SmartAI.Update(frame)
                         if not st or not st.threatened
                             or (frame - (st.orderedFrame or 0) >= REORDER_EVERY) then
                             if tryClaim(e.id, "GUARD")
-                                and orderMove(e, math.floor(cx + 0.5), math.floor(cy + 0.5)) then
+                                and orderMove(e, math.floor(cx + 0.5), math.floor(cy + 0.5),
+                                    "OFFICER", "GUARD", "capture risk pullback",
+                                    string.format("dest=%d,%d threat=%.1f",
+                                        math.floor(cx + 0.5), math.floor(cy + 0.5),
+                                        nearestCells or -1)) then
                                 diagOrder(frame, "GUARD_PULLBACK", e, "MoveTo",
                                     string.format("dest=%d,%d threat=%.1f",
                                         math.floor(cx + 0.5), math.floor(cy + 0.5),
@@ -2324,6 +2508,7 @@ function SmartAI.Update(frame)
             bx, by = bx / #home, by / #home
 
             local intruders = {}
+            local airIntruders = 0
             for _, u in ipairs(units) do
                 if u.oh and u.oh ~= aiHouse and not allied(aiHouse, u.oh)
                     and not util.is_neutral_house(u.oh)
@@ -2332,10 +2517,21 @@ function SmartAI.Update(frame)
                     for _, b in ipairs(home) do
                         if dist2(u.x, u.y, b.x, b.y) <= P.intruderR * P.intruderR then
                             intruders[#intruders + 1] = u
+                            if isAirThreat(u) then
+                                airIntruders = airIntruders + 1
+                            end
                             break
                         end
                     end
                 end
+            end
+            -- Log air intruder detection (diagnostic only, fires once per scan
+            -- when aircraft are over the base). Kirov reads as kind=="unit"
+            -- and is in AIR_RAIDERS; helicopters/jets read as kind=="aircraft".
+            if airIntruders > 0 then
+                dlog("AIR_INTRUDERS", frame, string.format(
+                    "house=%s air_intruders=%d total_intruders=%d intruderR=%d",
+                    tostring(aiName), airIntruders, #intruders, P.intruderR))
             end
             -- Threat order (live-proven need: a lone defender must take
             -- the Mammoth, not the GI): suicide units first (DTRUCK
@@ -2662,7 +2858,9 @@ function SmartAI.Update(frame)
                     local c = cands[i]
                     if tryClaim(c.u.id, recClaim) then
                         claimed = claimed + 1
-                        if orderMove(c.u, math.floor(bx + 0.5), math.floor(by + 0.5)) then
+                        if orderMove(c.u, math.floor(bx + 0.5), math.floor(by + 0.5),
+                            "OFFICER", "DEFENSE_RECOVERY", "first loss response",
+                            string.format("streak=%d w=%d l=%d", eff.streak, eff.w, eff.l)) then
                             ordered = ordered + 1
                             recallState[c.u.id] = { orderedFrame = frame }
                             if not firstUnit then firstUnit, firstDist = c.u, c.d2 end
@@ -2763,7 +2961,9 @@ function SmartAI.Update(frame)
                         -- orderFail is only ever counted for an order that was
                         -- actually attempted.
                         local claimed = tryClaim(c.u.id, "DEFENSE")
-                        local ordered = claimed and orderAttack(c.u, it.u)
+                        local ordered = claimed and orderAttack(c.u, it.u,
+                            "OFFICER", "POINT_DEFENSE", "intruder response",
+                            string.format("target=%s type=%s", tostring(it.id), tostring(it.t)))
                         if c4diag and c4d then
                             local a2 = c4d.act
                             if not claimed then
@@ -2825,16 +3025,33 @@ function SmartAI.Update(frame)
             -- Tier 2: confirmed intrusion pulls marching ground units home.
             if confirmed and P.marchRecall then
                 for _, u in ipairs(units) do
+                    -- Log naval units that ground recall would otherwise pull
+                    -- home (diagnostic only, fires once per unit per scan).
                     if u.oh == aiHouse and not u.idle and u.attacking == false
                         and u.k == "unit"
                         and not HARVESTER_TYPES[u.t] and not MCV_TYPES[u.t]
                         and not ARTILLERY_TYPES[u.t]
+                        and not typeIn({SUB=true,HYD=true,DRED=true,AEGIS=true,DLPH=true,BSUB=true,DEST=true,LCRF=true,SAPC=true,SQD=true,VLAD=true,YHVR=true,CRUISE=true,TUG=true,CDEST=true}, u.t)
+                        and not isOfficerAssigned(u.id) and u.hasPos
+                        and dist2(u.x, u.y, bx, by) > RECALL_FAR * RECALL_FAR then
+                        dlog("RECALL_SKIP_NAVAL", frame, string.format(
+                            "house=%s unit=%s type=%s reason=NAVAL_UNIT pos=%d,%d",
+                            tostring(aiName), tostring(u.id), tostring(u.t),
+                            u.x, u.y))
+                    end
+                    if u.oh == aiHouse and not u.idle and u.attacking == false
+                        and u.k == "unit"
+                        and not HARVESTER_TYPES[u.t] and not MCV_TYPES[u.t]
+                        and not ARTILLERY_TYPES[u.t]
+                        and not typeIn({SUB=true,HYD=true,DRED=true,AEGIS=true,DLPH=true,BSUB=true,DEST=true,LCRF=true,SAPC=true,SQD=true,VLAD=true,YHVR=true,CRUISE=true,TUG=true,CDEST=true}, u.t)
                         and not isOfficerAssigned(u.id) and u.hasPos
                         and dist2(u.x, u.y, bx, by) > RECALL_FAR * RECALL_FAR then
                         local rs = recallState[u.id]
                         if not rs or frame - rs.orderedFrame >= P.redirectEvery then
                             if tryClaim(u.id, "MARCH")
-                                and orderMove(u, math.floor(bx + 0.5), math.floor(by + 0.5)) then
+                                and orderMove(u, math.floor(bx + 0.5), math.floor(by + 0.5),
+                                    "OFFICER", "DEFENSE_MARCH_RECALL", "confirmed intrusion",
+                                    string.format("dest=%d,%d", math.floor(bx + 0.5), math.floor(by + 0.5))) then
                                 recallState[u.id] = { orderedFrame = frame }
                                 diagOrder(frame, "MARCH_RECALL", u, "MoveTo",
                                     string.format("reason=CONFIRMED_INTRUSION dest=%d,%d",
@@ -2887,7 +3104,9 @@ function SmartAI.Update(frame)
                             and frame - (ds.orderedFrame or 0) >= LEASE_RETRY_EVERY
                             and lastSmartAIOrder(did, ds.orderedFrame) == "none"
                             and tryClaim(did, "LEASE")
-                            and orderAttack(def, expE.u) then
+                            and orderAttack(def, expE.u, "OFFICER", "DEFENSE_LEASE",
+                                "target reassert",
+                                string.format("commanded=%s retry=%d", tostring(ds.targetId), tostring((ds.retries or 0) + 1))) then
                             ds.orderedFrame = frame
                             ds.retries = (ds.retries or 0) + 1
                             dlog("LEASE_REASSERT", frame, string.format(
@@ -2997,7 +3216,9 @@ function SmartAI.Update(frame)
                 if P.heroRetreat and hpFrac < HERO_RETREAT_HP
                     and (not mem or mem.posture ~= "retreat") then
                     if tryClaim(e.id, "HERO")
-                        and orderMove(e, anchorX, anchorY) then
+                        and orderMove(e, anchorX, anchorY, "OFFICER", "HERO",
+                            "bleeding retreat",
+                            string.format("dest=%d,%d hpf=%.2f", anchorX, anchorY, hpFrac)) then
                         heroState[e.id] = { targetId = nil,
                             orderedFrame = frame, posture = "retreat" }
                         diagOrder(frame, "HERO", e, "MoveTo",
@@ -3052,8 +3273,8 @@ function SmartAI.Update(frame)
                         -- unless something clearly better shows up.
                         if best and mem and mem.targetId
                             and P.heroRetreat then
-                            local cur = findSnap(units, mem.targetId)
-                                or findSnap(buildings, mem.targetId)
+                            local cur = unitsById[mem.targetId]
+                                or buildingsById[mem.targetId]
                             if cur and cur.hasPos then
                                 local curV = heroBaseValue(e.t, cur)
                                 if curV and best.u.id ~= mem.targetId
@@ -3071,7 +3292,10 @@ function SmartAI.Update(frame)
                                 -- takes e.u-style userdata with GetId —
                                 -- passing the snapshot silently fails).
                                 if tryClaim(e.id, "HERO")
-                                    and orderAttack(e, best.u.u) then
+                                    and orderAttack(e, best.u.u, "OFFICER", "HERO",
+                                        "priority target",
+                                        string.format("target=%s type=%s value=%.1f",
+                                            tostring(best.u.id), tostring(best.u.t), best.v)) then
                                     heroState[e.id] = {
                                         targetId = best.u.id,
                                         orderedFrame = frame,
@@ -3161,7 +3385,10 @@ function SmartAI.Update(frame)
                         for i = 1, math.min(need > 0 and need or #live, #cands) do
                             local g = cands[i].c
                             if need > 0 then
-                                if tryClaim(g.id, "ESCORT") and orderMove(g, e.x, e.y) then
+                                if tryClaim(g.id, "ESCORT") and orderMove(g, e.x, e.y,
+                                    "OFFICER", "ESCORT", "bodyguard draft",
+                                    string.format("principal=%s type=%s",
+                                        tostring(e.id), tostring(e.t))) then
                                     st.guards[#st.guards + 1] = g.id
                                     taken[g.id] = true
                                     added = added + 1
@@ -3181,7 +3408,9 @@ function SmartAI.Update(frame)
                             for _, gid in ipairs(live) do
                                 local g = findSnap(units, gid)
                                 if g and (g.idle or g.attacking == false)
-                                    and orderMove(g, e.x, e.y) then
+                                    and orderMove(g, e.x, e.y,
+                                        "OFFICER", "ESCORT_REFRESH", "position refresh",
+                                        string.format("principal=%s", tostring(e.id))) then
                                     held[#held + 1] = tostring(gid)
                                 end
                             end
@@ -3239,7 +3468,13 @@ function SmartAI.Update(frame)
                                     and frame - (st.combat[gid] or -ESCORT_COMBAT_EVERY)
                                         >= ESCORT_COMBAT_EVERY then
                                     if tryClaim(gid, "ESCORT")
-                                        and orderAttack(g, prime.u.u) then
+                                        and orderAttack(g, prime.u.u, "OFFICER", "ESCORT_INTERCEPT",
+                                            "principal threat",
+                                            string.format("principal=%s threat=%s type=%s d2=%d",
+                                                tostring(e.id),
+                                                tostring(prime.u.id),
+                                                tostring(prime.u.t),
+                                                math.floor(prime.d2))) then
                                         st.combat[gid] = frame
                                         diagOrder(frame, "ESCORT_INTERCEPT", g,
                                             "Attack", string.format(
@@ -3287,7 +3522,11 @@ function SmartAI.Update(frame)
                                     ky = math.floor((ky + by / bn) / 2 + 0.5)
                                 end
                                 if tryClaim(e.id, "ESCORT")
-                                    and orderMove(e, kx, ky) then
+                                    and orderMove(e, kx, ky, "OFFICER", "ESCORT_KITE",
+                                        "v3 kite",
+                                        string.format("dest=%d,%d threat=%s type=%s",
+                                            kx, ky, tostring(prime.u.id),
+                                            tostring(prime.u.t))) then
                                     st.kiteFrame = frame
                                     st.ax, st.ay = kx, ky
                                     diagOrder(frame, "ESCORT_KITE", e, "MoveTo",
@@ -3372,7 +3611,10 @@ function SmartAI.Update(frame)
                         for _, gid in ipairs(held) do sentIds[#sentIds + 1] = gid end
                         for i = 1, math.min(math.max(need, 0), #cands) do
                             local cu = cands[i].u
-                            if tryClaim(cu.id, "GARRISON") and orderMove(cu, e.x, e.y) then
+                            if tryClaim(cu.id, "GARRISON") and orderMove(cu, e.x, e.y,
+                                "OFFICER", "GARRISON", "garrison screen",
+                                string.format("dest=%d,%d building=%s type=%s",
+                                    e.x, e.y, tostring(e.id), tostring(e.t))) then
                                 sent = sent + 1
                                 sentIds[#sentIds + 1] = cu.id
                                 diagOrder(frame, "GARRISON", cu, "MoveTo",
@@ -3440,7 +3682,9 @@ function SmartAI.Update(frame)
                             goto next_evac -- arrived: hold, don't re-issue
                         end
                         if tryClaim(e.id, "RADEVAC")
-                            and orderMove(e, bb.x, bb.y) then
+                            and orderMove(e, bb.x, bb.y, "OFFICER", "RADEVAC",
+                                "radiation evacuation",
+                                string.format("dest=%d,%d phase=%s", bb.x, bb.y, tostring(radPhase))) then
                             radEvacState[e.id] = {
                                 orderedFrame = frame, bx = bb.x, by = bb.y,
                             }
@@ -3536,7 +3780,9 @@ function SmartAI.Update(frame)
                         goto next_miner -- already there: hold
                     end
                     if tryClaim(e.id, "MINER")
-                        and orderHarvest(e, ax, ay) then
+                        and orderHarvest(e, ax, ay, "OFFICER", "MINER",
+                            "idle miner kick",
+                            string.format("dest=%d,%d", ax, ay)) then
                         minerState[e.id] = {
                             orderedFrame = frame, ax = ax, ay = ay,
                         }
@@ -3635,7 +3881,11 @@ function SmartAI.Update(frame)
                                             -- needs GetMission readback on
                                             -- rally orders (did Move stick?).
                                             if orderMoveTracked(u, bPos.x, bPos.y,
-                                                "RALLY", frame) then
+                                                "RALLY", frame, "COMMANDER", "RALLY",
+                                                "breach response",
+                                                string.format("dest=%d,%d building=%s",
+                                                    bPos.x, bPos.y,
+                                                    dg and tostring(dg.bId) or "-")) then
                                                 ralliedCount = ralliedCount + 1
                                                 if dg then dg.orders = dg.orders + 1 end
                                                 ids[u.id] = true
@@ -3762,7 +4012,10 @@ function SmartAI.Update(frame)
                                 local rs = recallState[u.id]
                                 if not rs or frame - rs.orderedFrame >= RECALL_EVERY then
                                     if tryClaim(u.id, "RECALL")
-                                        and orderMove(u, math.floor(bx + 0.5), math.floor(by + 0.5)) then
+                                        and orderMove(u, math.floor(bx + 0.5), math.floor(by + 0.5),
+                                            "COMMANDER", "BASE_THREAT_RECALL", "base threat",
+                                            string.format("hostiles=%d dest=%d,%d",
+                                                hostiles, math.floor(bx + 0.5), math.floor(by + 0.5))) then
                                         recallState[u.id] = { orderedFrame = frame }
                                         diagOrder(frame, "IDLE_RECALL", u, "MoveTo",
                                             string.format("reason=BASE_THREAT_%d dest=%d,%d",
@@ -3812,10 +4065,25 @@ function SmartAI.Update(frame)
         bx, by = bx / bn, by / bn
         local announced = false
         for _, e in ipairs(units) do
+            -- Log naval units that ground recall would otherwise pull home
+            -- (diagnostic only, fires once per unit per scan).
             if e.oh == aiHouse and e.k == "unit" and e.hasPos
                 and not e.idle and e.attacking == false
                 and not HARVESTER_TYPES[e.t] and not MCV_TYPES[e.t]
                 and not ARTILLERY_TYPES[e.t]
+                and not typeIn({SUB=true,HYD=true,DRED=true,AEGIS=true,DLPH=true,BSUB=true,DEST=true,LCRF=true,SAPC=true,SQD=true,VLAD=true,YHVR=true,CRUISE=true,TUG=true,CDEST=true}, e.t)
+                and dist2(e.x, e.y, bx, by) > WAVE_FAR * WAVE_FAR
+                and not isOfficerAssigned(e.id) then
+                dlog("RECALL_SKIP_NAVAL", frame, string.format(
+                    "house=%s unit=%s type=%s reason=NAVAL_UNIT pos=%d,%d",
+                    tostring(aiName), tostring(e.id), tostring(e.t),
+                    e.x, e.y))
+            end
+            if e.oh == aiHouse and e.k == "unit" and e.hasPos
+                and not e.idle and e.attacking == false
+                and not HARVESTER_TYPES[e.t] and not MCV_TYPES[e.t]
+                and not ARTILLERY_TYPES[e.t]
+                and not typeIn({SUB=true,HYD=true,DRED=true,AEGIS=true,DLPH=true,BSUB=true,DEST=true,LCRF=true,SAPC=true,SQD=true,VLAD=true,YHVR=true,CRUISE=true,TUG=true,CDEST=true}, e.t)
                 and dist2(e.x, e.y, bx, by) > WAVE_FAR * WAVE_FAR
                 and not isOfficerAssigned(e.id) then
                 local waveN = 0
@@ -3826,6 +4094,7 @@ function SmartAI.Update(frame)
                         and not HARVESTER_TYPES[m.t]
                         and not MCV_TYPES[m.t]
                         and not ARTILLERY_TYPES[m.t]
+                        and not typeIn({SUB=true,HYD=true,DRED=true,AEGIS=true,DLPH=true,BSUB=true,DEST=true,LCRF=true,SAPC=true,SQD=true,VLAD=true,YHVR=true,CRUISE=true,TUG=true,CDEST=true}, m.t)
                         and dist2(m.x, m.y, e.x, e.y)
                             <= WAVE_R * WAVE_R then
                         waveN = waveN + 1
@@ -3860,7 +4129,12 @@ function SmartAI.Update(frame)
                             or frame - rs.orderedFrame >= RECALL_EVERY then
                             if tryClaim(e.id, "MARCH")
                                 and orderMove(e, math.floor(bx + 0.5),
-                                    math.floor(by + 0.5)) then
+                                    math.floor(by + 0.5), "COMMANDER", "WAVE_SHEPHERD",
+                                    "doomed wave",
+                                    string.format("wave=%d threat=%d mult=%d dest=%d,%d",
+                                        waveN, threatN, doomMult,
+                                        math.floor(bx + 0.5),
+                                        math.floor(by + 0.5))) then
                                 recallState[e.id] = { orderedFrame = frame }
                                 diagOrder(frame, "WAVE_RECALL", e, "MoveTo",
                                     string.format(
@@ -4074,7 +4348,11 @@ end
                     end
                     if culpE and culpE.id ~= curTid
                         and tryClaim(e.id, "RETALIATE")
-                        and orderAttack(e, culpE.u) then
+                        and orderAttack(e, culpE.u, "OFFICER", "RETALIATE",
+                            "self-preservation",
+                            string.format("was=%s now=%s culprit=%s readback=%s",
+                                tostring(curTid), tostring(culpE.id),
+                                tostring(culpE.t), tostring(actual))) then
                         prev.retalFrame = frame
                         local actual = readbackTargetId(e.u)
                         dlog("RETALIATE", frame, string.format(
@@ -4139,7 +4417,16 @@ end
                     end
                     if best
                         and tryClaim(e.id, "FOCUS")
-                        and orderAttack(e, best.u) then
+                        and orderAttack(e, best.u, "OFFICER", "BOMBER_FOCUS",
+                            "building focus",
+                            string.format("target=%s type=%s was=%s",
+                                tostring(best.id), tostring(best.t),
+                                tostring(curKin))) then
+                        SmartAI.logTargetEval(
+                            tostring(aiName), "bomber_focus", tostring(aiHouse and aiHouse:GetName() or "-"),
+                            tostring(best.id), tostring(best.t), tostring(best.on and best.on or "-"),
+                            true, "BEST_VALUE", tostring(curKind),
+                            string.format("dist=%s", tostring(dist2(e.x, e.y, best.x, best.y))))
                         focusState[e.id] = { orderedFrame = frame }
                         local actual = readbackTargetId(e.u)
                         dlog("BOMBER_FOCUS", frame, string.format(
@@ -4257,8 +4544,8 @@ end
             do
                 local lv = raidLevel[aiHouse] or 0
                 local tgtGone = st.targetId
-                    and not findSnap(units, st.targetId)
-                    and not findSnap(buildings, st.targetId)
+                    and not unitsById[st.targetId]
+                    and not buildingsById[st.targetId]
                 if tgtGone then
                     st.targetId = nil
                     if lv < 2 then
@@ -4336,8 +4623,8 @@ end
             -- sees only its 18-cell radius and sticks at find_target
             -- whenever SmartAI aims beyond it (proven live-shape 28-cell
             -- refinery run). Shape mirrors Tactical's own target records.
-            local raidTgt = st.targetId and findSnap(units, st.targetId)
-                or findSnap(buildings, st.targetId)
+            local raidTgt = st.targetId and (unitsById[st.targetId]
+                or buildingsById[st.targetId])
             if raidTgt then
                 snap.target = {
                     id = raidTgt.id, kind = raidTgt.k, typeName = raidTgt.t,
@@ -4433,10 +4720,30 @@ end
                                 bestNoMem, bestNoMemVal, bestNoMemD2 =
                                     cand, baseV, d2
                             end
+                        else
+                            -- Candidate passed basic filter but rejected by value/range
+                            local rejReason = "VALUE_ZERO"
+                            if v <= 0 then rejReason = "VALUE_ZERO"
+                            elseif dist2(cand.x, cand.y, bx, by) > P.raidRange * P.raidRange then
+                                rejReason = "OUT_OF_RANGE"
+                            end
+                            SmartAI.logTargetEval(
+                                tostring(aiName), "raid", tostring(aiHouse and aiHouse:GetName() or "-"),
+                                tostring(cand.id), tostring(cand.t), tostring(cand.on and cand.on or "-"),
+                                false, rejReason, tostring(baseV),
+                                string.format("mult=%s dist2_home=%s", tostring(mult),
+                                    tostring(dist2(cand.x, cand.y, bx, by))))
                         end
                     end
                 end
                 if best then
+                    SmartAI.logTargetEval(
+                        tostring(aiName), "raid", tostring(aiHouse and aiHouse:GetName() or "-"),
+                        tostring(best.id), tostring(best.t), tostring(best.on and best.on or "-"),
+                        true, "BEST_VALUE", tostring(bestVal),
+                        string.format("no_mem=%s no_mem_val=%s",
+                            tostring(bestNoMem and bestNoMem.id or "-"),
+                            tostring(bestNoMemVal or "-")))
                     if not st.retreating then
                         -- Holding same target inside refresh window: no re-issue.
                         if st.targetId == best.id
@@ -4449,7 +4756,10 @@ end
                                 -- obeys the higher-priority order instead
                                 -- (prevents cross-tick tug-of-war).
                                 if not tryClaim(m.id, "RAID") then goto next_raider end
-                                if orderAttack(m, best.u) then
+                                if orderAttack(m, best.u, "OFFICER", "RAID",
+                                    "economy snipe",
+                                    string.format("target=%s type=%s value=%.1f",
+                                        tostring(best.id), tostring(best.t), bestVal)) then
                                     issued = issued + 1
                                     local actual = readbackTargetId(m.u)
                                     if actual ~= nil and actual ~= best.id then
@@ -4688,7 +4998,10 @@ end
                     end
                     if feinter
                         and tryClaim(feinter.id, "RAID")
-                        and orderAttack(feinter, tgt.u) then
+                        and orderAttack(feinter, tgt.u, "OFFICER", "FEINT",
+                            "defender fixation",
+                            string.format("target=%s type=%s",
+                                tostring(tgt.id), tostring(tgt.t))) then
                         feintState[aiHouse] = frame
                         diagOrder(frame, "FEINT", feinter, "Attack",
                             string.format("target=%s type=%s",
@@ -4746,8 +5059,7 @@ end
                     if okT and tgt ~= nil then
                         local tid = liveId(tgt)
                         local cs = (tid ~= nil)
-                            and (findSnap(units, tid)
-                                or findSnap(buildings, tid)) or nil
+                            and (unitsById[tid] or buildingsById[tid]) or nil
                         if cs ~= nil and cs.hasPos then
                             curVal = retargetValue(cs)
                             curDist = math.sqrt(dist2(e.x, e.y, cs.x, cs.y))
@@ -4805,7 +5117,11 @@ end
                             end
                         end
                         if best and bestVal >= curVal + RETARGET_GAP then
-                            if orderAttack(e, best.u) then
+                            if orderAttack(e, best.u, "OFFICER", "RETARGET",
+                                "target upgrade",
+                                string.format("from=%.1f to=%s(%s)=%.1f",
+                                    curVal, tostring(best.id),
+                                    tostring(best.t), bestVal)) then
                                 retargetState[e.id] = { orderedFrame = frame }
                                 diagOrder(frame, "RETARGET", e, "Attack",
                                     string.format(
@@ -4931,11 +5247,14 @@ end
             local okPo, po = pcall(aiHouse.GetPowerOutput, aiHouse)
             local okPd, pd = pcall(aiHouse.GetPowerDrain, aiHouse)
             local okCr, cr = pcall(aiHouse.GetCredits, aiHouse)
+            local okHn, hn = pcall(aiHouse.GetName, aiHouse)
+            local hName = (okHn and type(hn) == "string") and hn or "?"
             -- QUIET (KEEP/QUIET/CUT): same gate as CENSUS; on-change +
-            -- heartbeat per house.
-            dlogChange("BASE", frame, tostring(aiHouse:GetName()), string.format(
+            -- heartbeat per house. GetName isolated via pcall so a diagnostic
+            -- error cannot abort the Update cycle; fetched once and reused.
+            dlogChange("BASE", frame, tostring(hName), string.format(
                 "house=%s blds=%d units=%d power=%s/%s credits=%s :: %s%s",
-                tostring(aiHouse:GetName()), bn, un,
+                tostring(hName), bn, un,
                 (okPo and type(po) == "number") and tostring(math.floor(po)) or "?",
                 (okPd and type(pd) == "number") and tostring(math.floor(pd)) or "?",
                 (okCr and type(cr) == "number") and tostring(math.floor(cr)) or "?",
@@ -5100,8 +5419,8 @@ end
                 raidState[h] = nil -- group wiped: release
             else
                 rst.members = kept
-                if rst.targetId and not findSnap(units, rst.targetId)
-                    and not findSnap(buildings, rst.targetId) then
+                if rst.targetId and not unitsById[rst.targetId]
+                    and not buildingsById[rst.targetId] then
                     rst.targetId = nil -- target gone: re-pick next tick
                 end
             end
