@@ -65,36 +65,8 @@ v0.1.0 was a historical milestone tag, not a production claim. The alpha history
 Damage interception (OnPreDamage) is documented as a contract only and is not wired in the current build. See API.md (Callback Model) before building anything damage-reactive.
 
 ## Architecture
+![Uploading {D03C6FF6-2842-4072-85F1-E9C2DC77E21F}.png…]()
 
-```
-┌─────────────────────────────────────┐
-│              Lua Mods               │
-│                                     │
-│   Gameplay logic / AI / mechanics   │
-└──────────────────┬──────────────────┘
-                   │
-                   ▼
-┌─────────────────────────────────────┐
-│             LuaAPI SDK              │
-│                                     │
-│  House / World / Engine / Game      │
-│  Events / Object access / Safety    │
-└──────────────────┬──────────────────┘
-                   │
-                   ▼
-┌─────────────────────────────────────┐
-│          C++ Engine Layer           │
-│                                     │
-│ Hooks / pointers / runtime state    │
-│ Lifecycle / MinHook integration     │
-└──────────────────┬──────────────────┘
-                   │
-                   ▼
-┌─────────────────────────────────────┐
-│       Red Alert 2 / YR Engine      │
-│             gamemd.exe              │
-└─────────────────────────────────────┘
-```
 
 C++ manages engine state and provides the bridge to the Westwood engine, including the unsafe or engine-specific operations. Lua decides what the mod actually does.
 
