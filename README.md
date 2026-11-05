@@ -76,18 +76,8 @@ C++ manages engine state and provides the bridge to the Westwood engine, includi
 ## Why LuaAPI?
 
 LuaAPI works alongside Ares and Phobos. They provide engine-level capabilities, and LuaAPI makes the gameplay logic around those capabilities programmable. A modder can take an existing mechanic, unit, or engine capability and rework how it behaves at runtime:
+<img width="1168" height="109" alt="{23E1A3C7-87E3-4777-AE0A-F76C35F8644B}" src="https://github.com/user-attachments/assets/d19a11cc-1431-491c-84e1-15fe75c74c82" />
 
-```
-Existing mechanic
-      ↓
-Ares / Phobos / Engine capabilities
-      ↓
-LuaAPI runtime logic
-      ↓
-Custom rules, state, targets, timers, conditions
-      ↓
-New gameplay behavior
-```
 
 For example, a basic bounty mechanic can reward the player for destroying an enemy unit. With LuaAPI the same idea can grow into a larger system: a hidden target, a specific hunter faction, a time limit, kill streaks, changing rewards, temporary buffs, or a reinforcement delivered to the hunter.
 
