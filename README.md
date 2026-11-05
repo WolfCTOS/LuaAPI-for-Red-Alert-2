@@ -65,7 +65,8 @@ v0.1.0 was a historical milestone tag, not a production claim. The alpha history
 Damage interception (OnPreDamage) is documented as a contract only and is not wired in the current build. See API.md (Callback Model) before building anything damage-reactive.
 
 ## Architecture
-<img width="315" height="650" alt="{E0F1AF1E-A6DC-46B8-B77C-93440F4B1CFC}" src="https://github.com/user-attachments/assets/f74fe8fa-220f-4e1b-8731-ca67e30914a5" />
+<img width="1294" height="215" alt="{60F086AA-8579-4119-BA04-CD717FD78D78}" src="https://github.com/user-attachments/assets/d81b793b-b83b-4b64-afb9-2c6b3bca4e6f" />
+
 
 
 
