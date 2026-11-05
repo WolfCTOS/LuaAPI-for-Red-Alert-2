@@ -65,7 +65,9 @@ v0.1.0 was a historical milestone tag, not a production claim. The alpha history
 Damage interception (OnPreDamage) is documented as a contract only and is not wired in the current build. See API.md (Callback Model) before building anything damage-reactive.
 
 ## Architecture
-![Uploading {D03C6FF6-2842-4072-85F1-E9C2DC77E21F}.png…]()
+<img width="315" height="650" alt="{E0F1AF1E-A6DC-46B8-B77C-93440F4B1CFC}" src="https://github.com/user-attachments/assets/f74fe8fa-220f-4e1b-8731-ca67e30914a5" />
+
+
 
 
 C++ manages engine state and provides the bridge to the Westwood engine, including the unsafe or engine-specific operations. Lua decides what the mod actually does.
