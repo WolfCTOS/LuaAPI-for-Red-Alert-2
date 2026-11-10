@@ -216,3 +216,33 @@ Consequences:
 - `FSM/MODS.md`, `FSM/VERIFICATION.md`, and
   `scripts/mods/README.md` require synchronization with the current stack.
 - FSM archive cleanup resumes only after this bounded reconciliation closes.
+
+
+---
+
+### 2026-11-10 — Remove obsolete gate-based project tracking
+
+Status: ACCEPTED
+
+Context:
+
+The project has moved to SemVer-based release management. The temporary
+Gate 1-3 tracking framework and `PROJECT/GATES.md` no longer represent the
+project's current release model.
+
+Decision:
+
+1. Delete `PROJECT/GATES.md`.
+2. Do not use Gate 1/2/3 as the active project lifecycle or release-control
+   framework.
+3. Preserve older Gate-related decisions and verification notes as historical
+   records where they explain past experiments or evidence.
+4. Track current work in `PROJECT/CURRENT_TASK.md`; use the project's
+   SemVer/release documentation and changelog for release state and history.
+5. Do not infer release readiness from the former Gate statuses.
+
+Consequences:
+
+The 2026-11-10 active-module reconciliation remains a documentation task,
+but it is no longer a Gate 1 item. Its completion is determined by reconciling
+the current configured modules with their source, harness, and live evidence.
