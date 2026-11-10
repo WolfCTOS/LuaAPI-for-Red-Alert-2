@@ -37,7 +37,7 @@ If you use Ares, Phobos, Syringe or CnCNet, see the compatibility sections below
 |---|---|
 | Project stage | Beta (0.2.0) |
 | Current release tag | v0.2.0 (Beta) |
-| Current focus | Gate reset, see PROJECT/GATES.md; research on a Dynamic Unit Behavior Development API |
+| Current focus | Gate 1.2 active-module reconciliation; see PROJECT/GATES.md and PROJECT/CURRENT_TASK.md |
 | Development API line | 0.2.0 |
 | Game | Yuri's Revenge 1.001 |
 | Primary targets | Singleplayer and Skirmish |
