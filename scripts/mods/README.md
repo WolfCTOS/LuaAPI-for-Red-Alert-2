@@ -32,9 +32,9 @@ veteran 25 / elite 40), метит `MarkBounty` (draw-only) и платит
 Движковых приказов юнитам не отдаёт. Харнес 35/35, live-сессии есть;
 по креш-форензике прямая вина рендера НЕ подтверждена.
 
-## 3. smart_ai — Smart AI Commander (v1.0.0, NiTeMind) — ACTIVE, РАБОТАЕТ
+## 3. smart_ai — Smart AI Commander — ACTIVE EXPERIMENTAL
 
-Четыре поведения, каждые 30 кадров, только свои юниты ИИ-дома:
+Текущий исходник содержит несколько слоёв поведения и диагностики. Старое описание четырёх поведений ниже не является полным актуальным inventory; для текущего состава сверяйся с main.lua и milestones/M1_PROGRESS.md.
 1) flank-breach rally — здание < 85% HP → idle резервы (> 6 клеток)
 получают `MoveTo` + `Hunt` к пролому (KNOWN SUSPECT: Hunt может
 затирать MoveTo — нужен живой лог с координатами); 2) capture-guard
@@ -56,7 +56,7 @@ Civilian исключены (фикс 2026-09-21 против команд иг�
 23/23 (включая mirror-country регрессию T10–T12 и координацию
 T8–T10). Офицеры живьём: UNVERIFIED.
 
-## 4. command_authority — Command Authority (v0.3.0, LuaAPI Research) — INACTIVE, РАБОТАЕТ
+## 4. command_authority — Command Authority (v0.3.0, LuaAPI Research) — INACTIVE
 
 CP-дуэль поверх RTS: очки за киллы/урон/директивы HUNT (+8) / DEFEND (+8);
 траты Z Reinforce (на фронт, с валидацией точки) / X Repair / C Blitz /
@@ -65,7 +65,7 @@ V Sabotage. Директор-ИИ тратит только на repair/reinforc
 Харнесы 44+36+30 PASS; код-верифицирован, live-pending. Сейчас НЕ в
 `active_mods.txt`.
 
-## 5. barrel_elevation_diag — Barrel Elevation Diagnostic (v1.0.0, LuaAPI Research) — INACTIVE, РАБОТАЕТ (live-pending)
+## 5. barrel_elevation_diag — Barrel Elevation Diagnostic (v1.0.0, LuaAPI Research) — INACTIVE
 
 M16-диагностика: включает нативный global AUTO (`SetBarrelPitchAutoAll`)
 и раз в секунду пишет heartbeat (счётчик `GetBarrelPitchAutoCount` +
@@ -74,14 +74,14 @@ M16-диагностика: включает нативный global AUTO (`SetB
 скомпилированы в Release; smoke (load + тик) OK. Живое визуальное
 подтверждение — pending.
 
-## 6. heli_repair_test — Helicopter Repair Diagnostic (v1.0.0, LuaAPI Research) — INACTIVE, РАБОТАЕТ ЧАСТИЧНО
+## 6. heli_repair_test — Helicopter Repair Diagnostic (v1.0.0, LuaAPI Research) — INACTIVE
 
 M16 Gate 2B прототип: ищет воздушный SCHP, дёргает Deploy/Undeploy,
 логирует состояния (`IsOnFloor`/`IsInAir`/`CanDeployNow`/миссия/HP).
 Smoke (load + тик) OK; поведение требует живого SCHP в матче —
 полевых доказательств нет. Только диагностика.
 
-## 7. god_mode — УДАЛЁН 2026-09-21
+## 7. radiation — Radiation Weather Hazard — ACTIVE EXPERIMENTAL\n\nРежим радиационной погоды с предупреждением, активной фазой и восстановлением.\nПовреждает открытую пехоту и удерживает состояние заражённой земли.\nПовторные live runs и отсутствие ошибок задокументированы в\n`radiation/FINDINGS.md`. Требование глобального зелёного покрытия карты\nостаётся невыполненным.\n\n## 8. god_mode — УДАЛЁН 2026-09-21
 
 Был сломанным стабом (несуществующий API `game_GetLocalPlayer` /
 `house_AddCredits` / `game_RegisterEvent` / `target:GetHouse()`,
