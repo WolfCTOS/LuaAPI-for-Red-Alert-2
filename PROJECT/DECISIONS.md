@@ -172,3 +172,56 @@ Consequences:
   produce live evidence before claiming behavior.
 - The extras section carries a "record, don't rely silently" note for future
   undocumented bindings.
+
+### 2026-11-10 — Separate SemVer versioning from Beta stage and milestone numbering
+
+Status: ACCEPTED
+
+Context:
+The implementation exposes one public project/API version in the in-game
+watermark and `Engine.version`. The current source reports `2.0.0`.
+Project documentation also uses Beta as the lifecycle stage, while
+`AGENTS.md` defines frozen historical Alpha M1–M16 and an independent current
+Beta M1+ milestone namespace. Mod/showcase projects have their own versions
+and milestone systems. These are distinct concepts and must not be conflated.
+
+Decision:
+1. The canonical current LuaAPI project/API version is `2.0.0`, matching
+   `src/lua_engine.cpp` (watermark and `Engine.version`).
+2. Public project/API versions use the SemVer `MAJOR.MINOR.PATCH` form:
+   MAJOR for incompatible public API changes, MINOR for backward-compatible
+   public API additions, and PATCH for backward-compatible fixes.
+3. Beta is the project's lifecycle stage, tracked separately from the numeric
+   SemVer version. It is not a milestone number and does not, by itself,
+   rewrite the version string.
+4. Alpha M1–M16 remain frozen historical milestones. Beta M1+ remains the
+   independent LuaAPI/API-framework milestone counter. A milestone increment
+   does not automatically imply a SemVer increment.
+5. Mod and showcase versions/milestones remain independent and do not
+   increment or define the LuaAPI project version.
+6. Historical version references remain historical; this decision does not
+   create a Git tag or GitHub Release.
+
+Reason:
+The implementation already has a single version value, while project stage,
+milestone namespaces, and mod versions describe different dimensions of
+project state. Separating them preserves the established architecture and
+prevents milestone numbers or mod versions from being mistaken for releases.
+
+Alternatives considered:
+- Treat milestone numbers as release versions (rejected: the milestone
+  namespaces are explicitly independent).
+- Treat Beta as a numeric version component or automatically append a
+  prerelease suffix (rejected: the current implementation exposes `2.0.0`
+  and the project tracks Beta stage separately).
+- Re-number historical Alpha milestones (rejected: Alpha history is frozen).
+
+Consequences:
+- `2.0.0` is the canonical implementation version until a SemVer change is
+  deliberately made.
+- Roadmap status and milestone completion remain governed by existing
+  acceptance criteria, not by version-number changes.
+- README/API/CHANGELOG version inconsistencies remain separate documentation
+  work and are not silently changed by this decision.
+
+---
