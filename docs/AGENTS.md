@@ -62,12 +62,12 @@ These rules apply when designing runtime gameplay systems and mods. They are gro
 ## Repository status and source of truth
 
 Do not treat copied status summaries in this file as authoritative. Project status, current task, and enabled mods must be checked against their respective source files before making claims:
-- Project lifecycle and gate status: `PROJECT/GATES.md`.
+- Project lifecycle and release state: follow the current SemVer documentation and changelog; use `PROJECT/CURRENT_TASK.md` for the active task.
 - Current investigation: `PROJECT/CURRENT_TASK.md`.
 - Actual mod load list: `scripts/active_mods.txt`.
 - API contracts and callback status: `API.md` and the relevant implementation in `src/`.
 
-**Known documentation conflict at migration time:** the status snapshot formerly in this file disagreed with `PROJECT/GATES.md`, `PROJECT/CURRENT_TASK.md`, and `scripts/active_mods.txt` about Gate 1 and the active mod list. Do not infer or reconcile those values from this note. Resolve the underlying documents against the current source and runtime evidence.
+**Historical note:** older project records refer to the temporary Gate 1-3 tracking framework. It has been retired in favor of SemVer-based release management. Treat Gate references as historical context, not current lifecycle status. Resolve active module configuration against `scripts/active_mods.txt`, the loader, current source, and runtime evidence.
 
 ## Session protocol
 
