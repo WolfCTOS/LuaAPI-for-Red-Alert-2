@@ -5,9 +5,8 @@
 
 ## Goal
 
-Reconcile the current active-module configuration with project decisions,
-Gate 1, the FSM catalog, and the verification ledger. Close the reopened
-Gate 1 item 1.2 using current repository evidence.
+Reconcile the current active-module configuration with the SemVer release
+model, project decisions, FSM catalog, and verification records.
 
 ## Scope
 
@@ -17,9 +16,9 @@ Gate 1 item 1.2 using current repository evidence.
   `smart_ai`, `radiation`.
 - For each module, compare current source, current harness, and live evidence.
   Keep those evidence grades separate.
-- Reconcile `PROJECT/GATES.md`, `PROJECT/DECISIONS.md`,
-  `FSM/MODS.md`, `FSM/VERIFICATION.md`, and
-  `scripts/mods/README.md`.
+- Reconcile `PROJECT/DECISIONS.md`, `FSM/MODS.md`,
+  `FSM/VERIFICATION.md`, and `scripts/mods/README.md` with the current
+  SemVer release model.
 - Preserve historical decisions and test results as history; add explicit
   superseding records rather than silently rewriting them.
 - Only after the current module inventory is consistent, resume FSM archive
@@ -66,8 +65,8 @@ harness, and live-evidence status that agree with the current implementation.
 
 ## Actual Result
 
-Audit in progress. Gate 1 item 1.2 reopened on 2026-11-10. See the addendum
-in `PROJECT/GATES.md`.
+Audit in progress. The active-module reconciliation was opened on
+2026-11-10 and is tracked here with supporting evidence in the module records.
 
 ## Analysis Status
 
