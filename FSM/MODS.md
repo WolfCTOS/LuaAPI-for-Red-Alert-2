@@ -129,7 +129,7 @@ runtime configuration from historical live experiments and inactive modules.
   therefore have partial live evidence, not a complete v3 verification.
 - **Historical note:** the 2026-09-20 inert verdict described an earlier
   implementation and was superseded by the current source/configuration.
-  See the 2026-11-10 addendum in `PROJECT/GATES.md` and decision log.
+  See the 2026-11-10 active-stack reconciliation in `PROJECT/DECISIONS.md`.
 
 ## Smart AI
 
