@@ -38,7 +38,7 @@
 | 1.7 | Reproducibility | Harnesses in `tools/tmp/` re-runnable; live-verification protocol (CnCNet spawner path) documented. |
 | 1.8 | Unsupported capabilities marked | Hard limits (no damage interception, no radar/fog, no superweapon API, …) listed publicly — `FSM/CAPABILITIES.md` UNKNOWN section. |
 
-### Current status: ✅ **PASS (user-observed grade, 2026-09-22)**
+### Current status: 🟡 **PARTIAL (2026-11-10 re-audit; item 1.2 reopened)**
 
 Closed by prior work: 1.5, 1.6, 1.8 (FSM archive); `API.md` `Attack`/
 `GetMission`/`SetHealthRatio`/`OnPreDamage` corrections (see
@@ -236,7 +236,66 @@ Gate 3 (this file)
 
 | Gate | Status | One-line reason |
 |---|---|---|
-| Gate 1 | ✅ PASS (user-observed) | All items closed; item 3 by reset code + 3 user-observed matches (no log — log run may upgrade grade) |
+| Gate 1 | 🟡 PARTIAL | Historical 2026-09-22 PASS retained; item 1.2 reopened because the active module list and its verification records changed and are not yet reconciled |
 | Gate 2 | 🟡 PARTIAL | Core loop live-verified; lease/production/damage-event gaps open |
 | Gate 3 | ❌ NOT PASSED | Flagship ready; release checklist + media + blockers open |
 | DU direction | READY FOR RESEARCH | `FSM/DYNAMIC_UNIT_BEHAVIOR.md`; next task = DU-1 audit |
+
+
+---
+
+## Addendum 2026-11-10 — Gate 1 item 1.2 reopened for active-stack reconciliation
+
+The 2026-09-22 Gate 1 PASS is preserved as a historical result. It is not
+silently rewritten. A repository audit on 2026-11-10 found that the active
+module configuration has since changed and the documents describing it no
+longer agree.
+
+**Current configuration (source of truth):** `scripts/active_mods.txt`
+contains, in load order:
+
+1. `bounty_hunter`
+2. `smart_ai`
+3. `radiation`
+
+The loader in `scripts/init.lua` reads this file directly and requires
+`mods.<id>.main` for each entry. The root `README.md` independently lists
+the same three-module default stack.
+
+**Conflicting records found:**
+
+- The 2026-09-20 decision says `bounty_hunter` was removed and the default
+  stack became `barrel_elevation_diag`, `command_authority`,
+  `target_reselect`.
+- `FSM/MODS.md` still describes Bounty Hunter as inert and absent from the
+  active list; its Smart AI entry also says inactive by default.
+- `FSM/VERIFICATION.md` still labels Bounty Hunter inert.
+- `scripts/mods/README.md` names `target_reselect`, `bounty_hunter`,
+  `smart_ai` as active and omits `radiation`; its Bounty Hunter section
+  describes v2 while the current source header identifies v3.
+- `docs/AGENTS.md` previously carried a dated active-stack snapshot. Its
+  current branch revision now directs readers to the live configuration and
+  canonical project records instead of treating that snapshot as current.
+
+**Evidence already found, not yet a complete Gate 1.2 re-verification:**
+
+- `radiation`: `scripts/mods/radiation/FINDINGS.md` records runtime
+  verification across multiple runs, with zero errors/crashes for the tested
+  behavior. Its whole-map green-ground requirement remains explicitly unmet.
+- `bounty_hunter`: current source is v3 and uses ID-diff polling, target marks,
+  and post-hoc payout logic. Existing harness `tools/tmp/bounty_hunter_test.lua`
+  identifies itself as v2; it is not proof for the current v3 source. A
+  SmartAI progress record contains a user-observed CLAIMED/payout event, but
+  the exact session/build linkage to the current v3 source must be checked.
+- `smart_ai`: the current active code and historical live evidence exist, but
+  the catalog and verification record describe earlier, narrower behavior.
+  Current behaviors must be separated by evidence grade before the item closes.
+
+**Decision:** item 1.2 is reopened. Do not change `scripts/active_mods.txt`
+or infer that a module is inactive from an old catalog. Reconcile each of the
+three current modules against its current source, harnesses, and live records;
+then update the module catalog and evidence ledger. Gate 1 remains PARTIAL
+until this bounded re-audit is complete.
+
+The 2026-09-22 Gate 1 PASS remains valid as a historical snapshot of the
+configuration and evidence state at that time.
