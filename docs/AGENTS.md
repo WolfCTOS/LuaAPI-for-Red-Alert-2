@@ -27,7 +27,31 @@
 - Logging: LUA_LOG_* macros, flush per line; LUA_FLUSH_LOG at critical points.
 - API surface: World.* (GetBuildings/GetUnits/GetAllUnits/GetUnitsInRadius), unit methods incl. IsAttacking, AI.QueueUnit/AI.CountUnit. Sub-turret / EventHook / BulletHook / FireProjectile REMOVED 2026-09-21.
 
-### Traps (read before touching hooks or combat)
+## Gameplay-system engineering principles
+
+These rules apply when designing runtime gameplay systems and mods. They are grounded in the repository's experiment history, not intended as generic project-management advice.
+
+1. **Persistent runtime state over static event schedules.** A system should retain, update, and decay relevant match state across frames. A fixed sequence of timed effects without feedback from the match is a scripted sequence, not an adaptive gameplay system. Command Authority's CP, damage, loss, and directive ledgers are examples of state feeding later decisions.
+
+2. **Gameplay decisions over telemetry alone.** Observation, kill feeds, and intensity meters do not constitute gameplay by themselves. A feature should change a participant's next meaningful decision; otherwise classify and scope it as UI or telemetry.
+
+3. **Player agency over passive effects.** Prefer mechanics that expose a meaningful choice with a clear cost, timing, target, and readable outcome. Avoid making the player merely the recipient of unexplained periodic effects.
+
+4. **Counterplay is part of the mechanic.** A consequential action should give opponents a legible opportunity to respond. Retaliation should be attributable and, where appropriate, announced or delayed. If the only sensible response is to wait, the mechanic needs further design.
+
+5. **AI should use the same rules as the player where practical.** Reuse the same cost, eligibility, and execution paths. Any necessary asymmetry must be explicit, deterministic, and communicated rather than implemented as a hidden advantage or handicap.
+
+6. **Determinism by design.** Use logical game frames for decisions. Avoid wall-clock time and uncontrolled randomness in gameplay logic. Prefer stable ID-ordered traversal and predictable arithmetic so equivalent game states produce equivalent decisions. Review determinism before optimizing behavioral cleverness.
+
+7. **Do not extend the native API without demonstrated necessity.** First determine whether the required behavior can be built from existing bindings. Convenience alone is not sufficient justification for a C++ API addition. Document genuine capability gaps instead of assuming an unimplemented hook or binding exists.
+
+8. **Root-cause analysis and feasibility before implementation.** State competing hypotheses, identify what evidence would distinguish them, and test the smallest relevant assumption. A prototype should answer a specific question, not merely demonstrate activity. Do not promote a concept to an implementation plan while critical feasibility checks remain unresolved.
+
+9. **Harness verification is not live-game verification.** A harness PASS proves the tested logic under its mocks and assumptions. It does not prove engine behavior, integration, timing, or multiplayer behavior. Never present harness results as proof of an in-game outcome.
+
+10. **Record live evidence separately and with its limits.** Record the tested build, launch path, scenario, session bounds, observations, and PASS/FAIL/INCONCLUSIVE result. Distinguish instrumented evidence from user-observed behavior. Do not upgrade a claim beyond what the evidence actually establishes.
+
+## Traps (read before touching hooks or combat)
 1. ActiveClickWith detour crashes on ANY player attack order on a TechnoClass target (spawner or not), even with trivial return. Native path works with hook disabled (kDisableActiveClickHook=true). Do not re-enable without a new interception point (Milestone 11: SetTarget/QueueMission detour or Ares/Phobos). Full story: docs/ENGINEERING_LESSONS.md section 9.
 2. SpawnManager umbilical: native AI re-overwrites spawned missile target from Owner->Target each frame; decouple via pMissile->SpawnOwner=nullptr before redirect.
 3. RocketLocomotor precomputes ballistic spline at spawn; in-flight redirect needs Force_Immediate_Destination.
@@ -35,27 +59,18 @@
 5. Dangling pointers: engine frees objects aggressively; cached pointers die within frames.
 6. Log spam: per-frame critical frame logs and per-volley tracer logs flood LuaAPI.log; demote before demo/release.
 
-## Status (update at end of every session)
+## Repository status and source of truth
 
-### Current: Gate 1 PARTIAL — feature freeze (2026-09-20 closure audit)
+Do not treat copied status summaries in this file as authoritative. Project status, current task, and enabled mods must be checked against their respective source files before making claims:
+- Project lifecycle and gate status: `PROJECT/GATES.md`.
+- Current investigation: `PROJECT/CURRENT_TASK.md`.
+- Actual mod load list: `scripts/active_mods.txt`.
+- API contracts and callback status: `API.md` and the relevant implementation in `src/`.
 
-- Gate 1: items 1, 2, 4, 5, 6 CLOSED (docs/config/decision); item 3 (stale
-  house-userdata cache, dead `ResetSession`) OPEN and runtime-gated.
-  Authoritative state: `PROJECT/GATES.md`.
-- Gate 2 PARTIAL (core loop live-verified; lease/production/damage-event gaps open).
-- Gate 3 NOT PASSED (flagship ready; release checklist + media + blockers open).
-- Feature freeze per `PROJECT/DECISIONS.md`; next research: DU-1 audit
-  (`FSM/DYNAMIC_UNIT_BEHAVIOR.md`). No new implementation before DU-1 exit.
-- Actual `scripts/active_mods.txt` on disk (2026-09-21): `target_reselect`,
-  `bounty_hunter`, `smart_ai`. (`barrel_elevation_diag` / `command_authority`
-  are present but INACTIVE.) `bounty_hunter` is the rewritten v2 (ID-diff +
-  `MarkBounty`, no `OnPreDamage`) — the old "inert" label in Gate-1 records
-  is stale, see `PROJECT/GATES.md` addendum 2026-09-21. `smart_ai` = rally +
-  capture guard, no squads.
-- `OnPreDamage`/`OnUnitDestroyed`: contracts without invocation (see `API.md`).
-  Death detection = ID-diff polling. No native event architecture implemented.
+**Known documentation conflict at migration time:** the status snapshot formerly in this file disagreed with `PROJECT/GATES.md`, `PROJECT/CURRENT_TASK.md`, and `scripts/active_mods.txt` about Gate 1 and the active mod list. Do not infer or reconcile those values from this note. Resolve the underlying documents against the current source and runtime evidence.
 
-### Session protocol
+## Session protocol
+
 - One session per sprint/task to bound context cost.
 - Read this file plus the relevant docs section first.
-- Last command of the session: update this Status block.
+- Last command of the session: update the relevant task/status record, but only after verifying it against current repository state.
