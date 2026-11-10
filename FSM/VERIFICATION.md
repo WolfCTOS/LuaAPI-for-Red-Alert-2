@@ -224,7 +224,10 @@ real TypeID to `VALUABLE_TYPES` when supplied |
   Director reinforcement path (`powerReinforce`) spawns pairs of
   player-faction tanks at `lastKillPos`-derived frontline points — the
   only writer in the active stack with that capability.
-  `barrel_elevation_diag` is draw-path only; `bounty_hunter` is inert.
+  `barrel_elevation_diag` is draw-path only. This attribution is a
+  historical 2026-09-20 stack snapshot: Bounty Hunter was subsequently
+  rewritten and is in the 2026-11-10 active stack; see the current-stack
+  addendum in `PROJECT/GATES.md`.
 | Runtime | log-review of the reported match: Rhino counts/spacing/
   positions consistent with CA Director reinforcement pairs; no
   SmartAI-produced unit counter-evidence (SmartAI issues orders only —
@@ -280,3 +283,20 @@ real TypeID to `VALUABLE_TYPES` when supplied |
   `FSM/FEASIBILITY_TRIAGE.md` and now here. Reopen only if a crash
   reproduces on the recommended path. Syringe-path root-cause hunt stays a
   recorded OPEN unknown (not a Gate-1 item). |
+
+
+### Current active-module evidence snapshot (2026-11-10)
+
+The loader configuration is `scripts/active_mods.txt`:
+`bounty_hunter`, `smart_ai`, `radiation`. This section records the
+evidence found during the inventory audit; it does not replace the detailed
+historical entries above.
+
+| Module | Source state | Harness evidence | Live evidence | Open boundary |
+|---|---|---|---|---|
+| `bounty_hunter` | Current source header says v3; ID/HP polling, bounty marks, capture cancellation, attribution and payout logic | Available harness says v2; not current-version proof | SmartAI progress record reports a CLAIMED/payout event; exact v3/build linkage not yet established | Run/identify a harness for v3 and tie live evidence to exact source/build |
+| `smart_ai` | Current active source contains multiple behavior layers | Multiple subsystem harnesses recorded in `M1_PROGRESS.md` | Multiple user-run live sessions recorded there; grade each subsystem separately | Do not treat one subsystem's PASS as proof for all current behaviors |
+| `radiation` | Current active source implements the weather hazard cycle | Harness details are in mod-local records; not relied on here as live proof | `FINDINGS.md` records repeated runtime verification, no errors/crashes for tested behavior | Whole-map green-ground visual requirement remains unmet |
+
+Gate 1 item 1.2 remains open until the source, harness, and live evidence for
+the current active modules are reconciled with their exact versions/builds.
