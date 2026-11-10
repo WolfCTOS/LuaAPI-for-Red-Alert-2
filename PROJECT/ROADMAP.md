@@ -41,8 +41,8 @@ Version numbers and milestone numbers are independent:
 - Mods and showcases retain their own versions and milestone systems; their
   changes do not automatically change the LuaAPI version.
 
-Historical records such as the Alpha `v0.1.0` / `v1.0.0` releases and the
-`1.1.0` development line remain historical. They are not the current
+Historical version records such as `v0.1.0-alpha`, `v1.0.0`, and the
+`1.1.0` development line remain unchanged. They are not the current
 implementation version and are not renumbered by this clarification.
 The current `2.0.0` implementation version does not, by itself, assert that
 a new GitHub Release or tag has been published.
