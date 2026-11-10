@@ -172,3 +172,47 @@ Consequences:
   produce live evidence before claiming behavior.
 - The extras section carries a "record, don't rely silently" note for future
   undocumented bindings.
+
+
+---
+
+### 2026-11-10 — Gate 1 item 1.2 reopened: reconcile the current active module stack
+
+Status: ACCEPTED
+
+Context:
+
+The 2026-09-20 decision below removed `bounty_hunter` from the default stack
+and recorded `barrel_elevation_diag`, `command_authority`, and
+`target_reselect` as the active set. The current repository no longer matches
+that state. `scripts/active_mods.txt` now contains `bounty_hunter`,
+`smart_ai`, and `radiation`; `scripts/init.lua` reads this file directly,
+and the root `README.md` lists the same three modules. The Bounty Hunter
+source is now v3, not the inert pre-rewrite implementation described by the
+2026-09-20 decision.
+
+Decision:
+
+1. Preserve the 2026-09-20 decision as historical context; do not delete or
+   silently rewrite it.
+2. Treat the current `scripts/active_mods.txt` as the source of truth for
+   configured load order.
+3. Reopen Gate 1 item 1.2 until all three currently active modules are checked
+   against current source, harness, and live evidence.
+4. Keep harness, source, and live evidence grades distinct.
+5. Do not modify active module configuration as part of this documentation
+   reconciliation.
+
+Reason:
+
+The old decision and current configuration conflict. A stale module catalog
+cannot establish what the loader currently loads, and a configuration entry
+alone cannot establish runtime functionality.
+
+Consequences:
+
+- Gate 1 is PARTIAL for the current audit state; the 2026-09-22 PASS remains
+  recorded as a historical snapshot.
+- `FSM/MODS.md`, `FSM/VERIFICATION.md`, and
+  `scripts/mods/README.md` require synchronization with the current stack.
+- FSM archive cleanup resumes only after this bounded reconciliation closes.
