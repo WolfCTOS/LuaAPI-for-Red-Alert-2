@@ -64,8 +64,8 @@ described with implementation language (see Iron Curtain).
 
 - **Name:** Command Authority (Command Points Duel)
 - **Status:** ACTIVE EXPERIMENTAL (`scripts/mods/command_authority/`,
-  v0.3.0, iteration 3). Loaded in the live stack with `bounty_hunter`,
-  `barrel_elevation_diag`, `target_reselect`.
+  v0.3.0, iteration 3). INACTIVE in the current 2026-11-10 stack
+  (`bounty_hunter`, `smart_ai`, `radiation`); retained as an experimental mod.
 - **Core mechanic:** persistent match-aware CP economy (kill +5 via
   nearest-hostile attribution with fallback split, damage +1/400
   fractional bank, survival streak, alternating HUNT/DEFEND directives
@@ -110,36 +110,53 @@ described with implementation language (see Iron Curtain).
 
 ## Bounty Hunter
 
-- **Name:** Bounty Hunter
-- **Status:** INERT / HISTORICAL REFERENCE (`scripts/mods/bounty_hunter/`,
-  NOT in `scripts/active_mods.txt` since 2026-09-20).
-- **Core mechanic (intended):** +50 credits on combat hit via `OnPreDamage`.
-- **Why inert (three independent reasons, source-verified):** table-method
-  callback (global lookup only) + `OnPreDamage` never invoked + nonexistent
-  `house_AddCredits` call. `Update` no-ops.
-- **Decision:** `PROJECT/DECISIONS.md` (Gate 1 item 2) — removed from
-  defaults, kept as reference; repair (global callback + aftermath polling)
-  is a candidate future cleanup, not done.
+- **Name:** Bounty Hunter (`scripts/mods/bounty_hunter/`, current source header:
+  v3).
+- **Status:** ACTIVE EXPERIMENTAL; present in `scripts/active_mods.txt`
+  (2026-11-10), loaded by `scripts/init.lua`.
+- **Core mechanic:** one enemy UnitClass vehicle/ship is selected as a bounty,
+  marked through the draw-only bounty overlay, tracked by ID/HP polling, and
+  rewarded on destruction. The current source includes target lifetime,
+  capture cancellation, damage-attribution voting, and reward captions.
+- **Verification:** an existing harness identifies itself as v2 and must not
+  be treated as verification of the current v3 source. A later SmartAI
+  progress record reports a live CLAIMED/payout event, but its exact source
+  version/build linkage remains to be confirmed. Mark and payout behavior
+  therefore have partial live evidence, not a complete v3 verification.
+- **Historical note:** the 2026-09-20 inert verdict described an earlier
+  implementation and was superseded by the current source/configuration.
+  See the 2026-11-10 addendum in `PROJECT/GATES.md` and decision log.
 
 ## Smart AI
 
-- **Name:** Smart AI Commander (`scripts/mods/smart_ai/`, v1.0.0,
-  "Dynamic base flank defense and threat response"). Inactive by default.
-- **Status:** ACTIVE EXPERIMENTAL (code present, 232 lines). NOT the squad /
-  officer / escort version its `HOW_TO_USE.txt` still describes (that file
-  is stale — see doc-sync).
-- **Core mechanic:** flank-breach rally (idle reserves `MoveTo`+`Hunt`,
-  every-30-frame scan) + capture-aware valuables guard MVP (transition-only
-  pullback, owner-flip observation, frame-backwards restart guard).
-- **Verification status:** capture guard harness 15/15
-  (`tools/tmp/smartai_capture_test.lua`); live: observer fired, pullback
-  decision never triggered in-window (`FSM/VERIFICATION.md`).
-- **Known problems:** rally order churn unthrottled per unit while breached.
+- **Name:** Smart AI Commander (`scripts/mods/smart_ai/`).
+- **Status:** ACTIVE EXPERIMENTAL; present in the 2026-11-10 active stack.
+- **Core mechanic:** the current source has multiple behavior layers and
+  supporting state/diagnostics. The older 232-line MVP description and the
+  earlier HOW_TO_USE contract are stale; use the current source and
+  `scripts/mods/smart_ai/milestones/M1_PROGRESS.md` for the current inventory.
+- **Verification:** the ledger below retains older capture-guard evidence.
+  `M1_PROGRESS.md` contains later live sessions and subsystem-specific
+  results. Do not generalize a PASS for one subsystem to every behavior.
+- **Known limitation:** live order persistence remains bounded by vanilla AI
+  target/order reselection; see `PROJECT/RUNTIME_BOUNDARY.md`.
+
+## Radiation
+
+- **Name:** Radiation weather hazard (`scripts/mods/radiation/`).
+- **Status:** ACTIVE EXPERIMENTAL; present in the 2026-11-10 active stack.
+- **Core mechanic:** warning → active radiation → recovery cycle; damages
+  exposed infantry and maintains irradiated ground state. The whole-map green
+  ground visual requirement is explicitly unmet.
+- **Verification:** `scripts/mods/radiation/FINDINGS.md` records runtime
+  verification across multiple runs with no errors/crashes for the tested
+  warning, damage, target-selection, and ground-state behavior. This does not
+  close the separate whole-map green-ground requirement.
 
 ## target_reselect
 
 - **Name:** Target Reselect (M14 experiment, `scripts/mods/target_reselect/`).
-  In the default active stack.
+  Not in the 2026-11-10 active stack.
 - **Status:** ACTIVE EXPERIMENTAL, live-observed 2026-09-10 (victim-centric
   v2: 8 redirects with read-back, zero errors).
 - **Core mechanic:** victim-side AA-threat signal → `unit:Attack(alternative)`
@@ -149,7 +166,7 @@ described with implementation language (see Iron Curtain).
 ## barrel_elevation_diag
 
 - **Name:** Barrel Elevation Diagnostic (`scripts/mods/barrel_elevation_diag/`).
-  In the default active stack.
+  Not in the 2026-11-10 active stack.
 - **Status:** ACTIVE EXPERIMENTAL — M16 live heartbeat; draw-only AUTO,
   simulation-neutral (`PROJECT/MILESTONE_16.md`). Visible effect awaits a
   separate-barrel-voxel asset.
