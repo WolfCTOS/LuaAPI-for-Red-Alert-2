@@ -2,9 +2,9 @@
 
 > **Target Platform:** `gamemd.exe` — Yuri's Revenge 1.001  
 > **Repository:** https://github.com/WolfCTOS/LuaAPI-for-Red-Alert-2  
-> **Current Release:** `v2.0.0` (Beta; `v1.0.0` stands as the historical milestone tag; Alpha history — see `FSM/MODDB_ALPHA_RELEASE.md`)  
+> **Current Project/API Version:** `2.0.0` (Beta stage; version and milestone numbering are separate)  
 > **Current Development:** Feature freeze — documentation/gate reset (`PROJECT/GATES.md`); next research track: Dynamic Unit Behavior (`FSM/DYNAMIC_UNIT_BEHAVIOR.md`)  
-> **Last Updated:** September 20, 2026
+> **Last Updated:** November 10, 2026
 
 This roadmap tracks the evolution of LuaAPI from runtime embedding to safe native bindings, CnCNet integration, advanced combat systems, and Lua-driven tactical gameplay.
 
@@ -13,6 +13,39 @@ Milestone 14 runs on two tracks: **Track A** — a Lua-side gameplay framework o
 > **Core principle:** Ares and Phobos extend the engine. LuaAPI makes gameplay programmable.
 
 > ⚠️ **Verification policy:** Implementation and runtime verification are separate. A capability is only marked `VERIFIED` after it has been tested against the current LuaAPI build. A planned capability is not a verified capability.
+
+---
+
+## Versioning and milestone namespaces
+
+LuaAPI uses one public project/API version in the in-game watermark and
+`Engine.version`. The current implementation reports **`2.0.0`**
+(`src/lua_engine.cpp`). The project lifecycle stage is **Beta**; that stage
+is tracked separately and does not change the numeric version string.
+
+The version follows SemVer:
+
+- **MAJOR** changes indicate an incompatible public API change.
+- **MINOR** changes add public API functionality compatibly.
+- **PATCH** changes make backward-compatible fixes.
+- The `v` prefix used in Git tag names is a tag convention, not part of the
+  SemVer version itself.
+
+Version numbers and milestone numbers are independent:
+
+- **Alpha M1–M16** are frozen historical milestones.
+- **Beta M1+** is the independent current LuaAPI/API-framework milestone
+  namespace.
+- Completing or starting a milestone does not automatically increment
+  SemVer. A version changes only when the public API change warrants it.
+- Mods and showcases retain their own versions and milestone systems; their
+  changes do not automatically change the LuaAPI version.
+
+Historical records such as the Alpha `v0.1.0` / `v1.0.0` releases and the
+`1.1.0` development line remain historical. They are not the current
+implementation version and are not renumbered by this clarification.
+The current `2.0.0` implementation version does not, by itself, assert that
+a new GitHub Release or tag has been published.
 
 ---
 
