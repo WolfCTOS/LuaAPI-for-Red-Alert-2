@@ -172,3 +172,77 @@ Consequences:
   produce live evidence before claiming behavior.
 - The extras section carries a "record, don't rely silently" note for future
   undocumented bindings.
+
+
+---
+
+### 2026-11-10 — Gate 1 item 1.2 reopened: reconcile the current active module stack
+
+Status: ACCEPTED
+
+Context:
+
+The 2026-09-20 decision below removed `bounty_hunter` from the default stack
+and recorded `barrel_elevation_diag`, `command_authority`, and
+`target_reselect` as the active set. The current repository no longer matches
+that state. `scripts/active_mods.txt` now contains `bounty_hunter`,
+`smart_ai`, and `radiation`; `scripts/init.lua` reads this file directly,
+and the root `README.md` lists the same three modules. The Bounty Hunter
+source is now v3, not the inert pre-rewrite implementation described by the
+2026-09-20 decision.
+
+Decision:
+
+1. Preserve the 2026-09-20 decision as historical context; do not delete or
+   silently rewrite it.
+2. Treat the current `scripts/active_mods.txt` as the source of truth for
+   configured load order.
+3. Reopen Gate 1 item 1.2 until all three currently active modules are checked
+   against current source, harness, and live evidence.
+4. Keep harness, source, and live evidence grades distinct.
+5. Do not modify active module configuration as part of this documentation
+   reconciliation.
+
+Reason:
+
+The old decision and current configuration conflict. A stale module catalog
+cannot establish what the loader currently loads, and a configuration entry
+alone cannot establish runtime functionality.
+
+Consequences:
+
+- Gate 1 is PARTIAL for the current audit state; the 2026-09-22 PASS remains
+  recorded as a historical snapshot.
+- `FSM/MODS.md`, `FSM/VERIFICATION.md`, and
+  `scripts/mods/README.md` require synchronization with the current stack.
+- FSM archive cleanup resumes only after this bounded reconciliation closes.
+
+
+---
+
+### 2026-11-10 — Remove obsolete gate-based project tracking
+
+Status: ACCEPTED
+
+Context:
+
+The project has moved to SemVer-based release management. The temporary
+Gate 1-3 tracking framework and `PROJECT/GATES.md` no longer represent the
+project's current release model.
+
+Decision:
+
+1. Delete `PROJECT/GATES.md`.
+2. Do not use Gate 1/2/3 as the active project lifecycle or release-control
+   framework.
+3. Preserve older Gate-related decisions and verification notes as historical
+   records where they explain past experiments or evidence.
+4. Track current work in `PROJECT/CURRENT_TASK.md`; use the project's
+   SemVer/release documentation and changelog for release state and history.
+5. Do not infer release readiness from the former Gate statuses.
+
+Consequences:
+
+The 2026-11-10 active-module reconciliation remains a documentation task,
+but it is no longer a Gate 1 item. Its completion is determined by reconciling
+the current configured modules with their source, harness, and live evidence.

@@ -37,7 +37,7 @@ If you use Ares, Phobos, Syringe or CnCNet, see the compatibility sections below
 |---|---|
 | Project stage | Beta (0.2.0) |
 | Current release tag | v0.2.0 (Beta) |
-| Current focus | Gate reset, see PROJECT/GATES.md; research on a Dynamic Unit Behavior Development API |
+| Current focus | Active-module reconciliation under the SemVer release model; see PROJECT/CURRENT_TASK.md |
 | Development API line | 0.2.0 |
 | Game | Yuri's Revenge 1.001 |
 | Primary targets | Singleplayer and Skirmish |
@@ -430,11 +430,11 @@ The equivalent is `cmake --build build --config Release`. The build deploys LuaA
 - Savegame loads do not fire OnScenarioStart, and Lua-state restore across loads is unverified. Add restart guards for your runtime state.
 - No order lease. Lua orders compete with vanilla AI re-selection, and a permanent override primitive does not exist.
 
-Evidence grades for every claim are in PROJECT/GATES.md and FSM/VERIFICATION.md.
+Runtime evidence records are maintained in FSM/VERIFICATION.md.
 
 ## Project status
 
-LuaAPI is a beta-stage project under active development. The API and internal architecture may change as engine integration becomes safer and more complete. Project gates and their current statuses are in PROJECT/GATES.md. The evidence ledger (what is verified, and at which level) is in FSM/VERIFICATION.md.
+LuaAPI is a beta-stage project under active development. The API and internal architecture may change as engine integration becomes safer and more complete. Release versions and history follow the SemVer documentation and changelog. Runtime evidence (what is verified, and at which level) is in FSM/VERIFICATION.md.
 
 ## Minimal example
 
