@@ -4,6 +4,10 @@ One entry per experiment. Status words are load-bearing:
 ACTIVE EXPERIMENTAL / ARCHIVED / REMOVED / CONCEPT. A concept is never
 described with implementation language (see Iron Curtain).
 
+Current active load order (2026-11-10), from `scripts/active_mods.txt`:
+`bounty_hunter` → `smart_ai` → `radiation`. The catalog distinguishes this
+runtime configuration from historical live experiments and inactive modules.
+
 ## War Reporter
 
 - **Name:** War Reporter
