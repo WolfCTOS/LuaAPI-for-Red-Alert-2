@@ -7,6 +7,8 @@ dist/
 x64/
 Release/
 Debug/
+bin/
+obj/
 *.dll
 *.exe
 *.pdb
