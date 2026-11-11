@@ -8,6 +8,7 @@ using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using System.Windows.Threading;
 
 namespace LuaApiLauncher;
 
@@ -51,6 +52,9 @@ public partial class MainWindow : Window
         MapPreviewOverlay.SizeChanged += (_, _) => UpdateStartMarkers();
         // Map rows are list items, not buttons, so they need their own click sound.
         MapList.AddHandler(ListBoxItem.MouseLeftButtonUpEvent, new MouseButtonEventHandler(ListItem_Click));
+        // The background picture drifts with the pointer.
+        RootLayout.MouseMove += (_, e) => OnBackgroundMouseMove(e);
+        RootLayout.MouseLeave += (_, _) => OnBackgroundMouseLeave();
         Loaded += (_, _) => Init();
     }
 
@@ -251,6 +255,88 @@ public partial class MainWindow : Window
             Color.FromArgb(0, 0, 0, 0),
             Color.FromArgb(153, 11, 15, 20))
         { GradientOrigin = new Point(0.5, 0.5), Center = new Point(0.5, 0.5), RadiusX = 0.75, RadiusY = 0.75 };
+
+        SetupBackgroundParallax();
+    }
+
+    // ---------------------------------------------------------------- background parallax
+
+    /// <summary>How far the background picture may drift, in design pixels.</summary>
+    private const double BgShiftX = 18;
+    private const double BgShiftY = 8;
+
+    private DispatcherTimer? _bgTimer;
+    private TranslateTransform? _bgShift;
+    private double _bgTargetX, _bgTargetY;
+    private double _bgPosX, _bgPosY;
+
+    /// <summary>
+    /// Lets the background picture follow the pointer. The picture is zoomed in
+    /// a little so it can move without exposing the window edges, then eased
+    /// towards the pointer position frame by frame.
+    /// </summary>
+    private void SetupBackgroundParallax()
+    {
+        if (BgImage.Visibility != Visibility.Visible) return;
+        if (!SystemParameters.ClientAreaAnimation) return;
+
+        var scale = new ScaleTransform(1.08, 1.08);
+        _bgShift = new TranslateTransform();
+        var group = new TransformGroup();
+        group.Children.Add(scale);
+        group.Children.Add(_bgShift);
+        BgImage.RenderTransform = group;
+        BgImage.RenderTransformOrigin = new Point(0.5, 0.5);
+
+        _bgTimer = new DispatcherTimer(DispatcherPriority.Render) { Interval = TimeSpan.FromMilliseconds(16) };
+        _bgTimer.Tick += (_, _) => StepBackgroundParallax();
+    }
+
+    private void OnBackgroundMouseMove(MouseEventArgs e)
+    {
+        if (_bgShift == null || _bgTimer == null) return;
+
+        var p = e.GetPosition(RootLayout);
+        var w = RootLayout.ActualWidth;
+        var h = RootLayout.ActualHeight;
+        if (w <= 0 || h <= 0) return;
+
+        var nx = Math.Clamp((p.X / w) * 2 - 1, -1, 1);
+        var ny = Math.Clamp((p.Y / h) * 2 - 1, -1, 1);
+        _bgTargetX = nx * BgShiftX;
+        _bgTargetY = ny * BgShiftY;
+
+        if (!_bgTimer.IsEnabled) _bgTimer.Start();
+    }
+
+    /// <summary>Pointer left the window: the picture drifts back to the middle.</summary>
+    private void OnBackgroundMouseLeave()
+    {
+        _bgTargetX = 0;
+        _bgTargetY = 0;
+        if (_bgTimer != null && !_bgTimer.IsEnabled) _bgTimer.Start();
+    }
+
+    private void StepBackgroundParallax()
+    {
+        if (_bgShift == null || _bgTimer == null) return;
+
+        var dx = _bgTargetX - _bgPosX;
+        var dy = _bgTargetY - _bgPosY;
+        if (Math.Abs(dx) < 0.05 && Math.Abs(dy) < 0.05)
+        {
+            _bgPosX = _bgTargetX;
+            _bgPosY = _bgTargetY;
+            _bgShift.X = _bgPosX;
+            _bgShift.Y = _bgPosY;
+            _bgTimer.Stop();
+            return;
+        }
+
+        _bgPosX += dx * 0.15;
+        _bgPosY += dy * 0.15;
+        _bgShift.X = _bgPosX;
+        _bgShift.Y = _bgPosY;
     }
 
     private static ImageSource MakeNoise(int w, int h)
