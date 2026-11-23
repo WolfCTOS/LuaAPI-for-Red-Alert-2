@@ -1,10 +1,21 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace LuaApiLauncher;
+
+/// <summary>
+/// An error whose text is meant for the player. The launcher shows such a
+/// message as it is instead of replacing it with a generic "something went
+/// wrong".
+/// </summary>
+public sealed class UserFacingException : Exception
+{
+    public UserFacingException(string message) : base(message) { }
+}
 
 public sealed class ModFile
 {
@@ -74,6 +85,9 @@ public sealed class MapEntry
     public bool InMpMaps { get; set; }
     public bool HasMpSection { get; set; }
 
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool IsFavorite { get; set; }
+
     public override string ToString() => string.IsNullOrWhiteSpace(DisplayName) ? Name : DisplayName;
 }
 
@@ -98,20 +112,84 @@ public sealed class ClientLaunchDefinition
 public sealed class IniFile
 {
     private readonly List<string> _lines;
-    private IniFile(List<string> lines) => _lines = lines;
+    private readonly Encoding _encoding;
+    private readonly bool _bom;
+
+    private IniFile(List<string> lines, Encoding encoding, bool bom)
+    {
+        _lines = lines;
+        _encoding = encoding;
+        _bom = bom;
+    }
+
+    /// <summary>
+    /// The ANSI code page of a Russian install. The game reads its INI files
+    /// as ANSI, so a file that was edited in Notepad must be written back the
+    /// same way - otherwise every non-ASCII character is destroyed.
+    /// </summary>
+    private static readonly Encoding Ansi = CreateAnsi();
+
+    private static Encoding CreateAnsi()
+    {
+        try
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+            return Encoding.GetEncoding(1251);
+        }
+        catch
+        {
+            return Encoding.Latin1;
+        }
+    }
 
     public static IniFile Load(string path)
     {
         try
         {
-            if (!File.Exists(path)) return new(new List<string>());
-            return new(File.ReadAllLines(path).ToList());
+            if (!File.Exists(path)) return new(new List<string>(), Ansi, false);
+
+            var bytes = File.ReadAllBytes(path);
+            var (encoding, bom) = DetectEncoding(bytes);
+            var text = encoding.GetString(bytes);
+            if (bom && text.Length > 0 && text[0] == '\uFEFF') text = text.Substring(1);
+            return new(SplitLines(text), encoding, bom);
         }
         catch (Exception ex)
         {
             LauncherLog.Error("Failed to read INI file: " + path, ex);
-            return new(new List<string>());
+            return new(new List<string>(), Ansi, false);
         }
+    }
+
+    /// <summary>
+    /// The encoding of the file: UTF-8 with a BOM when it has one, UTF-8 when
+    /// the bytes are valid UTF-8, otherwise the ANSI code page.
+    /// </summary>
+    private static (Encoding encoding, bool bom) DetectEncoding(byte[] bytes)
+    {
+        if (bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF)
+            return (new UTF8Encoding(true), true);
+        if (bytes.Length >= 2 && bytes[0] == 0xFF && bytes[1] == 0xFE) return (Encoding.Unicode, false);
+        if (bytes.Length >= 2 && bytes[0] == 0xFE && bytes[1] == 0xFF) return (Encoding.BigEndianUnicode, false);
+
+        try
+        {
+            var strict = new UTF8Encoding(false, throwOnInvalidBytes: true);
+            strict.GetString(bytes);
+            return (new UTF8Encoding(false), false);
+        }
+        catch (DecoderFallbackException)
+        {
+            return (Ansi, false);
+        }
+    }
+
+    private static List<string> SplitLines(string text)
+    {
+        var lines = new List<string>();
+        using var reader = new StringReader(text);
+        while (reader.ReadLine() is { } line) lines.Add(line);
+        return lines;
     }
 
     public IEnumerable<(string Key, string Value)> Section(string section)
@@ -141,6 +219,9 @@ public sealed class IniFile
         var start = SectionStart(section);
         if (start < 0)
         {
+            // A missing section is appended with a blank line in front of it,
+            // so it does not visually merge with the section above.
+            if (_lines.Count > 0 && _lines[^1].Trim().Length > 0) _lines.Add("");
             _lines.Add("[" + section + "]");
             _lines.Add(key + "=" + value);
             _lines.Add("");
@@ -174,7 +255,23 @@ public sealed class IniFile
         }
     }
 
-    public void Save(string path) => File.WriteAllLines(path, _lines);
+    /// <summary>
+    /// Writes the file back in the encoding it was read in. Writing UTF-8 into
+    /// a file the game reads as ANSI corrupts every non-ASCII character.
+    /// </summary>
+    public void Save(string path)
+    {
+        var text = string.Join(Environment.NewLine, _lines) + Environment.NewLine;
+        var bytes = _encoding.GetBytes(text);
+        if (_bom && !(bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF))
+        {
+            var withBom = new byte[bytes.Length + 3];
+            withBom[0] = 0xEF; withBom[1] = 0xBB; withBom[2] = 0xBF;
+            Array.Copy(bytes, 0, withBom, 3, bytes.Length);
+            bytes = withBom;
+        }
+        File.WriteAllBytes(path, bytes);
+    }
 
     private int SectionStart(string section)
     {
@@ -188,7 +285,7 @@ public sealed class IniFile
 public sealed class ClientSettings
 {
     public int ResolutionX = 1366, ResolutionY = 768;
-    public int DetailLevel = 2, GameSpeed = 1, Difficulty = 1;
+    public int DetailLevel = 2, GameSpeed = 6, Difficulty = 1;
     public string Renderer = "Default", Language = "en";
     public bool BorderlessClient = true, WindowedMode, IntegerScaling, ToolTips = true;
     public int GameResX = 1366, GameResY = 768;
@@ -204,7 +301,7 @@ public sealed class ClientSettings
         s.ResolutionX = Num(ini.Get("Video", "ClientResolutionX"), s.ResolutionX);
         s.ResolutionY = Num(ini.Get("Video", "ClientResolutionY"), s.ResolutionY);
         s.DetailLevel = Num(ini.Get("Options", "DetailLevel"), s.DetailLevel);
-        s.GameSpeed = Num(ini.Get("Options", "GameSpeed"), s.GameSpeed);
+        s.GameSpeed = LauncherCore.NormalizeEngineGameSpeed(Num(ini.Get("Options", "GameSpeed"), s.GameSpeed));
         s.Difficulty = Num(ini.Get("Options", "Difficulty"), s.Difficulty);
         s.Renderer = ini.Get("Compatibility", "Renderer") ?? s.Renderer;
         s.Language = L10n.Normalize(ini.Get("Options", "Translation") ?? s.Language);
@@ -281,8 +378,13 @@ public sealed class ClientSettings
 public sealed class SkirmishPlayer
 {
     public string Name { get; set; } = "";
-    /// <summary>Index into the faction list (Resources\GameOptions.ini [General] Sides), or -1 for "Random".</summary>
-    public int Side { get; set; } = -1;
+    /// <summary>
+    /// Country index in the rules' [Countries] table (rulesmd.ini), or -1 for
+    /// "Random". The spawner writes this index into spawn.ini, so it is a
+    /// country, not a side - the old key "Side" is kept for the saved config.
+    /// </summary>
+    [JsonPropertyName("Side")]
+    public int Country { get; set; } = -1;
     /// <summary>Index into the colour list (Resources\GameOptions.ini [MPColors]).</summary>
     public int Color { get; set; }
     /// <summary>Team / alliance slot, 0-7.</summary>
@@ -299,7 +401,11 @@ public sealed class SkirmishPlayer
 public sealed class SkirmishOptions
 {
     public int Credits { get; set; } = 10000;      // cmbCredits default index 5
-    public int GameSpeed { get; set; } = 6;         // cmbGameSpeedCap default index 0
+    /// <summary>
+    /// UI game speed: 1 = slowest, 7 = fastest (7 levels). Converted to the
+    /// engine/spawner value 0..6 (0 fastest, 6 slowest) when launching.
+    /// </summary>
+    public int GameSpeed { get; set; } = 7;         // fastest by default
     public int UnitCount { get; set; } = 0;         // cmbStartingUnits default index 10
     public bool ShortGame { get; set; } = true;     // chkShortGame
     public bool BridgeDestroy { get; set; } = true; // chkDestrBridges
@@ -325,6 +431,8 @@ public sealed class SkirmishConfig
     public List<SkirmishPlayer> Players { get; set; } = new();
     /// <summary>Saved mod presets: name -> mod ids.</summary>
     public Dictionary<string, List<string>> Presets { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+    /// <summary>Maps marked as favorites (map Relative paths), shown at the top of the skirmish map list.</summary>
+    public List<string> FavoriteMaps { get; set; } = new();
 }
 
 public sealed class LauncherConfig
@@ -345,18 +453,39 @@ public sealed class LauncherConfig
     /// <summary>State of the skirmish screen: map, options, players, presets.</summary>
     public SkirmishConfig Skirmish { get; set; } = new();
 
-    public LauncherConfig Normalize() => new()
+    public LauncherConfig Normalize()
     {
-        CncNet = string.IsNullOrWhiteSpace(CncNet) ? "CnCNetYRLauncher.exe" : CncNet,
-        Syringe = string.IsNullOrWhiteSpace(Syringe) ? "Syringe.exe" : Syringe,
-        SyringeArgs = SyringeArgs is { Count: > 0 } ? SyringeArgs : new() { "-i=Ares.dll", "-i=Phobos.dll", "-i=LuaAPI.dll", "gamemd.exe" },
-        Gamemd = string.IsNullOrWhiteSpace(Gamemd) ? "gamemd.exe" : Gamemd,
-        GamemdArgs = GamemdArgs is { Count: > 0 } ? GamemdArgs : new() { "-CD" },
-        ActiveMods = ActiveMods ?? new(),
-        Language = L10n.Normalize(Language),
-        UiSoundsEnabled = UiSoundsEnabled,
-        Skirmish = Skirmish ?? new SkirmishConfig()
-    };
+        var skirmish = Skirmish ?? new SkirmishConfig();
+
+        // The map is kept relative to the game folder, so the selection
+        // survives moving the installation. Configurations written by an older
+        // launcher hold an absolute path and are converted here.
+        if (!string.IsNullOrWhiteSpace(skirmish.SelectedMap) && Path.IsPathRooted(skirmish.SelectedMap))
+        {
+            try
+            {
+                var rel = Path.GetRelativePath(LauncherCore.Root, skirmish.SelectedMap).Replace('\\', '/');
+                if (!rel.StartsWith("..", StringComparison.Ordinal)) skirmish.SelectedMap = rel;
+            }
+            catch
+            {
+                // A path on another drive stays as it is.
+            }
+        }
+
+        return new()
+        {
+            CncNet = string.IsNullOrWhiteSpace(CncNet) ? "CnCNetYRLauncher.exe" : CncNet,
+            Syringe = string.IsNullOrWhiteSpace(Syringe) ? "Syringe.exe" : Syringe,
+            SyringeArgs = SyringeArgs is { Count: > 0 } ? SyringeArgs : new() { "-i=Ares.dll", "-i=Phobos.dll", "-i=LuaAPI.dll", "gamemd.exe" },
+            Gamemd = string.IsNullOrWhiteSpace(Gamemd) ? "gamemd.exe" : Gamemd,
+            GamemdArgs = GamemdArgs is { Count: > 0 } ? GamemdArgs : new() { "-CD" },
+            ActiveMods = ActiveMods ?? new(),
+            Language = L10n.Normalize(Language),
+            UiSoundsEnabled = UiSoundsEnabled,
+            Skirmish = skirmish
+        };
+    }
 }
 
 public static class LauncherCore
@@ -365,10 +494,40 @@ public static class LauncherCore
     public const int MinSkirmishSlots = 2;
     public const int MaxSkirmishSlots = 8;
 
+    private static readonly object _modsGate = new();
+    private static (long Ticks, int DirCount, bool Census, List<ModInfo> Mods)? _modsCache;
+    private static readonly object _colorsGate = new();
+    private static (long Ticks, long Size, List<(string Name, string Rgb)> Colors)? _colorsCache;
+
+    /// <summary>Drops the cached mod list so the next scan reads the disk.</summary>
+    public static void InvalidateModsCache()
+    {
+        lock (_modsGate) _modsCache = null;
+    }
+
     public static string Root => AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
     public static string ModsDir => Path.Combine(Root, "mods");
     public static string ActiveFile => Path.Combine(ModsDir, "active_mods.txt");
     public static string CfgFile => Path.Combine(Root, "launcher_config.json");
+
+    /// <summary>
+    /// The absolute path of a file that is stored relative to the game folder.
+    /// Configurations that were written by an older launcher hold an absolute
+    /// path, so both forms are accepted.
+    /// </summary>
+    public static string ResolveGamePath(string? stored)
+    {
+        if (string.IsNullOrWhiteSpace(stored)) return "";
+        try
+        {
+            if (Path.IsPathRooted(stored)) return Path.GetFullPath(stored);
+            return Path.GetFullPath(Path.Combine(Root, stored.Replace('/', Path.DirectorySeparatorChar)));
+        }
+        catch
+        {
+            return stored;
+        }
+    }
 
     private static readonly JsonSerializerOptions JRead = new() { PropertyNameCaseInsensitive = true, ReadCommentHandling = JsonCommentHandling.Skip, AllowTrailingCommas = true };
     private static readonly JsonSerializerOptions JWrite = new() { WriteIndented = true, Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
@@ -389,14 +548,23 @@ public static class LauncherCore
             }
         }
         // active_mods.txt is the runtime source of truth for LuaAPI; mirror into config
-        try { cfg.ActiveMods = ReadActiveIds(mods); }
+        try { cfg.ActiveMods = ReadActiveIds(mods ?? ScanMods(withFileCensus: false)); }
         catch (Exception ex) { LauncherLog.Error("Failed to read active_mods.txt", ex); cfg.ActiveMods = new HashSet<string>(StringComparer.Ordinal); }
         return cfg;
     }
 
     public static void SaveConfig(LauncherConfig cfg)
     {
-        File.WriteAllText(CfgFile, JsonSerializer.Serialize(cfg.Normalize(), JWrite));
+        try
+        {
+            File.WriteAllText(CfgFile, JsonSerializer.Serialize(cfg.Normalize(), JWrite));
+        }
+        catch (Exception ex)
+        {
+            // The caller may not care, but a lost configuration is worth a line.
+            LauncherLog.Error("Failed to save launcher_config.json", ex);
+            throw;
+        }
     }
 
     public static string Ra2MdIniPath => Path.Combine(Root, "RA2MD.INI");
@@ -419,8 +587,36 @@ public static class LauncherCore
     /// <summary>
     /// Scans mods\&lt;folder&gt; and collects the .lua / .json files each mod ships
     /// (recursively, so helper modules in sub-folders are listed too).
+    ///
+    /// The file census is the expensive part of the scan; it can be skipped
+    /// when only the ids and the flags of the mods are needed.
     /// </summary>
-    public static List<ModInfo> ScanMods()
+    public static List<ModInfo> ScanMods(bool withFileCensus = true)
+    {
+        long ticks = 0; int dirCount = 0;
+        try
+        {
+            if (Directory.Exists(ModsDir))
+            {
+                var di = new DirectoryInfo(ModsDir);
+                ticks = di.LastWriteTimeUtc.Ticks;
+                dirCount = di.GetDirectories().Length;
+            }
+        }
+        catch { }
+
+        lock (_modsGate)
+        {
+            if (_modsCache is { } c && c.Ticks == ticks && c.DirCount == dirCount && c.Census == withFileCensus)
+                return c.Mods;
+        }
+
+        var mods = ScanModsCore(withFileCensus);
+        lock (_modsGate) _modsCache = (ticks, dirCount, withFileCensus, mods);
+        return mods;
+    }
+
+    private static List<ModInfo> ScanModsCore(bool withFileCensus)
     {
         var mods = new List<ModInfo>();
         if (!Directory.Exists(ModsDir)) return mods;
@@ -459,25 +655,35 @@ public static class LauncherCore
                     if (info.Dependencies.Count > 0) warns.Add(L10n.T("Зависимости: ") + string.Join(", ", info.Dependencies));
                     info.RawWarnings = string.Join("\n", warns);
                 }
-                catch { info.Description = L10n.T("(ошибка чтения mod.json)"); }
-            }
-
-            try
-            {
-                foreach (var file in Directory.EnumerateFiles(dir, "*", SearchOption.AllDirectories))
+                catch (Exception ex)
                 {
-                    info.TotalFileCount++;
-                    var ext = Path.GetExtension(file).ToLowerInvariant();
-                    if (ext != ".lua" && ext != ".json") continue;
-                    var entry = new ModFile
-                    {
-                        RelPath = Path.GetRelativePath(dir, file).Replace('\\', '/'),
-                        Size = new FileInfo(file).Length
-                    };
-                    if (ext == ".lua") info.LuaFiles.Add(entry); else info.JsonFiles.Add(entry);
+                    info.Description = L10n.T("(ошибка чтения mod.json)");
+                    LauncherLog.Error($"mod.json of '{folder}' is unreadable", ex);
                 }
             }
-            catch { }
+
+            if (withFileCensus)
+            {
+                try
+                {
+                    foreach (var file in Directory.EnumerateFiles(dir, "*", SearchOption.AllDirectories))
+                    {
+                        info.TotalFileCount++;
+                        var ext = Path.GetExtension(file).ToLowerInvariant();
+                        if (ext != ".lua" && ext != ".json") continue;
+                        var entry = new ModFile
+                        {
+                            RelPath = Path.GetRelativePath(dir, file).Replace('\\', '/'),
+                            Size = new FileInfo(file).Length
+                        };
+                        if (ext == ".lua") info.LuaFiles.Add(entry); else info.JsonFiles.Add(entry);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    LauncherLog.Error($"File census of mod '{folder}' failed", ex);
+                }
+            }
 
             info.LuaFiles = info.LuaFiles.OrderBy(f => f.RelPath, StringComparer.OrdinalIgnoreCase).ToList();
             info.JsonFiles = info.JsonFiles.OrderBy(f => f.RelPath, StringComparer.OrdinalIgnoreCase).ToList();
@@ -515,38 +721,142 @@ public static class LauncherCore
         {
             var path = Path.Combine(Root, "RA2MD.INI");
             var ini = IniFile.Load(path);
-            ini.Set("Options", "GameSpeed", Math.Clamp(options.GameSpeed, 1, 6).ToString());
+            var ui = NormalizeUiGameSpeed(options.GameSpeed);
+            var speed = UiToEngineGameSpeed(ui).ToString();
+            // [Options] is the canonical location; some modes/installations also
+            // keep a per-mode GameSpeed key. Update every section that already
+            // defines it so a stale value (e.g. Skirmish/LAN left at 1) cannot
+            // override the selected speed on launch.
+            ini.Set("Options", "GameSpeed", speed);
+            var sections = ini.Sections().Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            foreach (var section in sections)
+            {
+                if (section.Equals("Options", StringComparison.OrdinalIgnoreCase)) continue;
+                if (ini.Get(section, "GameSpeed") != null)
+                    ini.Set(section, "GameSpeed", speed);
+            }
             ini.Save(path);
+            LauncherLog.Step("skirmish", $"RA2MD.INI GameSpeed = {speed} (ui {ui}, {GameSpeedLabel(ui)})");
         }
-        catch { }
+        catch (Exception ex) { LauncherLog.Error("Failed to apply the skirmish game speed", ex); }
+    }
+
+    public const int MinUiGameSpeed = 1;
+    public const int MaxUiGameSpeed = 7;
+    public const int MinEngineGameSpeed = 0;
+    public const int MaxEngineGameSpeed = 6;
+
+    /// <summary>UI speed 1..7 (1 slowest, 7 fastest) -> engine/spawner 0..6 (0 fastest, 6 slowest).</summary>
+    public static int UiToEngineGameSpeed(int uiSpeed) => 7 - NormalizeUiGameSpeed(uiSpeed);
+
+    /// <summary>Engine/spawner speed 0..6 (0 fastest, 6 slowest) -> UI speed 1..7 (1 slowest, 7 fastest).</summary>
+    public static int EngineToUiGameSpeed(int engineSpeed) => 7 - Math.Clamp(engineSpeed, MinEngineGameSpeed, MaxEngineGameSpeed);
+
+    public static int NormalizeUiGameSpeed(int uiSpeed) => Math.Clamp(uiSpeed, MinUiGameSpeed, MaxUiGameSpeed);
+
+    public static int NormalizeEngineGameSpeed(int engineSpeed) => Math.Clamp(engineSpeed, MinEngineGameSpeed, MaxEngineGameSpeed);
+
+    public static string GameSpeedLabel(int uiSpeed) => NormalizeUiGameSpeed(uiSpeed).ToString(CultureInfo.InvariantCulture);
+
+    public static IReadOnlyList<string> GameSpeedLabels()
+        => Enumerable.Range(MinUiGameSpeed, MaxUiGameSpeed - MinUiGameSpeed + 1).Select(GameSpeedLabel).ToList();
+
+    public static int ParseUiGameSpeedLabel(object? item, int fallbackUi)
+    {
+        if (item == null) return NormalizeUiGameSpeed(fallbackUi);
+        if (item is int i) return NormalizeUiGameSpeed(i);
+        var s = item.ToString() ?? "";
+        var digits = new string(s.TakeWhile(char.IsDigit).ToArray());
+        return int.TryParse(digits, out var n) ? NormalizeUiGameSpeed(n) : NormalizeUiGameSpeed(fallbackUi);
     }
 
     /// <summary>
-    /// Factions for the skirmish player table, taken from the client's own
-    /// definition (Resources\GameOptions.ini [General] Sides).
+    /// Migrates/skips legacy values: config historically stored UI 1..6 with opposite/inconsistent meaning.
+    /// Map old 1..6 (1 slowest-old, 6 fastest-old in old launcher intent) to new 1..7 keeping relative ends.
     /// </summary>
-    public static List<string> SkirmishFactions()
+    public static int MigrateUiGameSpeed(int value)
+    {
+        // New valid UI range
+        if (value >= MinUiGameSpeed && value <= MaxUiGameSpeed) return value;
+        // Old common 1..6 range -> stretch to 1..7 preserving endpoints
+        if (value >= 1 && value <= 6) return value == 6 ? 7 : value;
+        return MaxUiGameSpeed;
+    }
+
+    /// <summary>
+    /// Factions for the skirmish player table, taken from the rules file.
+    /// The rules' [Factions] section names the factions and the houses they
+    /// consist of; the spawner identifies a house by its index in the rules'
+    /// [Countries] table, so the list follows the rules instead of a hardcoded
+    /// client list.
+    /// </summary>
+    public static List<FactionOption> SkirmishFactions()
+    {
+        var factions = RulesCountries.Factions();
+        if (factions.Count > 0) return factions;
+
+        // No [Factions] section: every playable country is a faction of its own.
+        var countries = RulesCountries.Playable();
+        if (countries.Count > 0)
+            return countries.Select(c => new FactionOption { Name = c.Name, Countries = new List<int> { c.Index } }).ToList();
+
+        return FallbackCountries();
+    }
+
+    /// <summary>
+    /// Stock client list (Resources\GameOptions.ini [General] Sides), used only
+    /// when the rules file cannot be read.
+    /// </summary>
+    private static List<FactionOption> FallbackCountries()
     {
         var ini = IniFile.Load(Path.Combine(Root, "Resources", "GameOptions.ini"));
-        var sides = ini.Get("General", "Sides") ?? "";
-        var list = sides.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
-        if (list.Count == 0) list.AddRange(new[] { "America", "Russia" });
+        var sides = (ini.Get("General", "Sides") ?? "")
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var list = new List<FactionOption>();
+        for (var i = 0; i < sides.Length; i++)
+            list.Add(new FactionOption { Name = sides[i], Countries = new List<int> { i } });
+        if (list.Count == 0)
+            list.AddRange(new[]
+            {
+                new FactionOption { Name = "America", Countries = new List<int> { 0 } },
+                new FactionOption { Name = "Russia", Countries = new List<int> { 1 } }
+            });
         return list;
     }
 
     /// <summary>Player colours: name and "r,g,b" for the swatch.</summary>
     public static List<(string Name, string Rgb)> SkirmishColors()
     {
-        var ini = IniFile.Load(Path.Combine(Root, "Resources", "GameOptions.ini"));
-        var list = new List<(string, string)>();
-        foreach (var (key, value) in ini.Section("MPColors"))
+        var path = Path.Combine(Root, "Resources", "GameOptions.ini");
+        long ticks = 0, size = 0;
+        try
         {
-            var parts = value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-            if (parts.Length < 3) continue;
-            list.Add((key, $"{parts[0]},{parts[1]},{parts[2]}"));
+            if (File.Exists(path))
+            {
+                var fi = new FileInfo(path);
+                ticks = fi.LastWriteTimeUtc.Ticks;
+                size = fi.Length;
+            }
         }
-        if (list.Count == 0) list.Add(("Yellow", "222,227,8"));
-        return list;
+        catch { }
+
+        lock (_colorsGate)
+        {
+            if (_colorsCache is { } c && c.Ticks == ticks && c.Size == size)
+                return c.Colors;
+
+            var ini = IniFile.Load(path);
+            var list = new List<(string, string)>();
+            foreach (var (key, value) in ini.Section("MPColors"))
+            {
+                var parts = value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                if (parts.Length < 3) continue;
+                list.Add((key, $"{parts[0]},{parts[1]},{parts[2]}"));
+            }
+            if (list.Count == 0) list.Add(("Yellow", "222,227,8"));
+            _colorsCache = (ticks, size, list);
+            return list;
+        }
     }
 
     /// <summary>
@@ -559,6 +869,13 @@ public static class LauncherCore
         cfg.Options ??= new SkirmishOptions();
         cfg.Players ??= new List<SkirmishPlayer>();
         cfg.Presets ??= new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+        cfg.FavoriteMaps ??= new List<string>();
+
+        // Migrate legacy stored UI speed (1..6) to current 1..7 UI scale.
+        cfg.Options.GameSpeed = MigrateUiGameSpeed(cfg.Options.GameSpeed);
+
+        // A superweapon mode outside the known range falls back to "all".
+        cfg.Options.SuperWeapons = SuperWeaponModes.Clamp(cfg.Options.SuperWeapons);
 
         if (cfg.Players.Count > MaxSkirmishSlots)
             cfg.Players.RemoveRange(MaxSkirmishSlots, cfg.Players.Count - MaxSkirmishSlots);
@@ -574,7 +891,7 @@ public static class LauncherCore
     public static SkirmishPlayer NewPlayer(bool isHuman) => new()
     {
         Name = isHuman ? L10n.T("ИГРОК") : L10n.F("ИИ {0}", 1),
-        Side = -1,
+        Country = -1,
         Color = 0,
         Team = 0,
         Start = 0,
@@ -714,21 +1031,49 @@ public static class LauncherCore
         return false;
     }
 
+    /// <summary>
+    /// The mods that are switched on. The file is the runtime source of truth
+    /// for the LuaAPI loader.
+    ///
+    /// Ids that do not belong to any installed mod are dropped: the loader
+    /// would try to load them on every start and fail there, and the counter
+    /// in the status line would not match the list in the window.
+    /// </summary>
     public static HashSet<string> ReadActiveIds(IEnumerable<ModInfo>? mods = null)
     {
         var set = new HashSet<string>(StringComparer.Ordinal);
+        var known = mods?.ToList();
+
         if (!File.Exists(ActiveFile))
         {
             // First run: fall back to the defaults the mods declare themselves.
-            if (mods != null) foreach (var id in DefaultActiveIds(mods)) set.Add(id);
+            if (known != null) foreach (var id in DefaultActiveIds(known)) set.Add(id);
+            LauncherLog.Step("mods", "active_mods.txt is missing, using the defaults of the mods");
             return set;
         }
+
         foreach (var raw in File.ReadAllLines(ActiveFile))
         {
             var s = raw.Trim();
             if (s.Length == 0 || s.StartsWith('#')) continue;
             set.Add(s);
         }
+
+        if (known != null)
+        {
+            var stale = set
+                .Where(id => !known.Any(m => string.Equals(m.Id, id, StringComparison.Ordinal)))
+                .ToList();
+            foreach (var id in stale) set.Remove(id);
+            if (stale.Count > 0)
+                LauncherLog.Step("mods", $"dropped {stale.Count} unknown mod id(s) from active_mods.txt: {string.Join(", ", stale)}");
+        }
+
+        // An empty list is a valid choice (no mods), but it used to be silent:
+        // the game simply started without any mod and nobody knew why.
+        if (set.Count == 0)
+            LauncherLog.Warn("active_mods.txt lists no mods - the game will start without any mod");
+
         return set;
     }
 
@@ -761,10 +1106,17 @@ public static class LauncherCore
         }
         var lines = new List<string>(header) { "" };
         foreach (var m in mods) if (selected.Contains(m.Id)) lines.Add(m.Id);
-        foreach (var id in selected.OrderBy(x => x, StringComparer.Ordinal))
-            if (!mods.Any(m => string.Equals(m.Id, id, StringComparison.Ordinal))) lines.Add(id);
+
+        // Ids without an installed mod are not written back: the loader would
+        // try to load them on every start and fail there.
+        var unknown = selected
+            .Where(id => !mods.Any(m => string.Equals(m.Id, id, StringComparison.Ordinal)))
+            .ToList();
+        if (unknown.Count > 0)
+            LauncherLog.Step("mods", $"not written, no such mod: {string.Join(", ", unknown)}");
 
         File.WriteAllLines(ActiveFile, lines, new UTF8Encoding(false));
+        LauncherLog.Step("mods", $"active_mods.txt written: {string.Join(", ", lines.Where(l => !l.StartsWith('#') && l.Length > 0))}");
         if (cfg != null) { cfg.ActiveMods = new HashSet<string>(selected, StringComparer.Ordinal); SaveConfig(cfg); }
     }
 
@@ -783,7 +1135,9 @@ public static class LauncherCore
         if (!File.Exists(path)) throw new FileNotFoundException(L10n.T("Не найден: ") + path);
         var psi = new ProcessStartInfo(path) { WorkingDirectory = Root, UseShellExecute = false };
         if (args != null) foreach (var a in args) if (!string.IsNullOrWhiteSpace(a)) psi.ArgumentList.Add(a);
-        Process.Start(psi);
+        LauncherLog.Step("launch", $"exec {Path.GetFileName(path)} {string.Join(' ', psi.ArgumentList)}");
+        var proc = Process.Start(psi);
+        LauncherLog.Step("launch", $"started pid={(proc != null ? proc.Id : 0)}");
     }
 
     /// <summary>
@@ -825,10 +1179,14 @@ public static class LauncherCore
         var def = ReadClientDefinition();
         var launcherExe = Exists(def.LauncherExe) ? def.LauncherExe : cfg.Syringe;
 
-        var (sOk, _) = CheckExe(launcherExe);
+        LauncherLog.Step("launch", $"game executable = {gameExe}");
+        LauncherLog.Step("launch", $"client definition = {(def.Found ? "found" : "MISSING")}, launcher = {launcherExe}");
+
+        var (sOk, sMiss) = CheckExe(launcherExe);
         if (!sOk)
         {
             // Without Syringe we cannot inject the spawner/LuaAPI hooks reliably.
+            LauncherLog.Warn("Syringe not found, starting the game directly (" + sMiss + ")");
             Launch(gameExe, new List<string> { "-SPAWN", "-CD" });
             return DateTime.UtcNow;
         }
@@ -836,6 +1194,204 @@ public static class LauncherCore
         var args = BuildSpawnSyringeArgs(gameExe, def);
         Launch(launcherExe, args);
         return DateTime.UtcNow;
+    }
+
+    public sealed class GameSpeedConstraint
+    {
+        public bool Disable { get; init; }
+        /// <summary>Engine cap value 0..6 (0 fastest). When set, effective engine speed must be >= cap (i.e. not faster than cap).</summary>
+        public int? MaxEngineSpeed { get; init; }
+        public string Source { get; init; } = "";
+
+        public int ApplyUi(int uiSpeed)
+        {
+            uiSpeed = NormalizeUiGameSpeed(uiSpeed);
+            if (Disable) return uiSpeed; // kept for UI state; actual lock handled separately
+            if (MaxEngineSpeed is int cap)
+            {
+                var engine = UiToEngineGameSpeed(uiSpeed);
+                if (engine < cap) engine = cap; // lower engine = faster, cap limits fastest allowed
+                return EngineToUiGameSpeed(engine);
+            }
+            return uiSpeed;
+        }
+
+        public string? DescribeLock(int requestedUi)
+        {
+            requestedUi = NormalizeUiGameSpeed(requestedUi);
+            if (Disable) return L10n.F("Скорость игры зафиксирована режимом/картой ({0}).", Source);
+            if (MaxEngineSpeed is int cap)
+            {
+                var limitedUi = EngineToUiGameSpeed(cap);
+                if (UiToEngineGameSpeed(requestedUi) < cap)
+                    return L10n.F("Режим/карта ограничивает максимальную скорость до «{0}» ({1}).", GameSpeedLabel(limitedUi), Source);
+            }
+            return null;
+        }
+    }
+
+    /// <summary>Reads speed lock/cap from mode/map/global forced spawn options.</summary>
+    public static GameSpeedConstraint GetSkirmishSpeedConstraint(string? selectedMode)
+    {
+        try
+        {
+            var mode = selectedMode ?? "";
+            var merged = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+            void Merge(string? sectionName, IniFile src)
+            {
+                if (string.IsNullOrWhiteSpace(sectionName)) return;
+                foreach (var (k, v) in src.Section(sectionName)) merged[k] = v;
+            }
+
+            // Global forced options
+            try
+            {
+                var go = IniFile.Load(Path.Combine(Root, "Resources", "GameOptions.ini"));
+                Merge("ForcedSpawnIniOptions", go);
+            }
+            catch { }
+
+            // Mode-specific forced options
+            try
+            {
+                var ini = IniFile.Load(Path.Combine(Root, "INI", "MPMaps.ini"));
+                var forcedSection = ini.Get(mode, "ForcedSpawnIniOptions");
+                Merge(forcedSection, ini);
+                // Some configs may put options directly on mode section
+                Merge(mode, ini);
+            }
+            catch { }
+
+            bool disable = merged.TryGetValue("chkDisableGameSpeed", out var dv) && IsTrue(dv)
+                        || merged.TryGetValue("DisableGameSpeed", out var dv2) && IsTrue(dv2);
+            int? cap = null;
+            foreach (var key in new[] { "cmbGameSpeedCapSkirmish", "cmbGameSpeedCap", "cmbGameSpeedCapMultiplayer", "GameSpeedCap" })
+            {
+                if (merged.TryGetValue(key, out var v) && int.TryParse(v, out var n)) { cap = NormalizeEngineGameSpeed(n); break; }
+            }
+            // If forced options hard-set GameSpeed, treat as lock to that value.
+            if (!disable && merged.TryGetValue("GameSpeed", out var gs) && int.TryParse(gs, out var forcedEngine))
+            {
+                cap = NormalizeEngineGameSpeed(forcedEngine);
+                disable = true;
+            }
+
+            return new GameSpeedConstraint { Disable = disable, MaxEngineSpeed = cap, Source = string.IsNullOrWhiteSpace(mode) ? "forced" : mode };
+        }
+        catch { return new GameSpeedConstraint(); }
+    }
+
+    public static string BuildSpeedDiagnosticsDump(LauncherConfig cfg, int? effectiveUiOverride = null)
+    {
+        var sb = new StringBuilder();
+        var requestedUi = NormalizeUiGameSpeed(cfg.Skirmish.Options.GameSpeed);
+        var effectiveUi = NormalizeUiGameSpeed(effectiveUiOverride ?? requestedUi);
+        var requestedEngine = UiToEngineGameSpeed(requestedUi);
+        var effectiveEngine = UiToEngineGameSpeed(effectiveUi);
+        sb.AppendLine($"UI requested={requestedUi} ({GameSpeedLabel(requestedUi)}), engine={requestedEngine}");
+        if (effectiveUi != requestedUi)
+            sb.AppendLine($"UI effective={effectiveUi} ({GameSpeedLabel(effectiveUi)}), engine={effectiveEngine}");
+        try
+        {
+            var ra2 = IniFile.Load(Ra2MdIniPath);
+            foreach (var sec in new[] { "Options", "Skirmish", "LAN", "WonlinePref" })
+                sb.AppendLine($"RA2MD.INI [{sec}] GameSpeed={ra2.Get(sec, "GameSpeed") ?? "(missing)"}");
+        }
+        catch (Exception ex) { sb.AppendLine($"RA2MD.INI read error: {ex.Message}"); }
+        try
+        {
+            var spawnPath = Path.Combine(Root, "spawn.ini");
+            if (File.Exists(spawnPath))
+            {
+                var spawn = IniFile.Load(spawnPath);
+                sb.AppendLine($"spawn.ini [Settings] GameSpeed={spawn.Get("Settings", "GameSpeed") ?? "(missing)"}");
+                sb.AppendLine($"spawn.ini [Settings] LoadSaveGame={spawn.Get("Settings", "LoadSaveGame") ?? "(missing)"}");
+                sb.AppendLine($"spawn.ini [Settings] SaveGameName={spawn.Get("Settings", "SaveGameName") ?? "(missing)"}");
+            }
+            else sb.AppendLine("spawn.ini: (not present)");
+        }
+        catch (Exception ex) { sb.AppendLine($"spawn.ini read error: {ex.Message}"); }
+        var constraint = GetSkirmishSpeedConstraint(cfg.Skirmish.SelectedMode);
+        if (constraint.Disable || constraint.MaxEngineSpeed != null)
+            sb.AppendLine($"constraint: disable={constraint.Disable}, capEngine={constraint.MaxEngineSpeed?.ToString() ?? "-"} ({constraint.Source})");
+        return sb.ToString().TrimEnd();
+    }
+
+    public static string? VerifyLaunchedSpeedValues(LauncherConfig cfg, int effectiveUi, bool expectSpawn = true)
+    {
+        try
+        {
+            var expectedEngine = UiToEngineGameSpeed(effectiveUi).ToString();
+            var ra2 = IniFile.Load(Ra2MdIniPath);
+            var problems = new List<string>();
+            foreach (var sec in new[] { "Options", "Skirmish", "LAN", "WonlinePref" })
+            {
+                var v = ra2.Get(sec, "GameSpeed");
+                if (v != null && v != expectedEngine)
+                    problems.Add($"RA2MD.INI [{sec}]={v}, expected {expectedEngine}");
+            }
+            if (expectSpawn)
+            {
+                var spawnPath = Path.Combine(Root, "spawn.ini");
+                if (File.Exists(spawnPath))
+                {
+                    var spawn = IniFile.Load(spawnPath);
+                    var v = spawn.Get("Settings", "GameSpeed");
+                    if (v != null && v != expectedEngine)
+                        problems.Add($"spawn.ini [Settings]={v}, expected {expectedEngine}");
+                }
+            }
+            return problems.Count == 0 ? null : string.Join("; ", problems);
+        }
+        catch (Exception ex) { return "verify error: " + ex.Message; }
+    }
+
+    /// <summary>
+    /// Checks that the superweapon switch the player picked really reached the
+    /// files the spawner reads: spawn.ini carries the game's own switch, the
+    /// map copy carries the flag of every superweapon type. Returns null when
+    /// everything matches, otherwise a description of the mismatch.
+    /// </summary>
+    public static string? VerifyLaunchedSuperWeaponValues(LauncherConfig cfg, bool expectSpawn = true)
+    {
+        try
+        {
+            var mode = SuperWeaponModes.Clamp(cfg.Skirmish.Options.SuperWeapons);
+            var expected = SuperWeaponModes.GlobalSwitchOn(mode) ? "Yes" : "No";
+            var problems = new List<string>();
+
+            if (expectSpawn)
+            {
+                var spawnPath = Path.Combine(Root, "spawn.ini");
+                if (File.Exists(spawnPath))
+                {
+                    var spawn = IniFile.Load(spawnPath);
+                    var v = spawn.Get("Settings", "Superweapons");
+                    if (v == null) problems.Add("spawn.ini [Settings] Superweapons=(missing)");
+                    else if (!v.Equals(expected, StringComparison.OrdinalIgnoreCase))
+                        problems.Add($"spawn.ini [Settings] Superweapons={v}, expected {expected}");
+                }
+                else problems.Add("spawn.ini (not present)");
+            }
+
+            var mapPath = Path.Combine(Root, "spawnmap.ini");
+            if (File.Exists(mapPath))
+            {
+                var map = IniFile.Load(mapPath);
+                foreach (var type in SuperWeaponModes.Types())
+                {
+                    var expectedFlag = SuperWeaponModes.DisableableFromShell(mode, type) ? "yes" : "no";
+                    var v = map.Get(type, "DisableableFromShell");
+                    if (v == null) problems.Add($"spawnmap.ini [{type}] DisableableFromShell=(missing)");
+                    else if (!v.Equals(expectedFlag, StringComparison.OrdinalIgnoreCase))
+                        problems.Add($"spawnmap.ini [{type}] DisableableFromShell={v}, expected {expectedFlag}");
+                }
+            }
+
+            return problems.Count == 0 ? null : string.Join("; ", problems);
+        }
+        catch (Exception ex) { return "verify error: " + ex.Message; }
     }
 
     /// <summary>
@@ -932,6 +1488,7 @@ public static class LauncherCore
         // to the game process.
         var args = new List<string>(dlls) { gameExe };
         args.Add("--args=" + string.Join(' ', gameArgs));
+        LauncherLog.Step("launch", $"syringe argv = {string.Join(' ', args)}");
         return args;
     }
 
@@ -955,7 +1512,7 @@ public static class LauncherCore
             }
             return string.Join(Environment.NewLine, all.TakeLast(lines));
         }
-        catch { return ""; }
+        catch (Exception ex) { LauncherLog.Error("Failed to read syringe.log", ex); return ""; }
     }
 
     private enum GameWindowMode { Fullscreen, Windowed, Borderless }
@@ -993,10 +1550,28 @@ public static class LauncherCore
             {
                 if (File.Exists(target))
                 {
+                    // The wrapper in the game folder is replaced on every launch.
+                    // The first version that is found is kept, so a wrapper the
+                    // user put there by hand can be restored.
+                    var backup = Path.Combine(Root, "ddraw.dll.launcher-backup");
+                    if (!File.Exists(backup))
+                    {
+                        try
+                        {
+                            File.Copy(target, backup);
+                            LauncherLog.Step("renderer", $"previous ddraw.dll kept as {Path.GetFileName(backup)}");
+                        }
+                        catch (Exception ex)
+                        {
+                            LauncherLog.Warn("Could not back up the existing ddraw.dll: " + ex.Message);
+                        }
+                    }
+
                     File.SetAttributes(target, FileAttributes.Normal);
                     File.Delete(target);
                 }
                 File.Copy(source, target);
+                LauncherLog.Step("renderer", $"ddraw.dll deployed from Resources\\{dll} (section '{section}')");
             }
 
             var configName = renderers.Get(section, "ConfigFileName");
@@ -1049,10 +1624,12 @@ public static class LauncherCore
                 ApplySection(spawnSection);
 
             ini.Save(config);
+            LauncherLog.Step("renderer", $"{Path.GetFileName(config)} updated for mode {mode}");
         }
-        catch
+        catch (Exception ex)
         {
             // A locked or missing renderer must never block the launch itself.
+            LauncherLog.Error("Renderer setup failed, continuing with the current ddraw.dll", ex);
         }
     }
 

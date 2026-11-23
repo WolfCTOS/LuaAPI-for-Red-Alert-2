@@ -1,9 +1,12 @@
-﻿using System.Globalization;
+using System.Globalization;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Threading;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
+using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
@@ -24,6 +27,20 @@ public partial class MainWindow : Window
     internal List<ModInfo> Mods => _mods;
     /// <summary>Exposed to the separate mod manager window.</summary>
     internal HashSet<string> ActiveMods => _active;
+    /// <summary>Exposed to the separate mod manager window.</summary>
+    internal LauncherConfig Config => _cfg;
+
+    /// <summary>
+    /// Takes over the active mod list of the mod manager. The set is written
+    /// into the configuration as well, so launcher_config.json and
+    /// active_mods.txt cannot drift apart.
+    /// </summary>
+    internal void ApplyActiveMods(IEnumerable<string> ids)
+    {
+        _active.Clear();
+        foreach (var id in ids) _active.Add(id);
+        _cfg.ActiveMods = new HashSet<string>(_active, StringComparer.Ordinal);
+    }
 
     /// <summary>Refreshes UI after the active mod set changed elsewhere (e.g. mod manager).</summary>
     internal void UpdateModsUi()
@@ -44,6 +61,15 @@ public partial class MainWindow : Window
     private string _mapFilter = "";
     private bool _syncing;
 
+    private DispatcherTimer? _skirmishSaveTimer;
+    private bool _skirmishSavePending;
+    private CancellationTokenSource? _storageCts;
+    private DispatcherTimer? _mapSearchTimer;
+    private DispatcherTimer? _modSearchTimer;
+    private CancellationTokenSource? _mapCatalogCts;
+    private int _mapCatalogLoadVersion;
+    private int _statsLoadVersion;
+
     public MainWindow()
     {
         InitializeComponent();
@@ -52,6 +78,10 @@ public partial class MainWindow : Window
         MapPreviewOverlay.SizeChanged += (_, _) => UpdateStartMarkers();
         // Map rows are list items, not buttons, so they need their own click sound.
         MapList.AddHandler(ListBoxItem.MouseLeftButtonUpEvent, new MouseButtonEventHandler(ListItem_Click));
+        // Tab handlers are attached here: a Checked handler in XAML would run
+        // while the tree is still loading and touch not-yet-created controls.
+        TabSavedGames.Checked += SaveTab_Checked;
+        TabReplays.Checked += SaveTab_Checked;
         // The background picture drifts with the pointer.
         RootLayout.MouseMove += (_, e) => OnBackgroundMouseMove(e);
         RootLayout.MouseLeave += (_, _) => OnBackgroundMouseLeave();
@@ -209,12 +239,20 @@ public partial class MainWindow : Window
         }
     }
 
-    private void ReloadState()
+    private void ReloadState(bool rescanMods = true)
     {
-        _mods = LauncherCore.ScanMods();
+        if (rescanMods || _mods.Count == 0)
+            _mods = LauncherCore.ScanMods();
         _cfg = LauncherCore.LoadConfig(_mods);
         _active = LauncherCore.ReadActiveIds(_mods);
     }
+
+    /// <summary>
+    /// The absolute path of the map that was selected last. The configuration
+    /// stores the map relative to the game folder, so the selection survives
+    /// moving the installation.
+    /// </summary>
+    private string SelectedMapPath() => LauncherCore.ResolveGamePath(_cfg.Skirmish.SelectedMap);
 
     // ---------------------------------------------------------------- background
 
@@ -364,7 +402,7 @@ public partial class MainWindow : Window
         if (e.Key != Key.Escape) return;
         if (NoticeOverlay.Visibility == Visibility.Visible) { NoticeOverlay.Visibility = Visibility.Collapsed; return; }
         if (OptionsView.Visibility == Visibility.Visible) { TryLeaveOptions(); return; }
-        if (SkirmishView.Visibility == Visibility.Visible || StatsView.Visibility == Visibility.Visible || CompanyView.Visibility == Visibility.Visible)
+        if (SkirmishView.Visibility == Visibility.Visible || StatsView.Visibility == Visibility.Visible || CompanyView.Visibility == Visibility.Visible || LoadSaveView.Visibility == Visibility.Visible)
             ShowMain();
     }
 
@@ -390,6 +428,7 @@ public partial class MainWindow : Window
         OptionsView.Visibility = Visibility.Collapsed;
         StatsView.Visibility = Visibility.Collapsed;
         CompanyView.Visibility = Visibility.Collapsed;
+        LoadSaveView.Visibility = Visibility.Collapsed;
         view.Visibility = Visibility.Visible;
 
         // Keep the main menu background image clear; dim it on other screens for readability.
@@ -401,7 +440,7 @@ public partial class MainWindow : Window
     private void ShowMain()
     {
         ShowOnly(MainView);
-        ReloadState();
+        ReloadState(rescanMods: false);
         UpdateMainStatus();
         UpdateLayout();
         L10n.Apply(this);
@@ -412,14 +451,8 @@ public partial class MainWindow : Window
         ShowOnly(SkirmishView);
         LauncherCore.EnsureSkirmishDefaults(_cfg.Skirmish);
 
-        _mapCatalog = MapCatalog.Load();
-        _currentMapMode = _mapCatalog.ResolveMode(_cfg.Skirmish.SelectedMode, _cfg.Skirmish.SelectedMap);
-        _cfg.Skirmish.SelectedMode = _currentMapMode;
-
+        // Build UI that does not depend on the map catalog immediately.
         _syncing = true;
-        BuildMapModeCombo();
-        RefreshMaps();
-        BuildPlayerTable();
         BuildSettingsPanel();
         BuildPresetCombo();
         ChkShowDevMods.IsChecked = _cfg.Skirmish.ShowDevMods;
@@ -427,7 +460,63 @@ public partial class MainWindow : Window
         SkirmishTabs.SelectedIndex = Math.Clamp(_cfg.Skirmish.ActiveTab, 0, 1);
         _syncing = false;
 
-        if (!_mapCatalog.ModeContains(_currentMapMode, _cfg.Skirmish.SelectedMap))
+        UpdateLayout();
+        L10n.Apply(this);
+        UpdateModsCounter();
+
+        LoadSkirmishMapCatalogAsync();
+    }
+
+    private void LoadSkirmishMapCatalogAsync()
+    {
+        try { _mapCatalogCts?.Cancel(); _mapCatalogCts?.Dispose(); } catch { }
+        var cts = new CancellationTokenSource();
+        _mapCatalogCts = cts;
+        var version = ++_mapCatalogLoadVersion;
+        var token = cts.Token;
+
+        // Placeholder while the catalog is being read/built.
+        if (MapList != null)
+        {
+            MapList.ItemsSource = null;
+            MapList.Items.Clear();
+        }
+        if (MapName != null) MapName.Text = L10n.T("Загрузка карт...");
+        if (MapPath != null) MapPath.Text = "";
+        if (SkirmishStatus != null) SkirmishStatus.Text = "";
+
+        _ = Task.Run(() =>
+        {
+            MapCatalog catalog;
+            try { catalog = MapCatalog.Load(); }
+            catch (Exception ex)
+            {
+                LauncherLog.Error("Failed to load the map catalog", ex);
+                catalog = new MapCatalog();
+            }
+            if (token.IsCancellationRequested) return;
+            Dispatcher.BeginInvoke(new Action(() =>
+            {
+                if (token.IsCancellationRequested || version != _mapCatalogLoadVersion) return;
+                if (SkirmishView == null || SkirmishView.Visibility != Visibility.Visible) return;
+                ApplyLoadedMapCatalog(catalog);
+            }), DispatcherPriority.Background);
+        }, token);
+    }
+
+    private void ApplyLoadedMapCatalog(MapCatalog catalog)
+    {
+        _mapCatalog = catalog ?? new MapCatalog();
+        _currentMapMode = _mapCatalog.ResolveMode(_cfg.Skirmish.SelectedMode, SelectedMapPath());
+        _cfg.Skirmish.SelectedMode = _currentMapMode;
+
+        _syncing = true;
+        BuildMapModeCombo();
+        RefreshMaps();
+        BuildPlayerTable();
+        _syncing = false;
+
+        if (!_mapCatalog.ModeContains(_currentMapMode, SelectedMapPath()))
         {
             // Saved map not in saved mode -> switch to All maps.
             _currentMapMode = MapCatalog.AllMapsMode;
@@ -441,9 +530,6 @@ public partial class MainWindow : Window
 
         SaveSkirmishState();
         UpdateSkirmishStatus();
-        UpdateLayout();
-        L10n.Apply(this);
-        UpdateModsCounter();
         UpdateStartButtonState();
     }
 
@@ -457,7 +543,7 @@ public partial class MainWindow : Window
     private void ShowOptions()
     {
         ShowOnly(OptionsView);
-        ReloadState();
+        ReloadState(rescanMods: false);
         BuildOptions();
 
         _suppressDirty = true;
@@ -466,8 +552,10 @@ public partial class MainWindow : Window
         CmbClientRes.Text = settings.ResolutionX + "x" + settings.ResolutionY;
         CmbDetail.SelectedIndex = Math.Clamp(settings.DetailLevel, 0, 2);
         CmbDifficulty.SelectedIndex = Math.Clamp(settings.Difficulty, 0, 2);
-        CmbGameSpeed.SelectedItem = settings.GameSpeed;
-        if (CmbGameSpeed.SelectedItem == null) CmbGameSpeed.SelectedIndex = 0;
+        var uiSpeed = LauncherCore.EngineToUiGameSpeed(settings.GameSpeed);
+        CmbGameSpeed.SelectedItem = CmbGameSpeed.Items.OfType<string>().FirstOrDefault(s => LauncherCore.ParseUiGameSpeedLabel(s, uiSpeed) == uiSpeed)
+                                   ?? CmbGameSpeed.Items.OfType<string>().LastOrDefault();
+        if (CmbGameSpeed.SelectedItem == null && CmbGameSpeed.Items.Count > 0) CmbGameSpeed.SelectedIndex = CmbGameSpeed.Items.Count - 1;
         SelectKey(CmbRenderer, settings.Renderer);
         SelectKey(CmbLanguage, L10n.Normalize(_cfg.Language));
         ChkBorderless.IsChecked = settings.BorderlessClient;
@@ -629,7 +717,7 @@ public partial class MainWindow : Window
             // Defaults aligned with typical client defaults; only UI fields.
             CmbDetail.SelectedIndex = 2;
             CmbDifficulty.SelectedIndex = 1;
-            CmbGameSpeed.SelectedIndex = 5; // 6
+            if (CmbGameSpeed.Items.Count > 0) CmbGameSpeed.SelectedIndex = CmbGameSpeed.Items.Count - 1; // fastest (UI 7)
             if (CmbRenderer.Items.Count > 0) CmbRenderer.SelectedIndex = 0;
             var langIdx = 0;
             for (int i=0;i<CmbLanguage.Items.Count;i++) if (CmbLanguage.Items[i] is System.Collections.Generic.KeyValuePair<string,string> kv && L10n.Normalize(kv.Key)==L10n.English) { langIdx=i; break; }
@@ -725,20 +813,31 @@ public partial class MainWindow : Window
         ComponentsList.ItemsSource = LauncherExtras.ScanComponents();
         ComponentsList.DisplayMemberPath = "Display";
 
-        // Storage scan can be slow (walks the whole game folder); compute after UI opens.
+        // Storage scan walks the whole game folder; compute off the UI thread.
         TxtStorage.Text = "...";
         TxtStorageDisk.Text = "...";
-        Dispatcher.BeginInvoke(new Action(() =>
+        try { _storageCts?.Cancel(); _storageCts?.Dispose(); } catch { }
+        var cts = new CancellationTokenSource();
+        _storageCts = cts;
+        var token = cts.Token;
+        _ = Task.Run(() =>
         {
             try
             {
+                if (token.IsCancellationRequested) return;
                 var storage = LauncherExtras.StorageReport();
+                if (token.IsCancellationRequested) return;
                 var disk = LauncherExtras.DiskReport();
-                TxtStorage.Text = storage;
-                TxtStorageDisk.Text = disk;
+                if (token.IsCancellationRequested) return;
+                Dispatcher.BeginInvoke(new Action(() =>
+                {
+                    if (token.IsCancellationRequested) return;
+                    TxtStorage.Text = storage;
+                    TxtStorageDisk.Text = disk;
+                }), DispatcherPriority.Background);
             }
             catch { }
-        }), System.Windows.Threading.DispatcherPriority.Background);
+        }, token);
     }
 
     private static string ClientIni => Path.Combine(LauncherCore.Root, "RA2MD.INI");
@@ -752,7 +851,7 @@ public partial class MainWindow : Window
 
         CmbDetail.ItemsSource = new[] { L10n.T("Низкая"), L10n.T("Средняя"), L10n.T("Высокая") };
         CmbDifficulty.ItemsSource = new[] { L10n.T("Легко"), L10n.T("Нормально"), L10n.T("Сложно") };
-        CmbGameSpeed.ItemsSource = new[] { 1, 2, 3, 4, 5, 6 };
+        CmbGameSpeed.ItemsSource = LauncherCore.GameSpeedLabels().ToList();
         CmbRenderer.ItemsSource = LauncherCore.ScanRenderers();
         CmbLanguage.ItemsSource = LauncherCore.ScanLanguages();
     }
@@ -767,11 +866,25 @@ public partial class MainWindow : Window
     private void ShowStats()
     {
         ShowOnly(StatsView);
-        ReloadState();
-        _maps = LauncherCore.ScanMaps();
-        BuildStatsCards();
+        ReloadState(rescanMods: false);
+        if (StatsCards != null) StatsCards.Children.Clear();
         UpdateLayout();
         L10n.Apply(this);
+
+        var version = ++_statsLoadVersion;
+        _ = Task.Run(() =>
+        {
+            List<MapEntry> maps;
+            try { maps = LauncherCore.ScanMaps(); }
+            catch { maps = new List<MapEntry>(); }
+            Dispatcher.BeginInvoke(new Action(() =>
+            {
+                if (version != _statsLoadVersion) return;
+                _maps = maps;
+                if (StatsView.Visibility == Visibility.Visible)
+                    BuildStatsCards();
+            }), DispatcherPriority.Background);
+        });
     }
 
     private void AddStatCard(string title, IEnumerable<(string label, string value)> rows)
@@ -846,6 +959,18 @@ public partial class MainWindow : Window
         }
         else luaRows.Add((L10n.T("статус"), L10n.T("нет файла")));
         AddStatCard("LUAAPI.LOG", luaRows);
+
+        var launcherRows = new System.Collections.Generic.List<(string,string)>();
+        var (errCount, warnCount, logSize, logModified) = LauncherLog.Summary();
+        if (logModified != DateTime.MinValue)
+        {
+            launcherRows.Add((L10n.T("изменён"), logModified.ToString("yyyy-MM-dd HH:mm:ss")));
+            launcherRows.Add((L10n.T("размер"), LauncherCore.FormatSize(logSize)));
+            launcherRows.Add((L10n.T("ошибок"), errCount.ToString()));
+            launcherRows.Add((L10n.T("предупреждений"), warnCount.ToString()));
+        }
+        else launcherRows.Add((L10n.T("статус"), L10n.T("нет файла")));
+        AddStatCard("LAUNCHER.LOG", launcherRows);
     }
 
     private void UpdateMainStatus()
@@ -877,7 +1002,15 @@ public partial class MainWindow : Window
     private void BtnStats_Click(object sender, EventArgs e) => ShowStats();
     private void BtnExit_Click(object sender, EventArgs e) => Close();
 
-    private void BtnCncNet_Click(object sender, EventArgs e) => LaunchCncNetClient();
+    private void BtnCncNet_Click(object sender, EventArgs e)
+    {
+        System.Windows.MessageBox.Show(
+            this,
+            "Yuri's Echo и LuaAPI пока-что не поддерживает cncnet",
+            "CncNet",
+            System.Windows.MessageBoxButton.OK,
+            System.Windows.MessageBoxImage.Warning);
+    }
 
     private void LaunchCncNetClient()
     {
@@ -893,10 +1026,161 @@ public partial class MainWindow : Window
 
     private void BtnCampaign_Click(object sender, EventArgs e) => ShowCompanySelect();
 
+    private void BtnLoadSave_Click(object sender, EventArgs e) => ShowLoadSave();
+
+    /// <summary>Opens the save screen right away (used by the --open-saves flag).</summary>
+    public void OpenSaveScreen() => ShowLoadSave();
+
+    /// <summary>Saved games screen, laid out like the skirmish screen (list + details + actions).</summary>
+    private void ShowLoadSave()
+    {
+        ShowOnly(LoadSaveView);
+        RefreshSaveList();
+        UpdateLayout();
+        L10n.Apply(this);
+    }
+
+    private void SaveTab_Checked(object sender, RoutedEventArgs e) => RefreshSaveList();
+
+    private bool ReplayTabSelected => TabReplays != null && TabReplays.IsChecked == true;
+
+    private void RefreshSaveList()
+    {
+        var dir = ReplayTabSelected
+            ? Path.Combine(LauncherCore.Root, "Replays")
+            : Path.Combine(LauncherCore.Root, "Saved Games");
+        var pattern = ReplayTabSelected ? "*.yrrp" : "*.sav";
+
+        var entries = new List<SaveEntry>();
+        try
+        {
+            if (Directory.Exists(dir))
+            {
+                entries = Directory.EnumerateFiles(dir, pattern)
+                    .Select(f => new SaveEntry
+                    {
+                        FileName = Path.GetFileName(f),
+                        GameName = SaveEntry.ReadGameName(f),
+                        Modified = File.GetLastWriteTime(f),
+                        SizeText = (new FileInfo(f).Length / 1024.0 / 1024.0).ToString("0.0") + " MB",
+                    })
+                    .OrderByDescending(e => e.Modified)
+                    .ThenBy(e => e.Name, StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+            }
+        }
+        catch (Exception ex)
+        {
+            LauncherLog.Error("Failed to list saved games", ex);
+        }
+
+        SaveList.ItemsSource = entries;
+        // Select the first row so the details panel and the load button match the list.
+        SaveList.SelectedIndex = entries.Count > 0 ? 0 : -1;
+        SaveListEmpty.Text = ReplayTabSelected ? L10n.T("Реплеи не найдены.") : L10n.T("Сохранения не найдены.");
+        SaveListEmpty.Visibility = entries.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        UpdateSaveDetails(SaveList.SelectedItem as SaveEntry);
+    }
+
+    private void UpdateSaveDetails(SaveEntry? entry)
+    {
+        SaveDetailsName.Text = entry?.Name ?? "";
+        SaveDetailsMeta.Text = entry == null ? "" : entry.DateText + " | " + entry.SizeText + " | " + entry.FileName;
+        // shortcut: replay playback needs its own launch path, the launcher only lists them.
+        SaveDetailsHint.Text = entry != null && ReplayTabSelected ? L10n.T("Запуск реплеев не поддерживается") : "";
+        BtnLoadSaveStart.IsEnabled = entry != null && !ReplayTabSelected;
+        BtnLoadSaveDelete.IsEnabled = entry != null;
+    }
+
+    private void SaveList_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+    {
+        UpdateSaveDetails(SaveList.SelectedItem as SaveEntry);
+    }
+
+    private void SaveList_MouseDoubleClick(object sender, MouseButtonEventArgs e)
+    {
+        if (!ReplayTabSelected && SaveList.SelectedItem is SaveEntry) BtnLoadSaveStart_Click(sender, e);
+    }
+
+    private void BtnLoadSaveBack_Click(object sender, RoutedEventArgs e) => ShowMain();
+
+    private void BtnLoadSaveDelete_Click(object sender, RoutedEventArgs e)
+    {
+        if (SaveList.SelectedItem is not SaveEntry entry) return;
+
+        var dir = ReplayTabSelected
+            ? Path.Combine(LauncherCore.Root, "Replays")
+            : Path.Combine(LauncherCore.Root, "Saved Games");
+        var question = ReplayTabSelected ? L10n.T("Удалить реплей?") : L10n.T("Удалить сохранение?");
+        if (System.Windows.MessageBox.Show(this, question + "\n" + entry.FileName,
+                L10n.T("Загрузка сохранения"), System.Windows.MessageBoxButton.YesNo, System.Windows.MessageBoxImage.Warning)
+            != System.Windows.MessageBoxResult.Yes) return;
+
+        try
+        {
+            File.Delete(Path.Combine(dir, entry.FileName));
+        }
+        catch (Exception ex)
+        {
+            ShowError(L10n.T("Не удалось удалить файл."), ex);
+            return;
+        }
+
+        RefreshSaveList();
+    }
+
+    private void BtnLoadSaveStart_Click(object sender, RoutedEventArgs e)
+    {
+        if (SaveList.SelectedItem is not SaveEntry entry) return;
+        var selected = entry.FileName;
+        try
+        {
+            if (LauncherCore.IsGameProcessRunning(_cfg))
+            {
+                ShowNotice(L10n.T("Запуск"), L10n.T("Игра уже запущена. Закройте текущий процесс игры перед новым запуском."));
+                return;
+            }
+            if (!LauncherCore.Exists("CnCNet-Spawner.dll") || (!LauncherCore.Exists("gamemd-spawn.exe") && !LauncherCore.Exists(_cfg.Gamemd)))
+            {
+                ShowNotice(L10n.T("ОШИБКА ЗАПУСКА"), L10n.T("Для загрузки сохранения через Syringe не найден gamemd-spawn.exe или CnCNet-Spawner.dll."));
+                return;
+            }
+
+            LauncherLog.Section("load save");
+            LauncherLog.Step("loadsave", $"save = {selected}");
+            LauncherCore.SaveActiveIds(_mods, _active, _cfg);
+            CampaignData.WriteLoadSaveSpawnIni(selected);
+            LauncherLog.Step("loadsave", "speed dump:\n" + LauncherCore.BuildSpeedDiagnosticsDump(_cfg));
+
+            var started = LauncherCore.LaunchSpawnedGame(_cfg);
+            var gameProcess = Path.GetFileNameWithoutExtension(
+                LauncherCore.Exists("gamemd-spawn.exe") ? "gamemd-spawn.exe" : LauncherCore.GameProcessName(_cfg));
+            _ = WatchMissionLaunchAsync(started, gameProcess, Path.GetFileNameWithoutExtension(selected));
+
+            if (LauncherCore.WantsLuaApi(_cfg))
+            {
+                var dll = Path.Combine(LauncherCore.Root, "LuaAPI.dll");
+                _ = LuaApiInjector.InjectWhenGameStartsAsync(started, dll, gameProcess)
+                    .ContinueWith(t =>
+                    {
+                        var error = t.IsCompletedSuccessfully ? t.Result : t.Exception?.GetBaseException().Message;
+                        if (string.IsNullOrEmpty(error)) return;
+                        Dispatcher.Invoke(() => ShowToast(L10n.T("LuaAPI: ") + error, 4));
+                    }, TaskScheduler.Default);
+            }
+
+            ShowToast(L10n.F("Загрузка сохранения: {0}", selected));
+        }
+        catch (Exception ex)
+        {
+            ShowError(L10n.T("Не удалось загрузить сохранение."), ex);
+        }
+    }
+
     private void ShowCompanySelect()
     {
         ShowOnly(CompanyView);
-        ReloadState();
+        ReloadState(rescanMods: false);
         _campaignSides = CampaignData.LoadSides();
         BuildCampaignSideTabs();
 
@@ -1102,19 +1386,36 @@ public partial class MainWindow : Window
 
             var settings = LauncherCore.LoadClientSettingsSafe(ClientIni);
             var difficulty = Math.Clamp(settings.Difficulty, 0, 2);
-            var gameSpeed = Math.Clamp(settings.GameSpeed, 0, 6);
+            var requestedUi = LauncherCore.EngineToUiGameSpeed(settings.GameSpeed);
+            var speedConstraint = LauncherCore.GetSkirmishSpeedConstraint(_cfg.Skirmish.SelectedMode);
+            var effectiveUi = speedConstraint.ApplyUi(requestedUi);
+            if (speedConstraint.Disable || effectiveUi != requestedUi)
+            {
+                var msg = speedConstraint.DescribeLock(requestedUi) ?? L10n.F("Скорость скорректирована ограничением режима/карты: «{0}».", LauncherCore.GameSpeedLabel(effectiveUi));
+                LauncherLog.Warn("campaign speed constraint: " + msg + $" (requested ui={requestedUi}, effective ui={effectiveUi})");
+                ShowToast(msg);
+            }
 
-            // Keep campaign difficulty in game settings (used by normal campaign flow too).
+            // Keep campaign difficulty/speed in game settings (used by normal campaign flow too).
             var iniPath = Path.Combine(LauncherCore.Root, "RA2MD.INI");
             var ini = IniFile.Load(iniPath);
             ini.Set("Options", "CampDifficulty", difficulty.ToString());
             ini.Set("Options", "Difficulty", difficulty.ToString());
-            ini.Set("Options", "GameSpeed", gameSpeed.ToString());
+            ini.Set("Options", "GameSpeed", LauncherCore.UiToEngineGameSpeed(effectiveUi).ToString());
             ini.Save(iniPath);
 
-            CampaignData.WriteSpawnIni(mission, difficulty, gameSpeed, _cfg.Skirmish.Options);
+            LauncherLog.Section("campaign launch");
+            LauncherLog.Step("campaign", $"mission = {mission.Id} ({mission.DisplayName})");
+            CampaignData.WriteSpawnIni(mission, difficulty, effectiveUi, _cfg.Skirmish.Options);
+            LauncherLog.Step("campaign", "speed dump:\n" + LauncherCore.BuildSpeedDiagnosticsDump(_cfg, effectiveUi));
+            var verify = LauncherCore.VerifyLaunchedSpeedValues(_cfg, effectiveUi, expectSpawn: true);
+            if (verify != null)
+            {
+                LauncherLog.Warn("speed verify mismatch: " + verify);
+                ShowToast(L10n.T("Проверьте скорость: значения в ini/spawn отличаются от ожидаемых."));
+            }
 
-            CompanyStatus.Text = L10n.F("Запуск миссии: {0} ({1}).", mission.DisplayName, mission.LaunchScenario);
+            CompanyStatus.Text = L10n.F("Запуск миссии: {0} ({1}) · Скорость: {2}.", mission.DisplayName, mission.LaunchScenario, LauncherCore.GameSpeedLabel(effectiveUi));
 
             LauncherCore.SaveActiveIds(_mods, _active, _cfg);
             var started = LauncherCore.LaunchSpawnedGame(_cfg);
@@ -1163,6 +1464,7 @@ public partial class MainWindow : Window
                 await Task.Delay(4000).ConfigureAwait(false);
                 if (IsGameRunning(processName, startedUtc))
                 {
+                    LauncherLog.Step("watch", $"{processName}.exe survived the mission load");
                     TryOnUi(() => CompanyStatus.Text = L10n.F("Миссия запущена: {0}.", missionLabel));
                     return;
                 }
@@ -1207,7 +1509,7 @@ public partial class MainWindow : Window
             if (Dispatcher.CheckAccess()) action();
             else Dispatcher.Invoke(action);
         }
-        catch { }
+        catch (Exception ex) { LauncherLog.Error("UI update failed", ex); }
     }
 
     private void BtnMapEditor_Click(object sender, EventArgs e)
@@ -1235,6 +1537,7 @@ public partial class MainWindow : Window
         var mgr = new ModManagerWindow(this);
         mgr.ShowDialog();
         // The manager persists changes on the fly; reload and refresh all UI.
+        LauncherCore.InvalidateModsCache();
         _mods = LauncherCore.ScanMods();
         _active = LauncherCore.ReadActiveIds(_mods);
         UpdateModsUi();
@@ -1365,9 +1668,15 @@ public partial class MainWindow : Window
             cb.Click += (_, _) =>
             {
                 if (_syncing) return;
+                var conflictBefore = LauncherCore.HasAiModConflict(_active);
                 if (cb.IsChecked == true) _active.Add(m.Id); else _active.Remove(m.Id);
                 PersistActive();
                 BuildModsPanel();
+
+                // The warning belongs to the moment the conflict is created:
+                // repeating it on every later change would be noise.
+                if (!conflictBefore && LauncherCore.HasAiModConflict(_active))
+                    ShowNotice(L10n.T("КОНФЛИКТ МОДОВ"), L10n.T(L10n.AiModConflictMessage));
             };
             Grid.SetColumn(cb, 0);
             grid.Children.Add(cb);
@@ -1485,6 +1794,24 @@ public partial class MainWindow : Window
             SkirmishStatus.Text = L10n.T("Позиции карты не определены");
         else
             SkirmishStatus.Text = L10n.F("Будет загружено модов: {0}", ActiveModCount());
+
+        if (SkirmishSpeedInfo != null)
+        {
+            var requestedUi = LauncherCore.NormalizeUiGameSpeed(_cfg.Skirmish.Options.GameSpeed);
+            var constraint = LauncherCore.GetSkirmishSpeedConstraint(_cfg.Skirmish.SelectedMode);
+            var effectiveUi = constraint.ApplyUi(requestedUi);
+            var text = L10n.F("Скорость: {0}", LauncherCore.GameSpeedLabel(effectiveUi));
+            if (constraint.Disable)
+                text += " · " + L10n.T("зафиксирована режимом/картой");
+            else if (effectiveUi != requestedUi)
+                text += " · " + L10n.F("ограничено с {0}", LauncherCore.GameSpeedLabel(requestedUi));
+            else if (constraint.MaxEngineSpeed is int cap)
+                text += L10n.F(" (лимит: {0})", LauncherCore.GameSpeedLabel(LauncherCore.EngineToUiGameSpeed(cap)));
+            SkirmishSpeedInfo.Text = text;
+            SkirmishSpeedInfo.Foreground = (constraint.Disable || effectiveUi != requestedUi)
+                ? new SolidColorBrush(Color.FromRgb(0xE6, 0xB8, 0x5C))
+                : new SolidColorBrush(Color.FromRgb(0xC9, 0xCC, 0xD3));
+        }
     }
 
     private void SelectMod(ModInfo m)
@@ -1553,9 +1880,20 @@ public partial class MainWindow : Window
 
     private void ModSearchBox_TextChanged(object sender, TextChangedEventArgs e)
     {
-        _modFilter = ModSearchBox.Text.Trim();
         if (ModSearchHint != null)
-            ModSearchHint.Visibility = _modFilter.Length > 0 ? Visibility.Collapsed : Visibility.Visible;
+            ModSearchHint.Visibility = ModSearchBox.Text.Trim().Length > 0 ? Visibility.Collapsed : Visibility.Visible;
+
+        _modSearchTimer ??= new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromMilliseconds(180) };
+        _modSearchTimer.Stop();
+        _modSearchTimer.Tick -= ModSearchTimer_Tick;
+        _modSearchTimer.Tick += ModSearchTimer_Tick;
+        _modSearchTimer.Start();
+    }
+
+    private void ModSearchTimer_Tick(object? sender, System.EventArgs e)
+    {
+        _modSearchTimer?.Stop();
+        _modFilter = ModSearchBox?.Text.Trim() ?? "";
         BuildModsPanel();
     }
 
@@ -1754,36 +2092,46 @@ public partial class MainWindow : Window
         }
 
         var credits = new[] { "100000", "30000", "20000", "15000", "12500", "10000", "7500", "5000", "2500" };
-        AddOptionRow(0, "Starting credits",
+        AddOptionRow(0, L10n.T("Стартовые деньги"),
             SettingCombo(credits, credits.ToList().IndexOf(o.Credits.ToString()), idx =>
             {
                 if (idx >= 0 && idx < credits.Length) o.Credits = int.Parse(credits[idx]);
                 SaveSkirmishState();
             }, 120));
 
-        var speeds = new[] { "1", "2", "3", "4", "5", "6" };
-        AddOptionRow(1, "Game speed",
-            SettingCombo(speeds, speeds.ToList().IndexOf(o.GameSpeed.ToString()), idx =>
+        var speeds = LauncherCore.GameSpeedLabels().ToList();
+        var speedConstraint = LauncherCore.GetSkirmishSpeedConstraint(_cfg.Skirmish.SelectedMode);
+        var speedCombo = SettingCombo(speeds, Math.Clamp(LauncherCore.NormalizeUiGameSpeed(o.GameSpeed), 1, 7) - 1, idx =>
+        {
+            if (idx >= 0 && idx < speeds.Count)
             {
-                if (idx >= 0 && idx < speeds.Length) o.GameSpeed = int.Parse(speeds[idx]);
+                o.GameSpeed = LauncherCore.ParseUiGameSpeedLabel(speeds[idx], o.GameSpeed);
                 SaveSkirmishState();
-            }, 120));
+                UpdateSkirmishStatus();
+            }
+        }, 120);
+        speedCombo.IsEnabled = !speedConstraint.Disable;
+        speedCombo.ToolTip = speedConstraint.Disable
+            ? speedConstraint.DescribeLock(o.GameSpeed)
+            : (speedConstraint.MaxEngineSpeed is int cap ? L10n.F("Ограничение режима/карты: не быстрее «{0}».", LauncherCore.GameSpeedLabel(LauncherCore.EngineToUiGameSpeed(cap))) : null);
+        AddOptionRow(1, L10n.T("Скорость игры"), speedCombo);
 
         var units = new[] { "10", "9", "8", "7", "6", "5", "4", "3", "2", "1", "0" };
-        AddOptionRow(2, "Starting units",
+        AddOptionRow(2, L10n.T("Стартовые войска"),
             SettingCombo(units, units.ToList().IndexOf(o.UnitCount.ToString()), idx =>
             {
                 if (idx >= 0 && idx < units.Length) o.UnitCount = int.Parse(units[idx]);
                 SaveSkirmishState();
             }, 120));
 
-        var superWeapons = new[] { "All", "Strategic", "Tactical", "None" };
-        AddOptionRow(3, "Super weapons",
-            SettingCombo(superWeapons, o.SuperWeapons, idx =>
-            {
-                o.SuperWeapons = idx;
-                SaveSkirmishState();
-            }, 120));
+        var superWeapons = SuperWeaponModes.Labels;
+        var superWeaponCombo = SettingCombo(superWeapons, SuperWeaponModes.Clamp(o.SuperWeapons), idx =>
+        {
+            o.SuperWeapons = SuperWeaponModes.Clamp(idx);
+            SaveSkirmishState();
+        }, 120);
+        superWeaponCombo.ToolTip = L10n.T("All - все супероружия. Strategic - только наступательные (нук, гроза, пси-доминатор). Tactical - только оборонительные (хроносфера, железный занавес, силовой щит, генетический конвертер). None - без супероружий. В кампании настройка не действует.");
+        AddOptionRow(3, L10n.T("Супероружие"), superWeaponCombo);
 
         SettingsPanel.Children.Add(optionsGrid);
 
@@ -1809,8 +2157,14 @@ public partial class MainWindow : Window
 
     // ---------------------------------------------------------------- skirmish: players
 
-    /// <summary>Table columns: slot, name, faction, colour, team, start, AI difficulty, remove.</summary>
-    private static readonly double[] PlayerColWidths = { 30, 0, 86, 68, 60, 56, 84, 22 };
+    /// <summary>
+    /// Table columns: slot, name, faction, colour, team, start, AI difficulty, remove.
+    /// A combo box spends 8 px on the left and 26 px on the arrow, so the text
+    /// of a field gets "width - 38" pixels. The widths are sized after the
+    /// text they have to show: "European Union" (79 px), "Green" (30 px),
+    /// "Medium" (39 px).
+    /// </summary>
+    private static readonly double[] PlayerColWidths = { 22, 0, 120, 70, 48, 48, 80, 22 };
 
     private const int PlayerNameColumn = 1;
     private const int PlayerDifficultyColumn = 6;
@@ -1854,13 +2208,97 @@ public partial class MainWindow : Window
         VerticalAlignment = VerticalAlignment.Center
     };
 
+    private static readonly Dictionary<string, ImageSource?> _factionIconCache =
+        new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Faction keys whose rules Name= no longer matches a flag file (the EU
+    /// commands were renamed). Maps the [Factions] key to a Resources icon name.
+    /// </summary>
+    private static readonly Dictionary<string, string> FactionIconAliases = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["Франция"] = "France",
+        ["Германия"] = "Germany",
+        ["Великобритания"] = "Great Britain",
+        ["European Union"] = "Allies",
+        ["Хаванский пакт"] = "Libya",
+        ["Ирак"] = "Iraq",
+    };
+
+    private static ImageSource? LoadFactionIcon(string? key)
+    {
+        if (string.IsNullOrWhiteSpace(key)) return null;
+        var normalized = key.Trim();
+        if (_factionIconCache.TryGetValue(normalized, out var cached)) return cached;
+
+        ImageSource? icon = null;
+        try
+        {
+            var baseDir = LauncherCore.Root;
+            foreach (var name in new[]
+                     {
+                         normalized + "icon.png",
+                         normalized + "Icon.png",
+                         normalized + ".png",
+                         normalized.Replace(" ", "") + "icon.png"
+                     })
+            {
+                var path = Path.Combine(baseDir, "Resources", name);
+                if (!File.Exists(path)) continue;
+                var bmp = new BitmapImage();
+                bmp.BeginInit();
+                bmp.CacheOption = BitmapCacheOption.OnLoad;
+                bmp.UriSource = new Uri(path, UriKind.Absolute);
+                bmp.DecodePixelHeight = 14;
+                bmp.EndInit();
+                bmp.Freeze();
+                icon = bmp;
+                break;
+            }
+        }
+        catch
+        {
+            icon = null;
+        }
+
+        _factionIconCache[normalized] = icon;
+        return icon;
+    }
+
+    private static ImageSource? ResolveFactionIcon(FactionOption faction, IReadOnlyList<CountryOption> countries)
+    {
+        CountryOption? primary = null;
+        if (faction.PrimaryIndex >= 0)
+            primary = countries.FirstOrDefault(c => c.Index == faction.PrimaryIndex);
+
+        var candidates = new List<string>();
+        void Add(string? s)
+        {
+            if (!string.IsNullOrWhiteSpace(s) && !candidates.Contains(s, StringComparer.OrdinalIgnoreCase))
+                candidates.Add(s);
+        }
+
+        Add(primary?.House);
+        Add(primary?.Name);
+        Add(primary?.Label);
+        if (FactionIconAliases.TryGetValue(faction.Name, out var alias)) Add(alias);
+        Add(faction.Name);
+
+        foreach (var c in candidates)
+        {
+            var icon = LoadFactionIcon(c);
+            if (icon != null) return icon;
+        }
+        return null;
+    }
+
     // maxPlayers comes from MapCatalog/MapEntry (MPMaps.ini primary, waypoints fallback). No duplicate parsing.
 
     private MapEntry? CurrentMapEntry()
     {
         if (MapList?.SelectedItem is MapEntry selected) return selected;
         return _mapCatalog.AllMaps.FirstOrDefault(m =>
-            string.Equals(m.FilePath, _cfg.Skirmish.SelectedMap, StringComparison.OrdinalIgnoreCase));
+            string.Equals(m.FilePath, SelectedMapPath(), StringComparison.OrdinalIgnoreCase));
     }
 
     private string? GetStartBlockReason()
@@ -1949,9 +2387,9 @@ public partial class MainWindow : Window
                 BorderBrush = Theme.StrokeB,
                 BorderThickness = new Thickness(1),
                 CaretBrush = Theme.AccentB,
-                Padding = new Thickness(6, 2, 6, 2),
+                Padding = new Thickness(4, 2, 4, 2),
                 VerticalContentAlignment = VerticalAlignment.Center,
-                Margin = new Thickness(2, 0, 6, 0)
+                Margin = new Thickness(2, 0, 4, 0)
             };
             name.TextChanged += (_, _) =>
             {
@@ -1962,15 +2400,48 @@ public partial class MainWindow : Window
             };
             SetCell(row, name, PlayerNameColumn);
 
-            // Random is stored as -1 so the saved side indices stay game indices.
+            // The rules decide which factions exist, so the table lists the
+            // factions of rulesmd.ini. Random is stored as -1. Group headers
+            // from [FactionGroups] are shown but cannot be selected.
+            var countries = RulesCountries.Load();
             var side = PlayerCombo();
-            side.Items.Add(L10n.T("Случайно"));
-            foreach (var faction in factions) side.Items.Add(faction);
-            side.SelectedIndex = player.Side < 0 ? 0 : Math.Clamp(player.Side + 1, 1, side.Items.Count - 1);
+            side.ItemTemplate = FactionChoice.ItemTemplate;
+            var headerStyle = new Style(typeof(ComboBoxItem));
+            headerStyle.Setters.Add(new Setter(FrameworkElement.ToolTipProperty,
+                new Binding(nameof(FactionChoice.Description))));
+            var headerTrigger = new DataTrigger { Binding = new Binding(nameof(FactionChoice.IsHeader)), Value = true };
+            headerTrigger.Setters.Add(new Setter(UIElement.IsEnabledProperty, false));
+            headerStyle.Triggers.Add(headerTrigger);
+            side.ItemContainerStyle = headerStyle;
+
+            side.Items.Add(new FactionChoice(L10n.T("Случайно"), null,
+                description: L10n.T(L10n.FactionDescription("Случайно"))));
+            var selectable = new List<FactionOption>();
+            foreach (var faction in factions)
+            {
+                if (faction.IsHeader)
+                {
+                    side.Items.Add(new FactionChoice(L10n.T(faction.Name), null, isHeader: true,
+                        description: L10n.T(L10n.FactionDescription(faction.Name))));
+                    continue;
+                }
+                selectable.Add(faction);
+                side.Items.Add(new FactionChoice(
+                    L10n.T(faction.Name),
+                    ResolveFactionIcon(faction, countries),
+                    isChild: faction.Group.Length > 0,
+                    faction: faction,
+                    description: L10n.T(L10n.FactionDescription(faction.Name))));
+            }
+            var picked = player.Country < 0 ? 0 : selectable.FindIndex(f => f.PrimaryIndex == player.Country) + 1;
+            side.SelectedIndex = picked > 0 ? Math.Clamp(picked, 1, side.Items.Count - 1) : 0;
             side.SelectionChanged += (_, _) =>
             {
                 if (_syncing) return;
-                player.Side = side.SelectedIndex <= 0 ? -1 : side.SelectedIndex - 1;
+                var choice = side.SelectedItem as FactionChoice;
+                if (choice == null || choice.IsHeader) return;
+                var index = choice.Faction == null ? -1 : selectable.IndexOf(choice.Faction);
+                player.Country = index >= 0 ? selectable[index].PrimaryIndex : -1;
                 SaveSkirmishState();
             };
             SetCell(row, side, 2);
@@ -2372,14 +2843,34 @@ public partial class MainWindow : Window
     }
 
     /// <summary>Saves the skirmish screen state (map, options, players, tab, mode).</summary>
-    private void SaveSkirmishState()
+    /// <remarks>Writes are debounced to keep typing and rapid clicks responsive.</remarks>
+    private void SaveSkirmishState(bool flush = false)
     {
-        try
+        _cfg.Skirmish.SelectedMode = _currentMapMode;
+        if (flush)
         {
-            _cfg.Skirmish.SelectedMode = _currentMapMode;
-            LauncherCore.SaveConfig(_cfg);
+            _skirmishSaveTimer?.Stop();
+            _skirmishSavePending = false;
+            try { LauncherCore.SaveConfig(_cfg); }
+            catch (Exception ex) { LauncherLog.Error("Failed to save the skirmish state", ex); }
+            return;
         }
-        catch { }
+
+        _skirmishSavePending = true;
+        if (_skirmishSaveTimer == null)
+        {
+            _skirmishSaveTimer = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromMilliseconds(400) };
+            _skirmishSaveTimer.Tick += (_, _) =>
+            {
+                _skirmishSaveTimer!.Stop();
+                if (!_skirmishSavePending) return;
+                _skirmishSavePending = false;
+                try { LauncherCore.SaveConfig(_cfg); }
+                catch (Exception ex) { LauncherLog.Error("Failed to save the skirmish state", ex); }
+            };
+        }
+        _skirmishSaveTimer.Stop();
+        _skirmishSaveTimer.Start();
     }
 
     private sealed class MapModeItem
@@ -2397,7 +2888,7 @@ public partial class MainWindow : Window
         items.Add(new MapModeItem { Key = MapCatalog.OtherMapsMode, Label = L10n.T("Прочие") });
 
         CmbMapMode.ItemsSource = items;
-        var resolved = _mapCatalog.ResolveMode(_cfg.Skirmish.SelectedMode, _cfg.Skirmish.SelectedMap);
+        var resolved = _mapCatalog.ResolveMode(_cfg.Skirmish.SelectedMode, SelectedMapPath());
         _currentMapMode = resolved;
         _cfg.Skirmish.SelectedMode = resolved;
         CmbMapMode.SelectedItem = items.FirstOrDefault(i => i.Key == resolved) ?? items.FirstOrDefault(i => i.Key == "Battle") ?? items[0];
@@ -2406,20 +2897,30 @@ public partial class MainWindow : Window
     private void RefreshMaps()
     {
         if (MapList == null) return;
-        var selectedPath = (MapList.SelectedItem as MapEntry)?.FilePath ?? _cfg.Skirmish.SelectedMap;
+        var selectedPath = (MapList.SelectedItem as MapEntry)?.FilePath ?? SelectedMapPath();
         var source = _mapCatalog.MapsForMode(_currentMapMode);
         var filtered = source.Where(MapMatchesFilter).ToList();
 
+        _cfg.Skirmish.FavoriteMaps ??= new List<string>();
+        var favs = new HashSet<string>(_cfg.Skirmish.FavoriteMaps, StringComparer.OrdinalIgnoreCase);
+        foreach (var m in filtered) m.IsFavorite = !string.IsNullOrWhiteSpace(m.Relative) && favs.Contains(m.Relative);
+
+        var ordered = filtered
+            .OrderByDescending(m => m.IsFavorite)
+            .ThenBy(m => m.MaxPlayers)
+            .ThenBy(m => MapCatalog.NameWithoutPrefix(m.DisplayName), StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
         MapList.ItemsSource = null;
         MapList.Items.Clear();
-        foreach (var m in filtered) MapList.Items.Add(m);
+        foreach (var m in ordered) MapList.Items.Add(m);
 
         // Search in current mode only; offer "search in all" on empty filtered result.
-        if (filtered.Count == 0 && _mapFilter.Length > 0)
+        if (ordered.Count == 0 && _mapFilter.Length > 0)
         {
             MapSearchEmpty.Visibility = Visibility.Visible;
-            MapSearchEmptyText.Text = L10n.F("Ничего не найдено в режиме {0}. Искать во всех?", CurrentModeLabel());
-            MapSearchAllLink.Text = L10n.T("Искать во всех");
+            MapSearchEmptyText.Text = L10n.F("��祣� �� ������� � ०��� {0}. �᪠�� �� ���?", CurrentModeLabel());
+            MapSearchAllLink.Text = L10n.T("�᪠�� �� ���");
             MapSearchAllLink.Visibility = _currentMapMode == MapCatalog.AllMapsMode ? Visibility.Collapsed : Visibility.Visible;
         }
         else
@@ -2434,6 +2935,7 @@ public partial class MainWindow : Window
         if (restore != null)
         {
             MapList.SelectedItem = restore;
+            MapList.ScrollIntoView(restore);
             ShowMapDetails(restore);
         }
         else
@@ -2441,14 +2943,14 @@ public partial class MainWindow : Window
             _currentMapMaxPlayers = LauncherCore.MaxSkirmishSlots;
             _currentMapMaxPlayersKnown = false;
             var msg = _mapFilter.Length > 0
-                ? L10n.F("По фильтру «{0}» ничего не найдено.", _mapFilter)
-                : L10n.T("Карты не найдены в корне игры и в Maps\\.");
+                ? L10n.F("�� 䨫���� <{0}> ��祣� �� �������.", _mapFilter)
+                : L10n.T("����� �� ������� � ��୥ ���� � � Maps\\.");
             MapName.Text = msg;
             MapPath.Text = "";
             MapSize.Text = "";
             MapPreview.Source = null;
             MapPreview.Visibility = Visibility.Collapsed;
-            MapPreviewEmpty.Text = L10n.T("Превью нет");
+            MapPreviewEmpty.Text = L10n.T("�ॢ�� ���");
             MapPreviewEmpty.Visibility = Visibility.Visible;
             UpdateSettingsMapBrief();
             BuildPlayerTable();
@@ -2469,9 +2971,25 @@ public partial class MainWindow : Window
 
     private void MapSearchBox_TextChanged(object sender, TextChangedEventArgs e)
     {
-        _mapFilter = MapSearchBox.Text.Trim();
-        MapSearchHint.Visibility = _mapFilter.Length > 0 ? Visibility.Collapsed : Visibility.Visible;
-        RefreshMaps();
+        MapSearchHint.Visibility = MapSearchBox.Text.Trim().Length > 0 ? Visibility.Collapsed : Visibility.Visible;
+
+        _mapSearchTimer ??= new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromMilliseconds(180) };
+        _mapSearchTimer.Stop();
+        _mapSearchTimer.Tick -= MapSearchTimer_Tick;
+        _mapSearchTimer.Tick += MapSearchTimer_Tick;
+        _mapSearchTimer.Start();
+    }
+
+    private void MapSearchTimer_Tick(object? sender, System.EventArgs e)
+    {
+        _mapSearchTimer?.Stop();
+        ApplyMapSearchFilter(refresh: true);
+    }
+
+    private void ApplyMapSearchFilter(bool refresh)
+    {
+        _mapFilter = MapSearchBox?.Text.Trim() ?? "";
+        if (refresh) RefreshMaps();
     }
 
     private void MapSearchAllLink_Click(object sender, MouseButtonEventArgs e)
@@ -2480,13 +2998,36 @@ public partial class MainWindow : Window
         if (all != null && CmbMapMode != null) CmbMapMode.SelectedItem = all; // triggers mode change + refresh
     }
 
+    private void MapFavorite_Click(object sender, RoutedEventArgs e)
+    {
+        e.Handled = true;
+        if (sender is not FrameworkElement fe || fe.DataContext is not MapEntry map) return;
+        if (string.IsNullOrWhiteSpace(map.Relative)) return;
+
+        _cfg.Skirmish.FavoriteMaps ??= new List<string>();
+        var existing = _cfg.Skirmish.FavoriteMaps.FirstOrDefault(x =>
+            string.Equals(x, map.Relative, StringComparison.OrdinalIgnoreCase));
+        if (existing != null)
+            _cfg.Skirmish.FavoriteMaps.Remove(existing);
+        else
+            _cfg.Skirmish.FavoriteMaps.Add(map.Relative);
+
+        map.IsFavorite = existing == null;
+        SaveSkirmishState();
+        RefreshMaps();
+    }
+
     private void CmbMapMode_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (_syncing || CmbMapMode?.SelectedItem is not MapModeItem mi) return;
         _currentMapMode = mi.Key;
         _cfg.Skirmish.SelectedMode = mi.Key;
+        _mapSearchTimer?.Stop();
+        ApplyMapSearchFilter(refresh: false);
         // If saved/selected map is not in this mode, switching to "All maps" is handled by refresh+resolve on load;
         // on user switch keep selection if present in new mode, else refresh will pick first.
+        BuildSettingsPanel();
+        UpdateSkirmishStatus();
         SaveSkirmishState();
         RefreshMaps();
     }
@@ -2503,7 +3044,7 @@ public partial class MainWindow : Window
 
     private void ShowMapDetails(MapEntry m)
     {
-        _cfg.Skirmish.SelectedMap = m.FilePath;
+        _cfg.Skirmish.SelectedMap = m.Relative;
         _cfg.Skirmish.SelectedMode = _currentMapMode;
         if (!_syncing) SaveSkirmishState();
 
@@ -2577,6 +3118,7 @@ public partial class MainWindow : Window
 
     private void BtnStartSkirmish_Click(object sender, RoutedEventArgs e)
     {
+        SaveSkirmishState(flush: true);
         UpdateStartButtonState();
         if (GetStartBlockReason() != null) return;
         if (LauncherCore.IsGameProcessRunning(_cfg))
@@ -2607,16 +3149,59 @@ public partial class MainWindow : Window
     {
         try
         {
+            LauncherLog.Section("skirmish launch");
+            LauncherLog.Step("skirmish", $"map = {map.Relative ?? map.FilePath} ({map.Name})");
+            LauncherLog.Step("skirmish", $"players = {string.Join(", ", _cfg.Skirmish.Players.Select(p => (p.IsHuman ? "human:" : "ai:") + p.Name))}");
+
+            var modConflict = AiModConflictWarning();
+            if (modConflict != null) LauncherLog.Warn("active mod conflict: " + modConflict);
+
             LauncherCore.SaveActiveIds(_mods, _active, _cfg);
-            LauncherCore.ApplySkirmishGameSpeed(_cfg.Skirmish.Options);
-            SkirmishSpawn.Write(_cfg.Skirmish, map);
+            LauncherCore.SaveActiveIds(_mods, _active, _cfg);
+            var speedConstraint = LauncherCore.GetSkirmishSpeedConstraint(_cfg.Skirmish.SelectedMode);
+            var requestedUi = LauncherCore.NormalizeUiGameSpeed(_cfg.Skirmish.Options.GameSpeed);
+            var effectiveUi = speedConstraint.ApplyUi(requestedUi);
+            if (speedConstraint.Disable || effectiveUi != requestedUi)
+            {
+                var msg = speedConstraint.DescribeLock(requestedUi) ?? L10n.F("Скорость скорректирована ограничением режима/карты: «{0}».", LauncherCore.GameSpeedLabel(effectiveUi));
+                LauncherLog.Warn("skirmish speed constraint: " + msg + $" (requested ui={requestedUi}, effective ui={effectiveUi})");
+                ShowToast(msg);
+            }
+            var originalUi = _cfg.Skirmish.Options.GameSpeed;
+            _cfg.Skirmish.Options.GameSpeed = effectiveUi;
+            try
+            {
+                LauncherCore.ApplySkirmishGameSpeed(_cfg.Skirmish.Options);
+                SkirmishSpawn.Write(_cfg.Skirmish, map);
+            }
+            finally
+            {
+                _cfg.Skirmish.Options.GameSpeed = originalUi;
+            }
+            LauncherLog.Step("skirmish", "speed dump:\n" + LauncherCore.BuildSpeedDiagnosticsDump(_cfg, effectiveUi));
+            var verify = LauncherCore.VerifyLaunchedSpeedValues(_cfg, effectiveUi, expectSpawn: true);
+            if (verify != null)
+            {
+                LauncherLog.Warn("speed verify mismatch: " + verify);
+                ShowToast(L10n.T("Проверьте скорость: значения в ini/spawn отличаются от ожидаемых."));
+            }
+
+            var swMode = SuperWeaponModes.Clamp(_cfg.Skirmish.Options.SuperWeapons);
+            LauncherLog.Step("skirmish", "superweapons: " + SuperWeaponModes.Describe(swMode)
+                + ", spawn.ini Superweapons=" + (SuperWeaponModes.GlobalSwitchOn(swMode) ? "Yes" : "No"));
+            var swVerify = LauncherCore.VerifyLaunchedSuperWeaponValues(_cfg, expectSpawn: true);
+            if (swVerify != null)
+            {
+                LauncherLog.Warn("superweapon verify mismatch: " + swVerify);
+                ShowToast(L10n.T("Проверьте настройку супероружия: значения в ini/spawn отличаются от ожидаемых."));
+            }
 
             var mapName = string.IsNullOrWhiteSpace(map.DisplayName) ? map.Name : map.DisplayName;
             var aiSummary = string.Join(", ", _cfg.Skirmish.Players
                 .Where(p => !p.IsHuman)
                 .Select(p => AiDifficultyName(p.AiLevel)));
-            if (aiSummary.Length == 0) aiSummary = "—";
-            SkirmishStatus.Text = L10n.F("Запуск: {0} · ИИ: {1}.", mapName, aiSummary);
+            if (aiSummary.Length == 0) aiSummary = "-";
+            SkirmishStatus.Text = L10n.F("Карта: {0} · ИИ: {1} · Скорость: {2}.", mapName, aiSummary, LauncherCore.GameSpeedLabel(effectiveUi));
 
             var started = LauncherCore.LaunchSpawnedGame(_cfg);
             var gameProcess = Path.GetFileNameWithoutExtension(
@@ -2631,12 +3216,14 @@ public partial class MainWindow : Window
                     {
                         var error = t.IsCompletedSuccessfully ? t.Result : t.Exception?.GetBaseException().Message;
                         if (string.IsNullOrEmpty(error)) return;
+                        LauncherLog.Error("LuaAPI injection failed: " + error);
                         Dispatcher.Invoke(() => SkirmishStatus.Text = error);
                     }, TaskScheduler.Default);
             }
         }
         catch (Exception ex)
         {
+            LauncherLog.Error("Launch failed", ex);
             ShowError(L10n.T("Произошла ошибка."), ex);
         }
     }
@@ -2670,7 +3257,10 @@ public partial class MainWindow : Window
 
         settings.DetailLevel = Math.Max(0, CmbDetail.SelectedIndex);
         settings.Difficulty = Math.Max(0, CmbDifficulty.SelectedIndex);
-        if (CmbGameSpeed.SelectedItem is int speed) settings.GameSpeed = speed;
+        var speedUi = LauncherCore.ParseUiGameSpeedLabel(CmbGameSpeed.SelectedItem, _cfg.Skirmish.Options.GameSpeed);
+        // Persist as engine value (0..6) in RA2MD.ini/client settings; keep UI value (1..7) in skirmish options.
+        settings.GameSpeed = LauncherCore.UiToEngineGameSpeed(speedUi);
+        _cfg.Skirmish.Options.GameSpeed = speedUi;
         if (CmbRenderer.SelectedItem is KeyValuePair<string, string> renderer) settings.Renderer = renderer.Key;
 
         var windowed = ChkWindowed.IsChecked == true;
@@ -2826,10 +3416,54 @@ public partial class MainWindow : Window
     private void BtnCfgBack_Click(object sender, RoutedEventArgs e) => TryLeaveOptions();
     private void BtnStatsBack_Click(object sender, RoutedEventArgs e) => ShowMain();
 
+    /// <summary>
+    /// Collects the launcher log, the tail of the LuaAPI log and the current
+    /// configuration into one file next to the game, and puts the same text on
+    /// the clipboard so it can be attached to a report.
+    /// </summary>
+    private void BtnStatsDiagnostics_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var text = LauncherDiagnostics.Build(_cfg, _mods, _active);
+            var path = LauncherDiagnostics.WriteToFile(text);
+            if (string.IsNullOrEmpty(path))
+            {
+                ShowNotice(L10n.T("Ошибка"), L10n.T("Не удалось сохранить диагностику."));
+                return;
+            }
+
+            try { Clipboard.SetText(text); }
+            catch (Exception ex) { LauncherLog.Warn("Could not copy the diagnostics to the clipboard: " + ex.Message); }
+
+            LauncherLog.Info("Diagnostics collected: " + path);
+            ShowNotice(L10n.T("Диагностика"), L10n.F("Диагностика сохранена: {0}", path), showOpenLog: true);
+        }
+        catch (Exception ex)
+        {
+            ShowError(L10n.T("Не удалось сохранить диагностику."), ex);
+        }
+    }
+
     private static List<string> SplitArgs(string s) =>
         s.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
 
     // ---------------------------------------------------------------- notice
+
+    protected override void OnClosing(System.ComponentModel.CancelEventArgs e)
+    {
+        try
+        {
+            SaveSkirmishState(flush: true);
+            _mapSearchTimer?.Stop();
+            _modSearchTimer?.Stop();
+            _skirmishSaveTimer?.Stop();
+            _storageCts?.Cancel();
+            _mapCatalogCts?.Cancel();
+        }
+        catch { }
+        base.OnClosing(e);
+    }
 
     private System.Windows.Threading.DispatcherTimer? _toastTimer;
 

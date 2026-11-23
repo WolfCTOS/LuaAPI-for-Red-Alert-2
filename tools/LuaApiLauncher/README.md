@@ -47,3 +47,32 @@ the executable file is renamed.
 UI strings are Russian in code and translated through `Localization.cs`
 (`L10n.T` / `L10n.F`). `check_l10n.ps1` audits the translation table against
 the strings used in the XAML/code and reports missing or stale entries.
+
+## Faction setup
+
+Skirmish factions come from `[Factions]` in `rulesmd.ini`. Groups are read from
+`[FactionGroups]`: a faction listed there is rendered under a non-selectable
+header (the first member inserts the header). `FactionChoice` and
+`RulesCountries.cs` implement this; `SkirmishSpawn.ResolveCountry` ignores
+header rows so Random and free-country fallback never pick one.
+
+Faction flag icons live in `Resources/`. `FactionIconAliases` in
+`MainWindow.xaml.cs` maps faction keys to icon names when the rules `Name=`
+no longer matches a flag file (for example `EU Artillery Command` -> `France`).
+Hover descriptions are Russian keys in `Localization.cs`, translated through
+`L10n.T`; the dark tooltip style is in `App.xaml`.
+
+## Game assets (not in this repository)
+
+Executables, `.dll`, `.pdb` and `.mix` files are intentionally gitignored: they
+are build outputs or third-party game assets. To assemble a working install:
+
+1. Use a clean Yuri's Revenge 1.001 install with Ares and Phobos.
+2. Copy `artmd.ini` and `rulesmd.ini` from `Yuris-Echo/config/` into the game root.
+3. Add the GGAIRC SHP/VXL assets to `ecachemd01.mix` (XCC Mixer) keeping exact
+   filenames: `GGAIRC.SHP`, `GGAIRC_A.SHP`, `GGAIRC_B.SHP`, `GGAIRCBB.SHP`,
+   `GGAIRCMK.SHP`, and `M1.VXL` / `M1.HVA` for the AM1 tank.
+4. Merge the `[GAAIRC]`, `[GAAIRCBB]`, `[GAAIRC_A]`, `[GAAIRC_B]` sections from
+   the airfield replacement patch into `artmd.ini`; do not replace the whole file.
+5. Build the launcher with `build-and-deploy.ps1`, then start `Yuri's Echo.exe`
+   from the game folder.

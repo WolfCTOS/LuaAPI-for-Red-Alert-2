@@ -13,6 +13,13 @@ public static class StartLocations
 {
     public sealed record Marker(int Number, double X, double Y);
 
+    private sealed record MapData(string[] Waypoints, int[] Size, int[] Local);
+    private sealed record MpMapsCache(string Path, long Ticks, long Size, IniFile Ini);
+
+    private static readonly object _gate = new();
+    private static MpMapsCache? _mpMaps;
+    private static (string MapPath, long MapTicks, long MapSize, string MpKey, long MpTicks, long MpSize, MapData? Data) _mapData;
+
     /// <summary>
     /// Returns one marker per map waypoint (1-based numbers, preview pixel
     /// coordinates) for the given preview image size.
@@ -23,35 +30,81 @@ public static class StartLocations
         if (map == null || imageWidth <= 0 || imageHeight <= 0)
             return markers;
 
-        var mpKey = MpMapsKey(map);
-        var mpMaps = IniFile.Load(Path.Combine(LauncherCore.Root, "INI", "MPMaps.ini"));
+        var data = GetData(map);
+        if (data == null) return markers;
 
-        // MPMaps.ini is authoritative and is what the CnCNet client reads.
-        var waypoints = ReadWaypointsFrom(mpMaps, mpKey);
-        var size = ParseFour(mpMaps.Get(mpKey, "Size"));
-        var local = ParseFour(mpMaps.Get(mpKey, "LocalSize"));
-
-        // Maps outside the catalog: fall back to the map file's own sections.
-        if (waypoints.Count == 0 || size == null || local == null)
+        var mapWidth = data.Size[2];
+        for (var i = 0; i < data.Waypoints.Length; i++)
         {
-            var mapIni = IniFile.Load(map.FilePath);
-            if (waypoints.Count == 0) waypoints = ReadWaypointsFrom(mapIni, "Waypoints");
-            size ??= ParseFour(mapIni.Get("Map", "Size"));
-            local ??= ParseFour(mapIni.Get("Map", "LocalSize"));
-        }
-
-        if (size == null || local == null || waypoints.Count == 0)
-            return markers;
-
-        for (var i = 0; i < waypoints.Count; i++)
-        {
-            var point = Project(waypoints[i], size[2], local[0], local[1], local[2], local[3],
+            var point = Project(data.Waypoints[i], mapWidth, data.Local[0], data.Local[1], data.Local[2], data.Local[3],
                 imageWidth, imageHeight);
             if (point.HasValue)
                 markers.Add(new Marker(i + 1, point.Value.X, point.Value.Y));
         }
 
         return markers;
+    }
+
+    private static MapData? GetData(MapEntry map)
+    {
+        var mpPath = Path.Combine(LauncherCore.Root, "INI", "MPMaps.ini");
+        var (mpTicks, mpSize) = Stamp(mpPath);
+        var (mapTicks, mapSize) = Stamp(map.FilePath);
+        var mpKey = MpMapsKey(map);
+
+        lock (_gate)
+        {
+            if (string.Equals(_mapData.MapPath, map.FilePath, StringComparison.OrdinalIgnoreCase)
+                && _mapData.MapTicks == mapTicks && _mapData.MapSize == mapSize
+                && string.Equals(_mapData.MpKey, mpKey, StringComparison.OrdinalIgnoreCase)
+                && _mapData.MpTicks == mpTicks && _mapData.MpSize == mpSize)
+                return _mapData.Data;
+
+            var mpIni = GetMpMaps(mpPath, mpTicks, mpSize);
+            var waypoints = ReadWaypointsFrom(mpIni, mpKey);
+            var size = ParseFour(mpIni.Get(mpKey, "Size"));
+            var local = ParseFour(mpIni.Get(mpKey, "LocalSize"));
+
+            // Maps outside the catalog: fall back to the map file's own sections.
+            if (waypoints.Count == 0 || size == null || local == null)
+            {
+                var mapIni = IniFile.Load(map.FilePath);
+                if (waypoints.Count == 0) waypoints = ReadWaypointsFrom(mapIni, "Waypoints");
+                size ??= ParseFour(mapIni.Get("Map", "Size"));
+                local ??= ParseFour(mapIni.Get("Map", "LocalSize"));
+            }
+
+            MapData? data = null;
+            if (size != null && local != null && waypoints.Count > 0)
+                data = new MapData(waypoints.ToArray(), size, local);
+
+            _mapData = (map.FilePath, mapTicks, mapSize, mpKey, mpTicks, mpSize, data);
+            return data;
+        }
+    }
+
+    private static IniFile GetMpMaps(string path, long ticks, long size)
+    {
+        if (_mpMaps != null && string.Equals(_mpMaps.Path, path, StringComparison.OrdinalIgnoreCase)
+            && _mpMaps.Ticks == ticks && _mpMaps.Size == size)
+            return _mpMaps.Ini;
+        var ini = IniFile.Load(path);
+        _mpMaps = new MpMapsCache(path, ticks, size, ini);
+        return ini;
+    }
+
+    private static (long ticks, long size) Stamp(string path)
+    {
+        try
+        {
+            if (File.Exists(path))
+            {
+                var fi = new FileInfo(path);
+                return (fi.LastWriteTimeUtc.Ticks, fi.Length);
+            }
+        }
+        catch { }
+        return (0, 0);
     }
 
     private static string MpMapsKey(MapEntry map)

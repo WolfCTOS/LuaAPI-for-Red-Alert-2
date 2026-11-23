@@ -71,6 +71,28 @@ public static class L10n
 
     public static string F(string ru, params object?[] args) => string.Format(T(ru), args);
 
+    /// <summary>
+    /// Hover text for a faction key. The key itself is Russian, so passing the
+    /// result through T() keeps both UI languages working.
+    /// </summary>
+    private static readonly Dictionary<string, string> FactionDescriptions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["Случайно"] = "Случайная фракция",
+        ["Альянс"] = "Альянс: AM1 и AM2, Чёрный орёл, ракетчик, Tanya, хроно-легионер, Chinook",
+        ["Франция"] = "EU Artillery Command: специальный юнит — Tank Destroyer",
+        ["Германия"] = "EU Armoured Command: специальный юнит — Grand Cannon",
+        ["Великобритания"] = "EU Defence Command: специальный юнит — Sniper",
+        ["European Union"] = "European Union: три управления; у каждого свой специальный юнит",
+        ["Хаванский пакт"] = "Хаванский пакт: специальные юниты — подрывник Crazy Ivan и Demolitions Truck",
+        ["Ирак"] = "Ирак: специальный юнит — Desolator",
+        ["Россия"] = "Россия: специальный юнит — Apocalypse",
+        ["Юрий"] = "Юрий: специальный юнит — Improved Lasher",
+    };
+
+    /// <summary>Russian tooltip text for a faction; pass through T() to display.</summary>
+    public static string FactionDescription(string faction) =>
+        FactionDescriptions.TryGetValue(faction, out var text) ? text : faction;
+
     // Keyed by the exact Russian text; values are English.
     private static readonly Dictionary<string, string> En = new(StringComparer.Ordinal)
     {
@@ -89,7 +111,29 @@ public static class L10n
         ["ОПИСАНИЕ МИССИИ"] = "MISSION DESCRIPTION",
         ["СЛОЖНОСТЬ"] = "DIFFICULTY",
         ["ЗАПУСТИТЬ МИССИЮ"] = "START MISSION",
-        ["Альянс"] = "Allied",
+        // Фракции мода: эти же строки приходят из rulesmd.ini ([Factions]),
+        // поэтому в EN-режиме названия фракций переводятся здесь.
+        ["Альянс"] = "Alliance",
+        ["Евросоюз"] = "European Union",
+        ["European Union"] = "European Union",
+        ["Франция"] = "EU Artillery Command",
+        ["Германия"] = "EU Armoured Command",
+        ["Великобритания"] = "EU Defence Command",
+        ["Хаванский пакт"] = "Havana Pact",
+        ["Ирак"] = "Iraq",
+        ["Россия"] = "Russia",
+        ["Юрий"] = "Yuri",
+        // Tooltip descriptions (keys are the Russian sentences above).
+        ["Случайная фракция"] = "Random faction",
+        ["Альянс: AM1 и AM2, Чёрный орёл, ракетчик, Tanya, хроно-легионер, Chinook"] = "Alliance: AM1/AM2 tanks, Black Eagle, Rocketeer, Tanya, Chrono Legionnaire, Chinook",
+        ["EU Artillery Command: специальный юнит — Tank Destroyer"] = "EU Artillery Command: Special unit: Tank Destroyer",
+        ["EU Armoured Command: специальный юнит — Grand Cannon"] = "EU Armoured Command: Special unit: Grand Cannon",
+        ["EU Defence Command: специальный юнит — Sniper"] = "EU Defence Command: Special unit: Sniper",
+        ["European Union: три управления; у каждого свой специальный юнит"] = "European Union: three directorates; each has its own special unit",
+        ["Хаванский пакт: специальные юниты — подрывник Crazy Ivan и Demolitions Truck"] = "Havana Pact: Special units: Crazy Ivan saboteur and Demolitions Truck",
+        ["Ирак: специальный юнит — Desolator"] = "Iraq: Special unit: Desolator",
+        ["Россия: специальный юнит — Apocalypse"] = "Russia: Special unit: Apocalypse",
+        ["Юрий: специальный юнит — Improved Lasher"] = "Yuri: Special unit: Improved Lasher",
         ["Советский Союз"] = "Soviet Union",
         ["Учебный лагерь"] = "Boot Camp",
         ["Опции"] = "Options",
@@ -170,10 +214,18 @@ public static class L10n
         ["СКОРОСТЬ ИГРЫ"] = "GAME SPEED",
         ["СТАРТОВЫЕ ВОЙСКА"] = "STARTING UNITS",
         ["СУПЕРООРУЖИЕ"] = "SUPER WEAPONS",
+        ["Стартовые деньги"] = "Starting credits",
+        ["Скорость игры"] = "Game speed",
+        ["Стартовые войска"] = "Starting units",
+        ["Супероружие"] = "Super weapons",
         ["Все"] = "All",
         ["Стратегические"] = "Strategic",
         ["Тактические"] = "Tactical",
         ["Нет"] = "None",
+        ["All - все супероружия. Strategic - только наступательные (нук, гроза, пси-доминатор). Tactical - только оборонительные (хроносфера, железный занавес, силовой щит, генетический конвертер). None - без супероружий. В кампании настройка не действует."] =
+            "All - every superweapon. Strategic - only the offensive ones (nuke, lightning storm, psychic dominator). Tactical - only the defensive ones (chrono sphere, iron curtain, force shield, genetic converter). None - no superweapons. Campaigns ignore this setting.",
+        ["Проверьте настройку супероружия: значения в ini/spawn отличаются от ожидаемых."] =
+            "Check the superweapon setting: the values in ini/spawn differ from the expected ones.",
         ["Короткая игра"] = "Short game",
         ["Автопочинка"] = "Auto repair",
         ["Мульти-инженер"] = "Multi engineer",
@@ -407,6 +459,19 @@ public static class L10n
         ["Ресурсы клиента"] = "Client resources",
         ["Сохранения"] = "Saved Games",
         ["Реплеи"] = "Replays",
+        ["Сохранения не найдены."] = "No saved games found.",
+        ["Реплеи не найдены."] = "No replays found.",
+        ["Удалить сохранение?"] = "Delete the save?",
+        ["Удалить реплей?"] = "Delete the replay?",
+        ["Запуск реплеев не поддерживается"] = "Replay playback is not supported",
+        ["СОХРАНЕНИЕ"] = "SAVE",
+        ["СОХРАНЕНИЯ"] = "SAVED GAMES",
+        ["РЕПЛЕИ"] = "REPLAYS",
+        ["ЗАГРУЗИТЬ"] = "LOAD",
+        ["УДАЛИТЬ"] = "DELETE",
+        ["ЗАГРУЗИТЬ СОХРАНЕНИЕ"] = "LOAD SAVED GAME",
+        ["Загрузка сохранения"] = "Load saved game",
+        ["Не удалось удалить файл."] = "Failed to delete the file.",
         ["Вся папка игры"] = "Whole game folder",
         ["нет данных"] = "no data",
         ["Диск не определён."] = "Drive could not be determined.",
@@ -492,6 +557,14 @@ public static class L10n
         ["Переключатель канала ниже меняет только канал обновлений CnCNet (updateconfig.ini). После смены канала может потребоваться перезапуск клиента/апдейтера."] = "The channel selector below only changes the CnCNet update channel (updateconfig.ini). A client/updater restart may be required after changing the channel.",
         ["Каналы Pre-release и Dev предназначены для тестирования: возможны ошибки. Сообщая о проблеме, указывайте выбранный канал."] = "Pre-release and Dev channels are intended for testing: errors are possible. When reporting an issue, mention the selected channel.",
         ["Этот цвет уже выбран другим игроком."] = "This color is already selected by another player.",
+        ["СОБРАТЬ ДИАГНОСТИКУ"] = "COLLECT DIAGNOSTICS",
+        ["КОНФЛИКТ МОДОВ"] = "MOD CONFLICT",
+        ["Загрузка карт..."] = "Loading maps...",
+        ["Диагностика"] = "Diagnostics",
+        ["ошибок"] = "errors",
+        ["предупреждений"] = "warnings",
+        ["Диагностика сохранена: {0}"] = "Diagnostics saved: {0}",
+        ["Не удалось сохранить диагностику."] = "Could not save the diagnostics.",
     };
 
     private static readonly ConditionalWeakTable<DependencyObject, string> Keys = new();
