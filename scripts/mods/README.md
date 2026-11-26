@@ -1,9 +1,9 @@
-# scripts/mods — каталог модов
+# scripts/mods
 
-В репозитории остался только один мод: `smart_ai` (AI-командир поверх LuaAPI).
-Все исследовательские и диагностические моды удалены вместе с их
-кастомными C++-биндингами, чтобы API максимально соответствовал
-подходу Ares/Phobos (INI-конфигурация вместо Lua-движковой логики).
+Currently the only mod in this repository is `smart_ai` — an AI commander built on top of LuaAPI.
 
-Активный набор задаётся `scripts/active_mods.txt` (сейчас: `smart_ai`).
-Загрузчик (`scripts/init.lua`) грузит только перечисленные там моды.
+More mods will be added in the future by **NiTeMind**, and this description will be expanded as they arrive.
+
+Research and diagnostic mods were removed together with their custom C++ bindings to keep the API close to the Ares/Phobos approach (INI-driven configuration instead of engine-time Lua scripting).
+
+The active mod set is defined in `scripts/active_mods.txt` (currently: `smart_ai`). The loader (`scripts/init.lua`) loads only the mods listed there.
