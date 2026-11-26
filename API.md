@@ -7,6 +7,8 @@
 
 This document is the reference for the **currently implemented LuaAPI interface**.
 
+> Mod-specific bindings (barrel pitch / bounty overlay / command-points HUD / EMP disable / radiation RadSite+detonate / dynamic fog / waypoint probes / deploy-state diagnostics) were removed together with their mods. Only the bindings still used by `smart_ai` and the framework remain.
+
 > ⚠️ **Important:** This file documents implemented bindings. Planned or experimental systems must not be presented as stable API.
 
 ---

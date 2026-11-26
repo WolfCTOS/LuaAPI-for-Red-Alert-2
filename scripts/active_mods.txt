@@ -1,4 +1,2 @@
 # LuaAPI active mods - one mod ID per line
-bounty_hunter
 smart_ai
-radiation

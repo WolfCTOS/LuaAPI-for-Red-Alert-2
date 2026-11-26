@@ -9,9 +9,6 @@
 
 #include "hook_profiler.h"
 #include "weapon_override.h"
-#include "barrel_pitch.h"
-#include "dynamic_fow_poc.h"
-#include "fog_gap_probe.h"
 
 extern "C" {
 #include <lua.h>
@@ -29,7 +26,6 @@ extern "C" {
 #include <cstdio>
 
 namespace LuaAPI {
-
 
 bool IsInGameMatch();
 void ResetSession();
@@ -512,36 +508,6 @@ int Engine_GetDebugHudText(lua_State* L) {
     return 1;
 }
 
-// Lua-side persistent HUD line (mod scoreboards etc). Drawn by DrawDebugHud
-// under the debug-console indicator; empty string hides it. Engine writes
-// happen on the game thread only (this cfunction runs there), so the string
-// swap is a plain assignment - no locking needed. Client-local display only:
-// never enters the simulation, MP-safe by construction.
-std::string g_modHudText;
-
-// Game.SetModHudText(text) -> nil  (empty string clears the line)
-int Engine_SetModHudText(lua_State* L) {
-    size_t len = 0;
-    const char* msg = luaL_optlstring(L, 1, "", &len);
-
-    g_modHudText.assign(msg ? msg : "", msg ? len : 0);
-
-    if (g_modHudText.size() > 120)
-        g_modHudText.resize(120); // keep the corner line one row
-
-    return 0;
-}
-
-// Game.GetModHudText() -> string (symmetric read-back, diagnostics)
-int Engine_GetModHudText(lua_State* L) {
-    lua_pushlstring(
-        L,
-        g_modHudText.c_str(),
-        g_modHudText.size());
-
-    return 1;
-}
-
 // Engine.WeaponExists(id) -> bool
 // Проверяет существование оружия в rules: WeaponTypeClass::Find(id) != null.
 // SEH-обёртка; возвращает false при ошибке или если id пуст.
@@ -604,19 +570,12 @@ lua_State* CreateEngine() {
     lua_pushcfunction(L, Engine_IsHudMuted);
     lua_setfield(L, -2, "IsHudMuted");
 
-
-
     lua_setglobal(L, "Engine");
 
-    // Global "Game" table: Game.GetDebugHudText() / SetModHudText / GetModHudText
     lua_newtable(L);
 
     lua_pushcfunction(L, Engine_GetDebugHudText);
     lua_setfield(L, -2, "GetDebugHudText");
-    lua_pushcfunction(L, Engine_SetModHudText);
-    lua_setfield(L, -2, "SetModHudText");
-    lua_pushcfunction(L, Engine_GetModHudText);
-    lua_setfield(L, -2, "GetModHudText");
 
     lua_setglobal(L, "Game");
 
@@ -626,12 +585,8 @@ lua_State* CreateEngine() {
 
     WeaponOverride::RegisterBindings(L);
 
-    BarrelPitch::RegisterBindings(L);
 
     // TEMPORARY diagnostic PoC bridge: lets a Lua mod steer the existing
-    // pixel-source override via DynamicFow.SetCell(x, y, true). Never writes
-    // engine shroud state. Remove with dynamic_fow_poc.cpp.
-    DynamicFowPoc::RegisterDynamicFowBindings(L);
 
     return L;
 }
@@ -760,34 +715,9 @@ static void DrawHudText(const wchar_t* wtext) {
     }
 }
 
-// Модовая HUD-строка (счётчики модов). Тот же SEH-паттерн: leaf-функция без
-// C++-объектов, иначе C2712. Координаты/цвет фиксированы: вторая строка под
-// дебаг-индикатором, зелёная.
-static void DrawModHudText(const wchar_t* wtext) {
-    __try {
-        DSurface* pSurface = DSurface::Primary;
-
-        if (pSurface)
-            pSurface->DrawText(
-                wtext,
-                12,
-                62,
-                0x00FF00);
-    }
-    __except (EXCEPTION_EXECUTE_HANDLER) {
-        // Not fatal for a scoreboard; silently skip.
-    }
-}
-
 // Рисует g_debugHudText на видимом кадре каждый логический кадр
 // (TextPrint-механизм через DSurface::DrawText).
 static void DrawDebugHud() {
-    // Модовая строка HUD (счётчики модов) под дебаг-индикатором.
-    if (!g_modHudText.empty()) {
-        std::wstring wmod = ToWide(g_modHudText);
-        if (!wmod.empty())
-            DrawModHudText(wmod.c_str());
-    }
 
     if (g_debugHudText.empty())
         return;
@@ -1117,17 +1047,13 @@ void InstallGameHook() {
     LuaAPI::WeaponOverride::Install();
 
     // UnitClass::DrawAsVXL (M16 path B: barrel pitch probe, draw-only)
-    LuaAPI::BarrelPitch::Install();
 
     // TEMPORARY diagnostic PoC: DrawFog cell capture + frame-index substitution
     // at the shape-frame resolver. Opt-in since 2026-09-29 (crash bisection):
     // Install() attaches hooks only with LUAAPI_DFOW_HOOKS=1, otherwise it
-    // logs a skip and returns false. Remove together with dynamic_fow_poc.cpp.
-    LuaAPI::DynamicFowPoc::Install();
 
     // RUNTIME DIAGNOSTIC PROBE (read-only): Gap create/destroy entry hooks plus
     // a polling cell inspector. Creates no hooks unless LUAAPI_FOG_GAP_PROBE=1.
-    LuaAPI::FogGapProbe::Install();
 }
 
 // True only while an actual match is running. Prevents OnTick, HUD messages
@@ -1154,8 +1080,6 @@ void OnGameFrame() {
     if (!IsInGameMatch())
         return;
 
-    LuaAPI::ProcessDisabledObjects(
-        Unsorted::CurrentFrame);
 
     // M16 Gate 1: one-shot diagnostic HVA frame-count scan (first logic frame,
     // i.e. after rules/voxels are loaded). Reset when the frame counter restarts,
@@ -1427,16 +1351,10 @@ void ResetSession() {
     LuaAPI::WeaponOverride::ClearAll();
 
     // Clear per-unit barrel pitch overrides (M16 path B).
-    LuaAPI::BarrelPitch::ClearAll();
 
     // TEMPORARY diagnostic PoC: a new match starts with vanilla frames and no
     // captured cell, so nothing carries over from the previous session.
-    LuaAPI::DynamicFowPoc::Disable();
 
-    // Gate 1.3: drop timed-disable entries (raw TechnoClass* + stale expiry
-    // frames from the previous match) and key edge-detect state. Neither
-    // touches the engine — pure native-container clears.
-    LuaAPI::ClearDisabledObjects();
     LuaAPI::ClearKeyPrevState();
 
     // 1b. Сброс состояния дебаг-консоли.
