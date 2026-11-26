@@ -1,9 +1,0 @@
-{
-  "id": "command_authority",
-  "name": "Command Authority (Command Points Duel)",
-  "version": "0.3.1",
-  "description": "Command Points duel: earn CP, spend on powers. Persistent CP scoreboard HUD line with affordability (R*/X*/C*/V*); H shows the powers menu; Reinforce is on R (Z is the engine waypoint key).",
-  "description_ru": "Дуэль очков командования: заработай и потрать. Счёт CP постоянно виден на HUD; Reinforce на R (Z занята вейпоинтами движка).",
-  "author": "LuaAPI Research",
-  "dependencies": []
-}
