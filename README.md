@@ -96,14 +96,10 @@ Yuri's Revenge/
     ├── active_mods.txt
     │
     └── mods/
-        ├── smart_ai/
-        ├── radiation/
-        ├── bounty_hunter/
-        ├── double_harvester_deploy/
-        └── dynamic_fow/
+        └── smart_ai/
 ```
 
-The only shipped mod is `smart_ai` (see `scripts/active_mods.txt`). Research/diagnostic mods and their custom C++ bindings were removed to keep the API close to Ares/Phobos.
+Currently the only mod shipped with LuaAPI is **Smart AI** (`smart_ai`, see `scripts/active_mods.txt`). More mods will be added in the future by **NiTeMind**; this description will be expanded as they arrive. Research/diagnostic mods and their custom C++ bindings were removed to keep the API close to Ares/Phobos.
 
 ## Creating a mod
 
