@@ -1,9 +1,0 @@
-{
-  "id": "bounty_hunter",
-  "name": "Bounty Hunter",
-  "version": "2.2.0",
-  "author": "NiTeMind",
-  "description": "Bounty rewards for kills, scaled by veterancy",
-  "description_ru": "Награды за убийства по рангу ветеранства",
-  "conflicts": []
-}

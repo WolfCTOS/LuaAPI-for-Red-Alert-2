@@ -118,3 +118,5 @@ launchermd.bmp
 
 # Graphify knowledge-graph outputs (local analysis artifacts)
 graphify-out/
+build/
+build-win32/

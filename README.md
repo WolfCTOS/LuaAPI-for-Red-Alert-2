@@ -21,9 +21,7 @@ Download, extract, and play in about five minutes.
 3. Open scripts/active_mods.txt and make sure it lists the mod you want, one ID per line. A line starting with # is a comment. The default stack is:
 
    ```
-   bounty_hunter
    smart_ai
-   radiation
    ```
 
 4. Run injector.exe and press Launch. It starts the game with LuaAPI loaded. The injector is a small launcher that starts the game and loads LuaAPI into it. LuaAPI does not load itself, so the game must go through the injector. If the game is already running, the injector picks up gamemd.exe (or gamemd-spawn.exe under CnCNet) instead.
@@ -105,7 +103,7 @@ Yuri's Revenge/
         └── dynamic_fow/
 ```
 
-The default active stack is bounty_hunter, smart_ai, radiation (see scripts/active_mods.txt). double_harvester_deploy and dynamic_fow ship in scripts/mods/ but are off by default. Add their IDs to active_mods.txt to try them.
+The only shipped mod is `smart_ai` (see `scripts/active_mods.txt`). Research/diagnostic mods and their custom C++ bindings were removed to keep the API close to Ares/Phobos.
 
 ## Creating a mod
 
